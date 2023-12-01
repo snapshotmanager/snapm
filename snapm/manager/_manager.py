@@ -18,12 +18,13 @@ from uuid import UUID
 import logging
 from time import time
 from math import floor
-from os.path import ismount
+from os.path import ismount, normpath
 import fnmatch
 import inspect
 import os
 
 import snapm.manager.plugins
+from snapm.manager.boot import BootEntryCache, create_snapset_boot_entry
 
 from snapm import (
     SNAPM_DEBUG_MANAGER,
@@ -377,6 +378,7 @@ class Manager:
         self.snapshot_sets = []
         self.by_name = {}
         self.by_uuid = {}
+        self._boot_cache = BootEntryCache()
         load_plugins()
         for plugin_class in PluginRegistry.plugins:
             self.plugins.append(plugin_class())
@@ -391,6 +393,9 @@ class Manager:
         Initialises the ``snapshot_sets``, ``by_name`` and ``by_uuid`` members
         with the discovered snapshot sets.
         """
+        self.snapshot_sets = []
+        self.by_name = {}
+        self.by_uuid = {}
         snapshots = []
         snapset_names = set()
         _log_debug("Discovering snapshot sets for %s plugins", len(self.plugins))
@@ -410,7 +415,13 @@ class Manager:
                         "Snapshot set '%s' has inconsistent timestamps", snapset_name
                     )
                     continue
+
             snapset = SnapshotSet(snapset_name, set_timestamp, set_snapshots)
+
+            # Associate snapset with boot entry if present
+            if snapset.name in self._boot_cache:
+                snapset.boot_entry = self._boot_cache[snapset.name]
+
             self.snapshot_sets.append(snapset)
             self.by_name[snapset.name] = snapset
             self.by_uuid[str(snapset.uuid)] = snapset
@@ -498,6 +509,9 @@ class Manager:
                  ``SnapmInvalidIdentifierError`` if the name fails validation.
         """
         self._validate_snapset_name(name)
+
+        # Normalise mount point paths and initialise provider mapping.
+        mount_points = [normpath(path) for path in mount_points]
         provider_map = {k: None for k in mount_points}
 
         for mnt_pt in mount_points:
@@ -703,6 +717,20 @@ class Manager:
                     )
             changed += 1
         return changed
+
+    def create_snapshot_set_boot_entry(self, name=None, uuid=None):
+        if name is not None:
+            snapset = self.by_name[name]
+        elif uuid is not None:
+            snapset = self.by_uuid[uuid]
+        else:
+            raise SnapmNotFoundError("A snapshot set name or UUID is required")
+
+        if snapset.boot_entry is not None:
+            raise SnapmExistsError(
+                f"Boot entry already associated with snapshot set {self.name}"
+            )
+        create_snapset_boot_entry(snapset)
 
 
 __all__ = [
