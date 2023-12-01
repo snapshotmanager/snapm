@@ -22,6 +22,21 @@ jobs:
       - name: Install Snapshot Manager
         run: >
           sudo pip install -v .
+      - name: Check out boom
+        run: git clone https://github.com/snapshotmanager/boom
+        working-directory: /var/tmp
+      - name: Install boom
+        run: sudo python3 setup.py install
+        working-directory: /var/tmp/boom
+      - name: Create boom configuration
+        run: |
+          sudo mkdir /boot/boom
+          sudo mkdir /boot/boom/cache
+          sudo mkdir /boot/boom/hosts
+          sudo mkdir /boot/boom/profiles
+          sudo mkdir -p /boot/loader/entries
+          sudo cp /var/tmp/boom/examples/boom.conf /boot/boom
+          sudo boom profile create --from-host --uname-pattern generic
       - name: Check PyCodestyle
         run: >
           pycodestyle snapm --ignore E501,E203,W503
