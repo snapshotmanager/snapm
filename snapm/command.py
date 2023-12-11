@@ -38,6 +38,7 @@ from snapm import (
 from snapm.manager import Manager
 from snapm.report import (
     REP_NUM,
+    REP_SHA,
     REP_STR,
     REP_TIME,
     REP_UUID,
@@ -176,6 +177,15 @@ _snapshot_set_fields = [
         12,
         REP_STR,
         lambda f, d: f.report_str(_bool_to_yes_no(d.autoactivate)),
+    ),
+    FieldType(
+        PR_SNAPSET,
+        "bootentry",
+        "BootEntry",
+        "Snapshot set boot entry",
+        9,
+        REP_SHA,
+        lambda f, d: f.report_sha("" if not d.boot_entry else d.boot_entry.boot_id),
     ),
 ]
 
