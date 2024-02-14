@@ -58,6 +58,8 @@ Snapm \(em Linux snapshot manager
 .  ad l
 .  BR snapset
 .  BR \fBcreate
+.  RB [ -b | --bootable ]
+.  RB [ -r | --rollback ]
 .  IR \fIname\fP
 .  IR \fImount_point\fP ...
 .  ad b
@@ -320,6 +322,12 @@ are: manager, command, plugins, report.
 Display usage information and exit.
 .
 .HP
+.BR -b | --bootable
+.br
+When creating snapshot sets automatically create a snapshot boot entry
+for the set.
+.
+.HP
 .BR -n | --name
 .IR name
 .br
@@ -352,6 +360,12 @@ Specify which fields to display.
 .IR sort_fields
 .br
 Specify which fields to sort by.
+.
+.HP
+.BR -r | --rollback
+.br
+When creating snapshot sets automatically create a snapshot rollback entry
+for the set.
 .
 .HP
 .BR --rows
@@ -452,6 +466,10 @@ UUID:         f217177c-f35a-5b57-b33e-4c8ba0bb231a
 .br
 Status:       Inactive
 .br
+
+When creating snapshot sets \fB--bootable\fP and \fB--rollback\fP
+can optionally be used to automatically create snapshot boot and
+rollback boot entries respectively.
 .
 .HP
 .B snapm
