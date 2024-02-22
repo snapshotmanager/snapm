@@ -10,6 +10,7 @@ _LVCREATE_CMD = "lvcreate"
 _VGREMOVE_CMD = "vgremove"
 _VGCHANGE_CMD = "vgchange"
 _LVS_CMD = "lvs"
+_VGS_CMD = "vgs"
 _LVM_CMD = "lvm"
 _LVM_VERSION = "version"
 _LVM_VERSION_STR = "LVM version"
@@ -223,6 +224,9 @@ class LvmLoopBacked(object):
 
     def dump_lvs(self):
         subprocess.check_call([_LVS_CMD])
+
+    def dump_vgs(self):
+        subprocess.check_call([_VGS_CMD])
 
     def destroy(self):
         self.umount_all()
