@@ -32,6 +32,9 @@ _LOOP_DEVICE_SIZE = 12 * 1024**3
 # 1GiB
 _LV_SIZE = 1024**3
 
+# 512MiB
+_SNAPSHOT_SIZE = 512 * 1024**2
+
 # GiB
 _THIN_POOL_SIZE = 2
 
@@ -144,9 +147,27 @@ class LvmLoopBacked(object):
     def _create_and_mount_volumes(self, volumes, thin=False):
         for lv in volumes:
             os.makedirs(os.path.join(self.mount_root, lv))
-            self.lvcreate(lv, thin=thin)
+            self._lvcreate(lv, thin=thin)
             self.format(lv)
             self.mount(lv)
+
+    def _lvcreate(self, name, thin=False):
+        if not thin:
+            subprocess.check_call(
+                [_LVCREATE_CMD, "--size", f"{_LV_SIZE}b", "--name", name, _VG_NAME]
+            )
+        else:
+            subprocess.check_call(
+                [
+                    _LVCREATE_CMD,
+                    "--virtualsize",
+                    f"{_LV_SIZE}b",
+                    "--thin",
+                    "--name",
+                    name,
+                    f"{_VG_NAME}/{_THIN_POOL_NAME}",
+                ]
+            )
 
     def _create_thin_pool(self):
         """
@@ -165,26 +186,48 @@ class LvmLoopBacked(object):
             ]
         )
 
+    def _create_cow_snapshot(self, origin, name):
+        """
+        Create an LVM2 CoW snapshot in the test VG.
+        """
+        subprocess.check_call(
+            [
+                _LVCREATE_CMD,
+                "--snapshot",
+                "--size",
+                f"{_SNAPSHOT_SIZE}b",
+                "--name",
+                f"{name}",
+                f"{_VG_NAME}/{origin}",
+            ]
+        )
+
+    def _create_thin_snapshot(self, origin, name):
+        """
+        Create an LVM2 thin snapshot in the test VG.
+        """
+        subprocess.check_call(
+            [
+                _LVCREATE_CMD,
+                "--snapshot",
+                "--name",
+                f"{name}",
+                f"{_VG_NAME}/{origin}",
+            ]
+        )
+
+    def create_snapshot(self, origin, name):
+        """
+        Create a snapshot of volume `origin` in the test VG.
+        """
+        if origin in self.volumes:
+            return self._create_cow_snapshot(origin, name)
+        elif origin in self.thin_volumes:
+            return self._create_thin_snapshot(origin, name)
+        raise ValueError(f"Unknown origin: {origin}")
+
     def all_volumes(self):
         return self.volumes + self.thin_volumes
-
-    def lvcreate(self, name, thin=False):
-        if not thin:
-            subprocess.check_call(
-                [_LVCREATE_CMD, "--size", f"{_LV_SIZE}b", "--name", name, _VG_NAME]
-            )
-        else:
-            subprocess.check_call(
-                [
-                    _LVCREATE_CMD,
-                    "--virtualsize",
-                    f"{_LV_SIZE}b",
-                    "--thin",
-                    "--name",
-                    name,
-                    f"{_VG_NAME}/{_THIN_POOL_NAME}",
-                ]
-            )
 
     def format(self, name):
         subprocess.check_call([_MKFS_EXT4_CMD, f"/dev/{_VG_NAME}/{name}"])
