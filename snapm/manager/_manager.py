@@ -794,7 +794,7 @@ class Manager:
 
         if snapset.boot_entry is not None:
             raise SnapmExistsError(
-                f"Boot entry already associated with snapshot set {self.name}"
+                f"Boot entry already associated with snapshot set {snapset.name}"
             )
         create_snapset_boot_entry(snapset)
 
@@ -814,7 +814,7 @@ class Manager:
 
         if snapset.rollback_entry is not None:
             raise SnapmExistsError(
-                f"Boot entry already associated with snapshot set {self.name}"
+                f"Rollback entry already associated with snapshot set {snapset.name}"
             )
         create_snapset_rollback_entry(snapset)
 
