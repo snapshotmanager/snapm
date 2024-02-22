@@ -136,7 +136,7 @@ def create_snapset_boot_entry(snapset, title=None):
     mounts = _build_snapset_mount_list(snapset)
     osp = match_os_profile_by_version(version)
     entry_arg = f"{SNAPSET_ARG}={snapset.uuid}"
-    boom.command.create_entry(
+    snapset.boot_entry = boom.command.create_entry(
         title,
         version,
         machine_id,
@@ -180,7 +180,7 @@ def create_snapset_rollback_entry(snapset, title=None):
     root_device = root_snapshot.origin
     osp = match_os_profile_by_version(version)
     entry_arg = f"{ROLLBACK_ARG}={snapset.uuid}"
-    boom.command.create_entry(
+    snapset.rollback_entry = boom.command.create_entry(
         title,
         version,
         machine_id,
