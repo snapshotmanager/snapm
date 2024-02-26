@@ -117,5 +117,15 @@ class BootTests(unittest.TestCase):
         self.manager.discover_snapshot_sets()
         sset = self.manager.find_snapshot_sets(snapm.Selection(name="bootset0"))[0]
 
+        # Validate boot entry
+        boot_entry = sset.boot_entry
+        for snapshot in sset.snapshots:
+            self.assertIn(snapshot.devpath, boot_entry.options)
+
+        # Validate roll back entry
+        rollback_entry = sset.rollback_entry
+        root_snapshot = sset.snapshot_by_mount_point("/")
+        self.assertIn(root_snapshot.origin, rollback_entry.options)
+
         # Clean up boot entries
         self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
