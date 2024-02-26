@@ -27,15 +27,19 @@ from snapm.manager.plugins import format_snapshot_name, encode_mount_point
 
 from ._util import LvmLoopBacked
 
+ETC_FSTAB = "/etc/fstab"
+TMP_FSTAB = "/tmp/fstab"
+
 
 class BootTestsSimple(unittest.TestCase):
     """
     Test boot helpers
     """
+
     def test__get_uts_release(self):
         uname_cmd_args = ["uname", "-r"]
         uname_cmd = run(uname_cmd_args, capture_output=True, check=True)
-        sys_uts_release = uname_cmd.stdout.decode('utf8').strip()
+        sys_uts_release = uname_cmd.stdout.decode("utf8").strip()
         self.assertEqual(sys_uts_release, boot._get_uts_release())
 
     def test__get_machine_id(self):
@@ -51,21 +55,44 @@ class BootTests(unittest.TestCase):
 
     volumes = ["root", "home", "var"]
     thin_volumes = ["opt", "srv"]
+    boot_volumes = [
+        ("root", "/"),
+        ("home", "/home"),
+        ("var", "/var"),
+    ]
+
+    def _set_fstab(self):
+        """
+        Set up a fake /etc/fstab to be used for the duration of the test run.
+        """
+        with open(TMP_FSTAB, "w", encoding="utf8") as file:
+            for origin, mp in self.boot_volumes:
+                file.write(f"/dev/test_vg0/{origin}\t{mp}\text4\tdefaults 0 0\n")
+            run(["mount", "--bind", TMP_FSTAB, ETC_FSTAB])
+
+    def _clear_fstab(self):
+        """
+        Remove the fake /etc/fstab.
+        """
+        run(["umount", ETC_FSTAB])
+        os.unlink(TMP_FSTAB)
 
     def setUp(self):
         self._lvm = LvmLoopBacked(self.volumes, thin_volumes=self.thin_volumes)
         snapset_name = "bootset0"
         snapset_time = 1707923080
-        boot_volumes = [
-            ("root", "/"),
-            ("home", "/home"),
-            ("var", "/var"),
-        ]
-        for origin, mp in boot_volumes:
-            self._lvm.create_snapshot(origin, format_snapshot_name(origin, snapset_name, snapset_time, encode_mount_point(mp)))
+        for origin, mp in self.boot_volumes:
+            self._lvm.create_snapshot(
+                origin,
+                format_snapshot_name(
+                    origin, snapset_name, snapset_time, encode_mount_point(mp)
+                ),
+            )
         self.manager = snapm.manager.Manager()
+        self._set_fstab()
 
     def tearDown(self):
+        self._clear_fstab()
         self._lvm.destroy()
 
     def test_create_snapshot_boot_entry(self):
@@ -77,4 +104,3 @@ class BootTests(unittest.TestCase):
         self.manager.create_snapshot_set_rollback_entry(name="bootset0")
         print(f"Deleting boot entry {sset.rollback_entry}")
         self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
-
