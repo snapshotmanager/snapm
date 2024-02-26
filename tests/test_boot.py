@@ -97,10 +97,25 @@ class BootTests(unittest.TestCase):
 
     def test_create_snapshot_boot_entry(self):
         self.manager.create_snapshot_set_boot_entry(name="bootset0")
+
+        # Clean up boot entry
         self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
 
     def test_create_snapshot_rollback_entry(self):
         sset = self.manager.find_snapshot_sets(snapm.Selection(name="bootset0"))[0]
         self.manager.create_snapshot_set_rollback_entry(name="bootset0")
-        print(f"Deleting boot entry {sset.rollback_entry}")
+
+        # Clean up rollback entry
+        self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
+
+    def test_create_boot_entries_and_discovery(self):
+        sset = self.manager.find_snapshot_sets(snapm.Selection(name="bootset0"))[0]
+        self.manager.create_snapshot_set_boot_entry(name="bootset0")
+        self.manager.create_snapshot_set_rollback_entry(name="bootset0")
+
+        # Re-discover snapshot sets w/attached boot entries
+        self.manager.discover_snapshot_sets()
+        sset = self.manager.find_snapshot_sets(snapm.Selection(name="bootset0"))[0]
+
+        # Clean up boot entries
         self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
