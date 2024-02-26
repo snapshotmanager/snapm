@@ -95,6 +95,22 @@ class BootTests(unittest.TestCase):
         self._clear_fstab()
         self._lvm.destroy()
 
+    def test_create_snapshot_boot_entry_no_id(self):
+        with self.assertRaises(snapm.SnapmNotFoundError) as cm:
+            self.manager.create_snapshot_set_boot_entry()
+
+    def test_create_snapshot_rollback_entry_no_id(self):
+        with self.assertRaises(snapm.SnapmNotFoundError) as cm:
+            self.manager.create_snapshot_set_rollback_entry()
+
+    def test_create_snapshot_boot_entry_bad_name(self):
+        with self.assertRaises(snapm.SnapmNotFoundError) as cm:
+            self.manager.create_snapshot_set_boot_entry(name="bootset1")
+
+    def test_create_snapshot_rollback_entry_bad_name(self):
+        with self.assertRaises(snapm.SnapmNotFoundError) as cm:
+            self.manager.create_snapshot_set_rollback_entry(name="bootset1")
+
     def test_create_snapshot_boot_entry(self):
         self.manager.create_snapshot_set_boot_entry(name="bootset0")
 
@@ -102,8 +118,33 @@ class BootTests(unittest.TestCase):
         self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
 
     def test_create_snapshot_rollback_entry(self):
-        sset = self.manager.find_snapshot_sets(snapm.Selection(name="bootset0"))[0]
         self.manager.create_snapshot_set_rollback_entry(name="bootset0")
+
+        # Clean up rollback entry
+        self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
+
+    def test_create_snapshot_boot_entry_bad_uuid(self):
+        with self.assertRaises(snapm.SnapmNotFoundError) as cm:
+            self.manager.create_snapshot_set_boot_entry(
+                uuid="00000000-0000-0000-0000-000000000000"
+            )
+
+    def test_create_snapshot_rollback_entry_bad_uuid(self):
+        with self.assertRaises(snapm.SnapmNotFoundError) as cm:
+            self.manager.create_snapshot_set_rollback_entry(
+                uuid="00000000-0000-0000-0000-000000000000"
+            )
+
+    def test_create_snapshot_boot_entry_uuid(self):
+        sset = self.manager.find_snapshot_sets(snapm.Selection(name="bootset0"))[0]
+        self.manager.create_snapshot_set_boot_entry(uuid=str(sset.uuid))
+
+        # Clean up boot entry
+        self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
+
+    def test_create_snapshot_rollback_entry_uuid(self):
+        sset = self.manager.find_snapshot_sets(snapm.Selection(name="bootset0"))[0]
+        self.manager.create_snapshot_set_rollback_entry(uuid=str(sset.uuid))
 
         # Clean up rollback entry
         self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
