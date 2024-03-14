@@ -39,6 +39,9 @@ jobs:
           # Create profiles for kernel variants seen in CI
           sudo boom profile create --from-host --uname-pattern generic
           sudo boom profile create --from-host --uname-pattern azure
+      - name: Display mount configuration
+        run: >
+          cat /proc/mounts
       - name: Check PyCodestyle
         run: >
           pycodestyle snapm --ignore E501,E203,W503
