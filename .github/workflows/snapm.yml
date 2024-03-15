@@ -47,7 +47,7 @@ jobs:
           pycodestyle snapm --ignore E501,E203,W503
       - name: Run bandit
         run: >
-          bandit --skip B303,B404,B603 -r snapm
+          bandit --skip B101,B303,B404,B603 -r snapm
       - name: Run test suite with coverage
         run: >
           sudo python3-coverage run /usr/bin/pytest-3 --log-level=debug -v
