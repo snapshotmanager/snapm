@@ -22,7 +22,12 @@ import boom
 import boom.command
 from boom.osprofile import match_os_profile_by_version
 
-from snapm import SnapmNotFoundError, ETC_FSTAB
+from snapm import (
+    SnapmNotFoundError,
+    SnapmCalloutError,
+    SnapmInvalidIdentifierError,
+    ETC_FSTAB,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -35,6 +40,8 @@ _log_error = _log.error
 _MACHINE_ID = "/etc/machine-id"
 #: Path to the legacy system machine-id file
 _DBUS_MACHINE_ID = "/var/lib/dbus/machine-id"
+#: Path to the system os-release file
+_OS_RELEASE = "/etc/os-release"
 
 #: Snapshot set kernel command line argument
 SNAPSET_ARG = "snapm.snapset"
@@ -94,6 +101,16 @@ def _find_snapset_root(snapset):
     raise SnapmNotFoundError(f"Could not find root device for snapset {snapset.name}")
 
 
+def _create_default_os_profile():
+    """
+    Create a default boom OsProfile for the running system.
+    This uses the boom API to run the equivalent of:
+      `boom profile create --from-host`.
+    """
+    _log_info("Creating default boot profile from %s", _OS_RELEASE)
+    return boom.command.create_profile(None, None, None, None, profile_file=_OS_RELEASE)
+
+
 def _build_snapset_mount_list(snapset):
     """
     Build a list of command line mount unit definitions for the snapshot set
@@ -119,7 +136,47 @@ def _build_snapset_mount_list(snapset):
     return mounts
 
 
-def create_snapset_boot_entry(snapset, title=None):
+def _create_boom_boot_entry(
+    snapset, title=None, tag_arg=None, root_device=None, mounts=None
+):
+    """
+    Create a boom boot entry to boot into the snapshot set represented by
+    ``snapset``.
+
+    :param snapset: The snapshot set for which to create a boot entry.
+    :param title: An optional title for the boot entry. If ``title`` is
+                  ``None`` the boot entry will be titled as
+                  "Snapshot snapset_name snapset_time".
+    """
+    assert title is not None, "Boot entry argument title must have a value"
+    assert tag_arg is not None, "Boot entry argument tag_arg must have a value"
+    assert root_device is not None, "Boot entry argument root_device must have a value"
+
+    version = _get_uts_release()
+    machine_id = _get_machine_id()
+
+    osp = match_os_profile_by_version(version)
+    if not osp:
+        try:
+            osp = _create_default_os_profile()
+        except ValueError as err:
+            raise SnapmCalloutError(
+                f"Error calling boom to create default OsProfile: {err}"
+            )
+
+    return boom.command.create_entry(
+        title,
+        version,
+        machine_id,
+        root_device,
+        profile=osp,
+        no_fstab=True,
+        mounts=mounts,
+        add_opts=tag_arg,
+    )
+
+
+def create_snapset_boot_entry(snapset, title=None, tag_arg=None):
     """
     Create a boom boot entry to boot into the snapshot set represented by
     ``snapset``.
@@ -130,37 +187,18 @@ def create_snapset_boot_entry(snapset, title=None):
                   "Snapshot snapset_name snapset_time".
     """
     title = title or f"Snapshot {snapset.name} {snapset.time}"
-    version = _get_uts_release()
-    machine_id = _get_machine_id()
     root_device = _find_snapset_root(snapset).devpath
     mounts = _build_snapset_mount_list(snapset)
-    osp = match_os_profile_by_version(version)
-    entry_arg = f"{SNAPSET_ARG}={snapset.uuid}"
-    snapset.boot_entry = boom.command.create_entry(
-        title,
-        version,
-        machine_id,
-        root_device,
-        profile=osp,
-        no_fstab=True,
+    snapset.boot_entry = _create_boom_boot_entry(
+        snapset,
+        title=title,
+        tag_arg=f"{SNAPSET_ARG}={snapset.uuid}",
+        root_device=root_device,
         mounts=mounts,
-        add_opts=entry_arg,
     )
     _log_debug(
         "Created boot entry '%s' for snapshot set with UUID=%s", title, snapset.uuid
     )
-
-
-def delete_snapset_boot_entry(snapset):
-    """
-    Delete the boot entry corresponding to ``snapset``.
-
-    :param snapset: The snapshot set for which to remove a boot entry.
-    """
-    if snapset.boot_entry is None:
-        return
-    selection = boom.Selection(boot_id=snapset.boot_entry.boot_id)
-    boom.command.delete_entries(selection=selection)
 
 
 def create_snapset_rollback_entry(snapset, title=None):
@@ -174,23 +212,29 @@ def create_snapset_rollback_entry(snapset, title=None):
                   "Rollback snapset_name snapset_time".
     """
     title = title or f"Rollback {snapset.name} {snapset.time}"
-    version = _get_uts_release()
-    machine_id = _get_machine_id()
     root_snapshot = _find_snapset_root(snapset)
     root_device = root_snapshot.origin
-    osp = match_os_profile_by_version(version)
-    entry_arg = f"{ROLLBACK_ARG}={snapset.uuid}"
-    snapset.rollback_entry = boom.command.create_entry(
-        title,
-        version,
-        machine_id,
-        root_device,
-        profile=osp,
-        add_opts=entry_arg,
+    snapset.rollback_entry = _create_boom_boot_entry(
+        snapset,
+        title=title,
+        tag_arg=f"{ROLLBACK_ARG}={snapset.uuid}",
+        root_device=root_device,
     )
     _log_debug(
         "Created rollback entry '%s' for snapshot set with UUID=%s", title, snapset.uuid
     )
+
+
+def delete_snapset_boot_entry(snapset):
+    """
+    Delete the boot entry corresponding to ``snapset``.
+
+    :param snapset: The snapshot set for which to remove a boot entry.
+    """
+    if snapset.boot_entry is None:
+        return
+    selection = boom.Selection(boot_id=snapset.boot_entry.boot_id)
+    boom.command.delete_entries(selection=selection)
 
 
 def delete_snapset_rollback_entry(snapset):
@@ -262,9 +306,7 @@ class BootCache:
 
     def refresh_cache(self):
         self.entry_cache.refresh_cache()
-        _log_debug(
-            "Refreshed boot entry cache with %d entries", len(self.entry_cache)
-        )
+        _log_debug("Refreshed boot entry cache with %d entries", len(self.entry_cache))
         self.rollback_cache.refresh_cache()
         _log_debug(
             "Refreshed rollback boot entry cache with %d entries",

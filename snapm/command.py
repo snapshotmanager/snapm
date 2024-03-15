@@ -349,9 +349,19 @@ def create_snapset(manager, name, mount_points, boot=False, rollback=False):
         manager.activate_snapshot_sets(select)
 
     if boot:
-        manager.create_snapshot_set_boot_entry(name=snapset.name)
+        try:
+            manager.create_snapshot_set_boot_entry(name=snapset.name)
+        except (OSError, ValueError) as err:
+            _log_error("Failed to create snapshot set boot entry: %s", err)
+            manager.delete_snapshot_sets(select)
+            return None
     if rollback:
-        manager.create_snapshot_set_rollback_entry(name=snapset.name)
+        try:
+            manager.create_snapshot_set_rollback_entry(name=snapset.name)
+        except (OSError, ValueError) as err:
+            _log_error("Failed to create snapshot set rollback boot entry: %s", err)
+            manager.delete_snapshot_sets(select)
+            return None
     return snapset
 
 
@@ -382,7 +392,9 @@ def rollback_snapset(manager, selection):
     :param selection: Selection criteria for the snapshot set to roll back.
     """
     if not selection.is_single():
-        raise SnapmInvalidIdentifierError("Roll back requires unique selection criteria")
+        raise SnapmInvalidIdentifierError(
+            "Roll back requires unique selection criteria"
+        )
     return manager.rollback_snapshot_sets(selection)
 
 
@@ -553,6 +565,8 @@ def _create_cmd(cmd_args):
         boot=cmd_args.bootable,
         rollback=cmd_args.rollback,
     )
+    if snapset is None:
+        return 1
     _log_info(
         "Created snapset %s with %d snapshots", snapset.name, snapset.nr_snapshots
     )

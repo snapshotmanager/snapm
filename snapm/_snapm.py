@@ -445,14 +445,19 @@ class SnapshotSet:
 
         :returns: A multi-line string describing this snapshot set.
         """
-        return (
-            f"SnapsetName:  {self.name}\n"
-            f"MountPoints:  {', '.join([s.mount_point for s in self.snapshots])}\n"
-            f"NrSnapshots:  {self.nr_snapshots}\n"
-            f"Time:         {datetime.fromtimestamp(self.timestamp)}\n"
-            f"UUID:         {self.uuid}\n"
-            f"Status:       {str(self.status)}"
+        snapset_str = (
+            f"SnapsetName:    {self.name}\n"
+            f"MountPoints:    {', '.join([s.mount_point for s in self.snapshots])}\n"
+            f"NrSnapshots:    {self.nr_snapshots}\n"
+            f"Time:           {datetime.fromtimestamp(self.timestamp)}\n"
+            f"UUID:           {self.uuid}\n"
+            f"Status:         {str(self.status)}"
         )
+        if self.boot_entry:
+            snapset_str += f"\nBoot entry:     {self.boot_entry.disp_boot_id}"
+        if self.rollback_entry:
+            snapset_str += f"\nRollback entry: {self.rollback_entry.disp_boot_id}"
+        return snapset_str
 
     @property
     def name(self):
