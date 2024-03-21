@@ -12,9 +12,11 @@
 # along with this program; if not, write to the Free Software Foundation,
 # Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
 import unittest
+import tempfile
 import logging
 import os
 from subprocess import run
+from shutil import rmtree
 
 log = logging.getLogger()
 log.level = logging.DEBUG
@@ -24,12 +26,14 @@ import snapm
 import snapm.manager.boot as boot
 import snapm.manager
 from snapm.manager.plugins import format_snapshot_name, encode_mount_point
+import boom
 
 from ._util import LvmLoopBacked
 
 ETC_FSTAB = "/etc/fstab"
 TMP_FSTAB = "/tmp/fstab"
 
+_VAR_TMP = "/var/tmp"
 
 class BootTestsSimple(unittest.TestCase):
     """
@@ -76,6 +80,32 @@ class BootTests(unittest.TestCase):
         """
         run(["umount", ETC_FSTAB])
         os.unlink(TMP_FSTAB)
+
+    def _populate_boom_root_path(self):
+        boot_dir = tempfile.mkdtemp("_snapm_boom_dir", dir=_VAR_TMP)
+        boom_dir = os.path.join(boot_dir, "boom")
+        os.makedirs(os.path.join(boot_dir, "loader", "entries"), exist_ok=True)
+        subdirs = ["cache", "hosts", "profiles"]
+        for subdir in subdirs:
+            os.makedirs(os.path.join(boom_dir, subdir), exist_ok=True)
+        boom_conf = [
+            "[global]\n",
+            f"boot_root = {boot_dir}\n",
+            f"boom_root = %(boot_root)s/boom\n",
+            "[legacy]\n",
+            "enable = False\n",
+            "format = grub1\n",
+            "sync = False\n",
+        ]
+        with open(os.path.join(boom_dir, "boom.conf"), "w", encoding="utf8") as file:
+            file.writelines(boom_conf)
+        return boot_dir
+
+    def _cleanup_boom_root_path(self, boot_path):
+        boom.set_boot_path("/boot")
+        boom.osprofile.load_profiles()
+        boom.bootloader.load_entries()
+        rmtree(boot_path)
 
     def setUp(self):
         self._lvm = LvmLoopBacked(self.volumes, thin_volumes=self.thin_volumes)
@@ -169,4 +199,16 @@ class BootTests(unittest.TestCase):
         self.assertIn(root_snapshot.origin, rollback_entry.options)
 
         # Clean up boot entries
+        self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
+
+    def test_auto_profile_create_boot_entry(self):
+        boot_dir = self._populate_boom_root_path()
+        boom.set_boot_path(boot_dir)
+        boom.osprofile.load_profiles()
+        boom.bootloader.load_entries()
+        self.addCleanup(self._cleanup_boom_root_path, boot_dir)
+        sset = self.manager.find_snapshot_sets(snapm.Selection(name="bootset0"))[0]
+        self.manager.create_snapshot_set_boot_entry(uuid=str(sset.uuid))
+
+        # Clean up boot entry
         self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
