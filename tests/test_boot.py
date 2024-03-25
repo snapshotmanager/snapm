@@ -35,6 +35,11 @@ TMP_FSTAB = "/tmp/fstab"
 
 _VAR_TMP = "/var/tmp"
 
+
+def is_redhat():
+    return os.path.exists("/etc/redhat-release")
+
+
 class BootTestsSimple(unittest.TestCase):
     """
     Test boot helpers
@@ -201,6 +206,7 @@ class BootTests(unittest.TestCase):
         # Clean up boot entries
         self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
 
+    @unittest.skipIf(not is_redhat(), "profile auto-creation not supported")
     def test_auto_profile_create_boot_entry(self):
         boot_dir = self._populate_boom_root_path()
         boom.set_boot_path(boot_dir)
