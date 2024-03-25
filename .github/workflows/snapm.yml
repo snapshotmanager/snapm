@@ -22,19 +22,36 @@ jobs:
       - name: Install Snapshot Manager
         run: >
           sudo pip install -v .
+      - name: Check out boom
+        run: git clone https://github.com/snapshotmanager/boom
+        working-directory: /var/tmp
+      - name: Install boom
+        run: sudo python3 setup.py install
+        working-directory: /var/tmp/boom
+      - name: Create boom configuration
+        run: |
+          sudo mkdir /boot/boom
+          sudo mkdir /boot/boom/cache
+          sudo mkdir /boot/boom/hosts
+          sudo mkdir /boot/boom/profiles
+          sudo mkdir -p /boot/loader/entries
+          sudo cp /var/tmp/boom/examples/boom.conf /boot/boom
+          # Create profiles for kernel variants seen in CI
+          sudo boom profile create --from-host --uname-pattern generic
+          sudo boom profile create --from-host --uname-pattern azure
+      - name: Display mount configuration
+        run: >
+          cat /proc/mounts
       - name: Check PyCodestyle
         run: >
           pycodestyle snapm --ignore E501,E203,W503
       - name: Run bandit
         run: >
-          bandit --skip B303,B404,B603 -r snapm
-      - name: Run test suite
+          bandit --skip B101,B303,B404,B603 -r snapm
+      - name: Run test suite with coverage
         run: >
-          sudo pytest-3 -v
-      - name: Run coverage on test suite
-        run: |
-          sudo python3-coverage run -m unittest discover
+          sudo python3-coverage run /usr/bin/pytest-3 --log-level=debug -v
       - name: Report coverage
         run: >
-          python3-coverage report --include "./snapm/*"
+          python3-coverage report -m --include "./snapm/*"
 

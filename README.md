@@ -100,7 +100,7 @@ deactivate, list and display snapsets.
 ##### create
 Create a new snapset with the provided name and list of mount points.
 ```
-# snapm snapset create <name> mount_point...
+# snapm snapset create [-b|--bootable] [-r|--rollback] <name> mount_point...
 ```
 
 ##### delete
@@ -304,14 +304,16 @@ options:
   -h, --help            show this help message and exit
 
 # snapm snapset create --help
-usage: snapm snapset create [-h] SNAPSET_NAME MOUNT_POINT [MOUNT_POINT ...]
+usage: snapm snapset create [-h] [-b] [-r] SNAPSET_NAME MOUNT_POINT [MOUNT_POINT ...]
 
 positional arguments:
-  SNAPSET_NAME  The name of the snapshot set to create
-  MOUNT_POINT   A list of mount points to include in this snapshot set
+  SNAPSET_NAME    The name of the snapshot set to create
+  MOUNT_POINT     A list of mount points to include in this snapshot set
 
 options:
-  -h, --help    show this help message and exit
+  -h, --help      show this help message and exit
+  -b, --bootable  Create a boot entry for this snapshot set
+  -r, --rollback  Create a rollback boot entry for this snapshot set
 ```
 
 ## Documentation

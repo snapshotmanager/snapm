@@ -38,6 +38,7 @@ from snapm import (
 from snapm.manager import Manager
 from snapm.report import (
     REP_NUM,
+    REP_SHA,
     REP_STR,
     REP_TIME,
     REP_UUID,
@@ -177,6 +178,26 @@ _snapshot_set_fields = [
         REP_STR,
         lambda f, d: f.report_str(_bool_to_yes_no(d.autoactivate)),
     ),
+    FieldType(
+        PR_SNAPSET,
+        "bootentry",
+        "BootEntry",
+        "Snapshot set boot entry",
+        10,
+        REP_SHA,
+        lambda f, d: f.report_sha("" if not d.boot_entry else d.boot_entry.boot_id),
+    ),
+    FieldType(
+        PR_SNAPSET,
+        "rollbackentry",
+        "RollbackEntry",
+        "Snapshot set rollback boot entry",
+        13,
+        REP_SHA,
+        lambda f, d: f.report_sha(
+            "" if not d.rollback_entry else d.rollback_entry.boot_id
+        ),
+    ),
 ]
 
 _DEFAULT_SNAPSET_FIELDS = "name,time,nr_snapshots,status,mountpoints"
@@ -312,7 +333,7 @@ def _do_print_type(
     return report.report_output()
 
 
-def create_snapset(manager, name, mount_points):
+def create_snapset(manager, name, mount_points, boot=False, rollback=False):
     """
     Create a new snapshot set from a list of mount points.
 
@@ -320,7 +341,28 @@ def create_snapset(manager, name, mount_points):
     :param name: The name of the new snapshot set
     :param mount_points: A list of mount points to snapshot
     """
-    return manager.create_snapshot_set(name, mount_points)
+    snapset = manager.create_snapshot_set(name, mount_points)
+
+    # Snapshot sets must be active to create boot entries.
+    if boot or rollback:
+        select = Selection(name=snapset.name)
+        manager.activate_snapshot_sets(select)
+
+    if boot:
+        try:
+            manager.create_snapshot_set_boot_entry(name=snapset.name)
+        except (OSError, ValueError) as err:
+            _log_error("Failed to create snapshot set boot entry: %s", err)
+            manager.delete_snapshot_sets(select)
+            return None
+    if rollback:
+        try:
+            manager.create_snapshot_set_rollback_entry(name=snapset.name)
+        except (OSError, ValueError) as err:
+            _log_error("Failed to create snapshot set rollback boot entry: %s", err)
+            manager.delete_snapshot_sets(select)
+            return None
+    return snapset
 
 
 def delete_snapset(manager, selection):
@@ -350,7 +392,9 @@ def rollback_snapset(manager, selection):
     :param selection: Selection criteria for the snapshot set to roll back.
     """
     if not selection.is_single():
-        raise SnapmInvalidIdentifierError("Roll back requires unique selection criteria")
+        raise SnapmInvalidIdentifierError(
+            "Roll back requires unique selection criteria"
+        )
     return manager.rollback_snapshot_sets(selection)
 
 
@@ -514,7 +558,15 @@ def _create_cmd(cmd_args):
     :returns: integer status code returned from ``main()``
     """
     manager = Manager()
-    snapset = create_snapset(manager, cmd_args.snapset_name, cmd_args.mount_points)
+    snapset = create_snapset(
+        manager,
+        cmd_args.snapset_name,
+        cmd_args.mount_points,
+        boot=cmd_args.bootable,
+        rollback=cmd_args.rollback,
+    )
+    if snapset is None:
+        return 1
     _log_info(
         "Created snapset %s with %d snapshots", snapset.name, snapset.nr_snapshots
     )
@@ -993,6 +1045,18 @@ def main(args):
         type=str,
         nargs="+",
         help="A list of mount points to include in this snapshot set",
+    )
+    snapset_create_parser.add_argument(
+        "-b",
+        "--bootable",
+        action="store_true",
+        help="Create a boot entry for this snapshot set",
+    )
+    snapset_create_parser.add_argument(
+        "-r",
+        "--rollback",
+        action="store_true",
+        help="Create a rollback boot entry for this snapshot set",
     )
 
     # snapset delete subcommand

@@ -339,11 +339,14 @@ class Lvm2Snapshot(Snapshot):
         """
         return ""
 
+    def _devpath(self):
+        return path_join(DEV_PREFIX, self.vg_name, self.lv_name)
+
     @property
     def devpath(self):
         if self.status != SnapStatus.ACTIVE:
             return ""
-        return path_join(DEV_PREFIX, self.vg_name, self.lv_name)
+        return self._devpath()
 
     @property
     def status(self):

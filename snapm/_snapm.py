@@ -41,6 +41,8 @@ __DEBUG_MASK = 0
 NAMESPACE_SNAPSHOT_SET = UUID("{952f0e38-24a1-406d-adf6-0e9fb3c707d8}")
 NAMESPACE_SNAPSHOT = UUID("{c17d07c7-1482-43b7-9b3c-12d490622d93}")
 
+ETC_FSTAB = "/etc/fstab"
+
 
 class SnapmLogger(logging.Logger):
     """
@@ -431,6 +433,11 @@ class SnapshotSet:
         self._timestamp = timestamp
         self._uuid = uuid5(NAMESPACE_SNAPSHOT_SET, name + str(timestamp))
         self._snapshots = snapshots
+        self._by_mount_point = {}
+        self.boot_entry = None
+        self.rollback_entry = None
+        for snapshot in self._snapshots:
+            self._by_mount_point[snapshot.mount_point] = snapshot
 
     def __str__(self):
         """
@@ -438,14 +445,19 @@ class SnapshotSet:
 
         :returns: A multi-line string describing this snapshot set.
         """
-        return (
-            f"SnapsetName:  {self.name}\n"
-            f"MountPoints:  {', '.join([s.mount_point for s in self.snapshots])}\n"
-            f"NrSnapshots:  {self.nr_snapshots}\n"
-            f"Time:         {datetime.fromtimestamp(self.timestamp)}\n"
-            f"UUID:         {self.uuid}\n"
-            f"Status:       {str(self.status)}"
+        snapset_str = (
+            f"SnapsetName:    {self.name}\n"
+            f"MountPoints:    {', '.join([s.mount_point for s in self.snapshots])}\n"
+            f"NrSnapshots:    {self.nr_snapshots}\n"
+            f"Time:           {datetime.fromtimestamp(self.timestamp)}\n"
+            f"UUID:           {self.uuid}\n"
+            f"Status:         {str(self.status)}"
         )
+        if self.boot_entry:
+            snapset_str += f"\nBoot entry:     {self.boot_entry.disp_boot_id}"
+        if self.rollback_entry:
+            snapset_str += f"\nRollback entry: {self.rollback_entry.disp_boot_id}"
+        return snapset_str
 
     @property
     def name(self):
@@ -518,6 +530,21 @@ class SnapshotSet:
         otherwise.
         """
         return all(s.autoactivate for s in self.snapshots)
+
+    def snapshot_by_mount_point(self, mount_point):
+        """
+        Return the snapshot corresponding to ``mount_point``.
+
+        :param mount_point: The mount point path to search for.
+        :returns: A ``Snapshot`` object for the given mount point.
+        :raises: ``SnapmNotFoundError`` if the specified mount point
+                 is not present in this ``SnapshotSet``.
+        """
+        if mount_point in self._by_mount_point:
+            return self._by_mount_point[mount_point]
+        raise SnapmNotFoundError(
+            f"Mount point {mount_point} not found in snapset {self.name}"
+        )
 
 
 # pylint: disable=too-many-instance-attributes
@@ -732,6 +759,7 @@ class Snapshot:
 
 
 __all__ = [
+    "ETC_FSTAB",
     "SNAPM_DEBUG_MANAGER",
     "SNAPM_DEBUG_COMMAND",
     "SNAPM_DEBUG_PLUGINS",
