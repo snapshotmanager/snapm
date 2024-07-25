@@ -27,7 +27,7 @@ import boom
 
 from tests import MockArgs, have_root, BOOT_ROOT_TEST
 
-from ._util import LvmLoopBacked
+from ._util import LvmLoopBacked, StratisLoopBacked
 
 
 boom.set_boot_path(BOOT_ROOT_TEST)
@@ -225,83 +225,112 @@ class CommandTests(unittest.TestCase):
 
     volumes = ["root", "home", "var"]
     thin_volumes = ["opt", "srv"]
+    stratis_volumes = ["fs1", "fs2"]
 
     def setUp(self):
+        def cleanup_lvm():
+            if hasattr(self, "_lvm"):
+                self._lvm.destroy()
+
+        def cleanup_stratis():
+            if hasattr(self, "_stratis"):
+                self._stratis.destroy()
+
+        self.addCleanup(cleanup_lvm)
+        self.addCleanup(cleanup_stratis)
+
         self._lvm = LvmLoopBacked(self.volumes, thin_volumes=self.thin_volumes)
+        self._stratis = StratisLoopBacked(self.stratis_volumes)
+
         self.manager = snapm.manager.Manager()
 
-    def tearDown(self):
-        self._lvm.destroy()
+    def mount_points(self):
+        return self._lvm.mount_points() + self._stratis.mount_points()
 
     def test_print_snapsets(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         command.print_snapsets(self.manager)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_print_snapshots(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         command.print_snapshots(self.manager)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_show_snapsets(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         command.show_snapsets(self.manager)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_show_snapsets_with_members(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         command.show_snapsets(self.manager, members=True)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_show_snapsets_with_selection(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         s = snapm.Selection(name="testset0")
         command.show_snapsets(self.manager, selection=s)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_show_snapshots(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         command.show_snapshots(self.manager)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_create_snapset(self):
-        command.create_snapset(self.manager, "testset0", self._lvm.mount_points())
+        command.create_snapset(self.manager, "testset0", self.mount_points())
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_create_snapset_default_size_policy(self):
         command.create_snapset(
-            self.manager, "testset0", self._lvm.mount_points(), size_policy="10%FREE"
+            self.manager, "testset0", self.mount_points(), size_policy="10%FREE"
         )
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_create_snapset_per_mount_size_policy_10_free(self):
-        mount_specs = [f"{mp}:10%FREE" for mp in self._lvm.mount_points()]
+        mount_specs = [f"{mp}:10%FREE" for mp in self.mount_points()]
         command.create_snapset(self.manager, "testset0", mount_specs)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_create_snapset_per_mount_size_policy_100_size(self):
-        mount_specs = [f"{mp}:100%SIZE" for mp in self._lvm.mount_points()]
+        mount_specs = [f"{mp}:100%SIZE" for mp in self.mount_points()]
         command.create_snapset(self.manager, "testset0", mount_specs)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_create_delete_snapset(self):
-        command.create_snapset(self.manager, "testset0", self._lvm.mount_points())
+        command.create_snapset(self.manager, "testset0", self.mount_points())
         command.delete_snapset(self.manager, snapm.Selection(name="testset0"))
 
     def test_delete_snapset_ambiguous(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         with self.assertRaises(snapm.SnapmInvalidIdentifierError) as cm:
             command.delete_snapset(self.manager, snapm.Selection(nr_snapshots=2))
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_rename_snapset(self):
-        command.create_snapset(self.manager, "testset0", self._lvm.mount_points())
+        command.create_snapset(self.manager, "testset0", self.mount_points())
         command.rename_snapset(self.manager, "testset0", "testset1")
         sets = self.manager.find_snapshot_sets(snapm.Selection(name="testset1"))
         self.assertEqual(len(sets), 1)
         self.assertEqual(sets[0].name, "testset1")
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset1"))
 
     def test_main_snapset_create(self):
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "create", "testset0"]
-        args.extend(self._lvm.mount_points())
+        args.extend(self.mount_points())
+        command.main(args)
+
+        args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "delete", "testset0"]
         command.main(args)
 
     def test_main_snapset_delete(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "delete", "testset0"]
         command.main(args)
 
     def test_main_snapset_rename(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [
             os.path.join(os.getcwd(), "bin/snapm"),
             "snapset",
@@ -311,24 +340,30 @@ class CommandTests(unittest.TestCase):
         ]
         command.main(args)
 
+        args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "delete", "testset1"]
+        command.main(args)
+
     def test_main_snapset_rename_missing_newname(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "rename", "testset0"]
         with self.assertRaises(SystemExit) as cm:
             command.main(args)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapset_list(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "list"]
         command.main(args)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapset_list_verbose(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "-v", "snapset", "list"]
         command.main(args)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapset_list_very_verbose_debug(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [
             os.path.join(os.getcwd(), "bin/snapm"),
             "-vv",
@@ -337,9 +372,10 @@ class CommandTests(unittest.TestCase):
             "list",
         ]
         command.main(args)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapset_list_bad_debug(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [
             os.path.join(os.getcwd(), "bin/snapm"),
             "-vv",
@@ -349,19 +385,22 @@ class CommandTests(unittest.TestCase):
         ]
         r = command.main(args)
         self.assertEqual(r, 1)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapshot_activate(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapshot", "activate"]
         self.assertEqual(command.main(args), 0)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapshot_deactivate(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapshot", "deactivate"]
         self.assertEqual(command.main(args), 0)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapshot_autoactivate(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [
             os.path.join(os.getcwd(), "bin/snapm"),
             "snapshot",
@@ -369,9 +408,10 @@ class CommandTests(unittest.TestCase):
             "--yes",
         ]
         self.assertEqual(command.main(args), 0)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapshot_activate_nosuch(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [
             os.path.join(os.getcwd(), "bin/snapm"),
             "snapshot",
@@ -380,9 +420,10 @@ class CommandTests(unittest.TestCase):
             "nosuch",
         ]
         self.assertEqual(command.main(args), 1)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapshot_deactivate_nosuch(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [
             os.path.join(os.getcwd(), "bin/snapm"),
             "snapshot",
@@ -391,9 +432,10 @@ class CommandTests(unittest.TestCase):
             "nosuch",
         ]
         self.assertEqual(command.main(args), 1)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapshot_autoactivate_nosuch(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [
             os.path.join(os.getcwd(), "bin/snapm"),
             "snapshot",
@@ -403,34 +445,40 @@ class CommandTests(unittest.TestCase):
             "nosuch",
         ]
         self.assertEqual(command.main(args), 1)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapset_show(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "show"]
         self.assertEqual(command.main(args), 0)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapshot_list(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapshot", "list"]
         self.assertEqual(command.main(args), 0)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapshot_show(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapshot", "show"]
         self.assertEqual(command.main(args), 0)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapset_activate(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "activate"]
         self.assertEqual(command.main(args), 0)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapset_deactivate(self):
         self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "deactivate"]
         self.assertEqual(command.main(args), 0)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapset_autoactivate(self):
-        self.manager.create_snapshot_set("testset0", self._lvm.mount_points())
+        self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [
             os.path.join(os.getcwd(), "bin/snapm"),
             "snapset",
@@ -438,8 +486,10 @@ class CommandTests(unittest.TestCase):
             "--yes",
         ]
         self.assertEqual(command.main(args), 0)
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_main_snapset_revert(self):
+        # Revert is only supported on LVM2: don't include Stratis in the test.
         origin_file = "root/origin"
         snapshot_file = "root/snapshot"
         testset = "testset0"
