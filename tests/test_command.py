@@ -196,6 +196,26 @@ class CommandTestsSimple(unittest.TestCase):
         with self.assertRaises(ValueError) as cm:
             command.set_debug(args.debug)
 
+    def test_main_version(self):
+        args = [os.path.join(os.getcwd(), "bin/snapm"), "--version"]
+        with self.assertRaises(SystemExit) as cm:
+            command.main(args)
+
+    def test_main_too_few_args(self):
+        args = [os.path.join(os.getcwd(), "bin/snapm")]
+        r = command.main(args)
+        self.assertEqual(r, 1)
+
+    def test_main_bad_command_type(self):
+        args = [os.path.join(os.getcwd(), "bin/snapm"), "nosuch", "command"]
+        with self.assertRaises(SystemExit) as cm:
+            command.main(args)
+
+    def test_main_bad_command(self):
+        args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "nocommand"]
+        with self.assertRaises(SystemExit) as cm:
+            command.main(args)
+
 
 @unittest.skipIf(not have_root(), "requires root privileges")
 class CommandTests(unittest.TestCase):
@@ -269,28 +289,6 @@ class CommandTests(unittest.TestCase):
         sets = self.manager.find_snapshot_sets(snapm.Selection(name="testset1"))
         self.assertEqual(len(sets), 1)
         self.assertEqual(sets[0].name, "testset1")
-
-    def test_main_version(self):
-        args = [os.path.join(os.getcwd(), "bin/snapm"), "--version"]
-        with self.assertRaises(SystemExit) as cm:
-            command.main(args)
-
-    def test_main_too_few_args(self):
-        args = [os.path.join(os.getcwd(), "bin/snapm")]
-        r = command.main(args)
-        self.assertEqual(r, 1)
-
-    def test_main_bad_command_type(self):
-        args = [os.path.join(os.getcwd(), "bin/snapm"), "nosuch", "command"]
-        args.extend(self._lvm.mount_points())
-        with self.assertRaises(SystemExit) as cm:
-            command.main(args)
-
-    def test_main_bad_command(self):
-        args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "nocommand"]
-        args.extend(self._lvm.mount_points())
-        with self.assertRaises(SystemExit) as cm:
-            command.main(args)
 
     def test_main_snapset_create(self):
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "create", "testset0"]
