@@ -9,7 +9,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Run apt-get update
         run: sudo apt-get -q update
-      - name: Install Ubuntu deps
+      - name: Install Ubuntu snapm deps
         run: >
           DEBIAN_FRONTEND=noninteractive
           sudo apt-get install -y
@@ -17,11 +17,17 @@ jobs:
           python3-pycodestyle
           python3-coverage
           python3-flake8
+          python3-dateutil
+          python3-packaging
+          python3-wcwidth
           pycodestyle
           flake8
           pylint
           bandit
           lvm2
+      - name: Install pip dependencies
+        run: >
+          sudo pip install dbus-client-gen dbus-python-client-gen justbytes
       - name: Install Snapshot Manager
         run: >
           sudo pip install -v .
@@ -42,6 +48,38 @@ jobs:
           # Create profiles for kernel variants seen in CI
           sudo boom profile create --from-host --uname-pattern generic --initramfs-pattern "/initrd.img-%{version}" --kernel-pattern "/vmlinuz-%{version}"
           sudo boom profile create --from-host --uname-pattern azure --initramfs-pattern "/initrd.img-%{version}" --kernel-pattern "/vmlinuz-%{version}"
+      - name: Install Ubuntu stratisd deps
+        run: >
+          DEBIAN_FRONTEND=noninteractive
+          sudo apt-get install -y
+          asciidoc-base
+          clang
+          curl
+          libblkid-dev
+          libcryptsetup-dev
+          libdbus-1-dev
+          libdevmapper-dev
+          libsystemd-dev
+          libudev-dev
+          make
+          sudo
+          thin-provisioning-tools
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Check out stratisd
+        run: git clone https://github.com/stratis-storage/stratisd
+        working-directory: /var/tmp
+      - name: Build stratisd
+        run: make build-all
+        working-directory: /var/tmp/stratisd
+      - name: Install and enable stratisd
+        run: |
+          sudo make install
+          sudo systemctl enable --now stratisd
+        working-directory: /var/tmp/stratisd
+      - name: Install stratis-cli
+        run: sudo pip install stratis-cli
       - name: Check PyCodestyle
         run: >
           pycodestyle snapm --ignore E501,E203,W503
