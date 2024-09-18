@@ -68,7 +68,7 @@ jobs:
         with:
           toolchain: stable
       - name: Check out stratisd
-        run: git clone https://github.com/stratis-storage/stratisd
+        run: git clone https://github.com/stratis-storage/stratisd -b rebase-3.6.0
         working-directory: /var/tmp
       - name: Build stratisd
         run: make build-all
