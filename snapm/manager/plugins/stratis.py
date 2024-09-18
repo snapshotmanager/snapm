@@ -21,8 +21,15 @@ from uuid import UUID
 
 from dbus.exceptions import DBusException
 
+from dbus_python_client_gen import (
+    DPClientInvocationError,
+    DPClientSetPropertyContext,
+)
+
+
 from snapm import (
     SnapmCalloutError,
+    SnapmBusyError,
     SnapmNoSpaceError,
     SnapmNotFoundError,
     SnapmPluginError,
@@ -338,6 +345,46 @@ def _origin_uuid_to_fs_name(managed_objects, pool_object_path, origin_uuid):
     ][0]
 
     return str(filesystem.Name())
+
+
+def _fs_name_to_uuid(managed_objects, pool_object_path, fs_name):
+    """
+    Return the filesystem UUID corresponding to `origin_name`.
+    :param managed_objects: DBus managed objects for the service
+    :param pool_object_path: The pool DBus object path
+    :param origin_name: The origin filesystem name to find
+    """
+    fs_props = {"Pool": pool_object_path, "Name": fs_name}
+
+    filesystem = [
+        MOFilesystem(info)
+        for objpath, info in filesystems(props=fs_props)
+        .require_unique_match(True)
+        .search(managed_objects)
+    ][0]
+
+    return str(filesystem.Uuid())
+
+
+def _find_in_progress_merge(managed_objects, pool_object_path, origin_uuid):
+    """
+    Return a list containing any in-progres merge for the specified
+    `pool_object_path` and `origin_uuid`, or the empty list if no merge is
+    in progress.
+    :param managed_objects: DBus managed objects for the service
+    :param pool_object_path: The pool DBus object path
+    :param origin_uuid: The origin filesystem uuid to find
+    """
+    fs_props = {
+        "Pool": pool_object_path,
+        "Origin": (True, origin_uuid),
+        "MergeScheduled": True,
+    }
+
+    return [
+        MOFilesystem(info)
+        for objpath, info in filesystems(props=fs_props).search(managed_objects)
+    ]
 
 
 def _pool_free_space_bytes(managed_objects, pool_name):
@@ -749,7 +796,32 @@ class Stratis(Plugin):
         ``SnapmPluginError`` if another reason prevents the snapshot from being
         merged.
         """
-        raise NotImplementedError("Stratis does not currently implement revert")
+        (pool_name, _) = name.split("/")
+        origin = origin.removeprefix(DEV_STRATIS_PREFIX + pool_name + "/")
+
+        try:
+            proxy = get_object(TOP_OBJECT)
+            managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
+        except DBusException as err:
+            raise SnapmPluginError(
+                f"Failed to communicate with stratisd: {err}"
+            ) from err
+
+        (pool_object_path, _) = next(
+            pools(props={"Name": pool_name})
+            .require_unique_match(True)
+            .search(managed_objects)
+        )
+
+        origin_uuid = _fs_name_to_uuid(managed_objects, pool_object_path, origin)
+        in_progress = _find_in_progress_merge(
+            managed_objects, pool_object_path, origin_uuid
+        )
+
+        if len(in_progress):
+            raise SnapmBusyError(
+                f"Snapshot revert is in progress for {name} origin volume {pool_name}/{origin}"
+            )
 
     def revert_snapshot(self, name):
         """
@@ -760,7 +832,48 @@ class Stratis(Plugin):
         the next activation (typically a reboot into the revert boot entry
         for the snapshot set).
         """
-        raise NotImplementedError
+        (pool_name, fs_name) = name.split("/")
+
+        try:
+            proxy = get_object(TOP_OBJECT)
+            managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
+        except DBusException as err:
+            raise SnapmPluginError(
+                f"Failed to communicate with stratisd: {err}"
+            ) from err
+
+        (pool_object_path, _) = next(
+            pools(props={"Name": pool_name})
+            .require_unique_match(True)
+            .search(managed_objects)
+        )
+        (fs_object_path, info) = next(
+            filesystems(props={"Name": fs_name, "Pool": pool_object_path})
+            .require_unique_match(True)
+            .search(managed_objects)
+        )
+        filesystem = MOFilesystem(info)
+
+        try:
+            Filesystem.Properties.MergeScheduled.Set(get_object(fs_object_path), True)
+        except DPClientInvocationError as err:
+            if isinstance(err.context, DPClientSetPropertyContext):
+                origin_uuid = filesystem.Origin()[1]
+                if len(
+                    _find_in_progress_merge(
+                        managed_objects, pool_object_path, origin_uuid
+                    )
+                ):
+                    origin = _origin_uuid_to_fs_name(
+                        managed_objects, pool_object_path, origin_uuid
+                    )
+                    raise SnapmBusyError(
+                        f"Snapshot revert is in progress for {fs_name} origin volume "
+                        f"{pool_name}/{origin}"
+                    ) from err
+            raise SnapmPluginError(
+                f"Unexpected D-Bus error setting property for {pool_name}/{fs_name}"
+            ) from err
 
     def activate_snapshot(self, name):
         """
