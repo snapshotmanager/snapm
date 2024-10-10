@@ -564,6 +564,19 @@ def _check_revert_snapshot_set(snapset):
             raise err
 
 
+def _check_snapset_status(snapset, operation):
+    """
+    Check that a snapshot set status is not ``SnapStatus.INVALID`` or
+    ``SnapStatus.REVERTING`` before carrying out ``operation``.
+    """
+    if snapset.status in (SnapStatus.INVALID, SnapStatus.REVERTING):
+        if snapset.status == SnapStatus.INVALID:
+            _log_error("Cannot operate on invalid snapshot set '%s'", snapset.name)
+        if snapset.status == SnapStatus.REVERTING:
+            _log_error("Cannot operate on reverting snapshot set '%s'", snapset.name)
+        raise SnapmStateError(f"Failed to {operation} snapset '{snapset.name}'")
+
+
 class Manager:
     """
     Snapshot Manager high level interface.
@@ -844,6 +857,8 @@ class Manager:
         self._validate_snapset_name(new_name)
 
         snapset = self.by_name[old_name]
+        _check_snapset_status(snapset, "rename")
+
         snapshots = snapset.snapshots
         timestamp = snapset.timestamp
         new_snapshots = []
@@ -1025,6 +1040,8 @@ class Manager:
                 f"Could not find snapshot sets matching {selection}"
             )
         for snapset in sets:
+            _check_snapset_status(snapset, "activate")
+
             for snapshot in snapset.snapshots:
                 try:
                     snapshot.activate()
@@ -1053,6 +1070,8 @@ class Manager:
                 f"Could not find snapshot sets matching {selection}"
             )
         for snapset in sets:
+            _check_snapset_status(snapset, "deactivate")
+
             for snapshot in snapset.snapshots:
                 try:
                     snapshot.deactivate()
@@ -1084,6 +1103,7 @@ class Manager:
                 f"Could not find snapshot sets matching {selection}"
             )
         for snapset in sets:
+            _check_snapset_status(snapset, "set autoactivate status")
             snapset.autoactivate = auto
             changed += 1
         return changed

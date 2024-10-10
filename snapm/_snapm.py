@@ -593,23 +593,27 @@ class SizePolicy:
 
 class SnapStatus(Enum):
     """
-    Enum class representing snapshot status: Active, Inactive or Invalid.
+    Enum class representing snapshot status: Active, Inactive, Invalid or
+    Reverting.
     """
 
     ACTIVE = 1
     INACTIVE = 2
     INVALID = 3
+    REVERTING = 4
 
     def __str__(self):
         """
         Return a string representation of this ``SnapStatus`` object.
 
-        :returns: "Active", "Inactive", or "Invalid".
+        :returns: "Active", "Inactive", "Invalid", or "Reverting".
         """
         if self == SnapStatus.ACTIVE:
             return "Active"
         if self == SnapStatus.INACTIVE:
             return "Inactive"
+        if self == SnapStatus.REVERTING:
+            return "Reverting"
         return "Invalid"
 
 
@@ -761,6 +765,8 @@ class SnapshotSet:
         if any members are inactive, or ``SnapStatus.INVALID`` if any member
         of the set is invalid.
         """
+        if any(s.status == SnapStatus.REVERTING for s in self.snapshots):
+            return SnapStatus.REVERTING
         if any(s.status == SnapStatus.INVALID for s in self.snapshots):
             return SnapStatus.INVALID
         if any(s.status == SnapStatus.INACTIVE for s in self.snapshots):

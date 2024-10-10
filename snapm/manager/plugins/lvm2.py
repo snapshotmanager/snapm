@@ -77,6 +77,7 @@ LVM_VERSION_STR = "LVM version"
 # lvs report options
 LVS_CMD = "lvs"
 LVS_REPORT = "report"
+LVS_ALL = "--all"
 LVS_LV = "lv"
 LVS_LV_NAME = "lv_name"
 LVS_VG_NAME = "vg_name"
@@ -86,12 +87,15 @@ LVS_LV_ORIGIN = "origin"
 LVS_POOL_LV = "pool_lv"
 LVS_LV_SIZE = "lv_size"
 LVS_DATA_PERCENT = "data_percent"
+LVS_LV_HIDDEN_START = "["
+LVS_LV_HIDDEN_END = "]"
 LVS_FIELD_OPTIONS = (
     "vg_name,lv_name,lv_attr,origin,pool_lv,lv_size,data_percent,lv_role"
 )
 
 # lv_attr flag values
 LVM_COW_SNAP_ATTR = "s"
+LVM_MERGE_SNAP_ATTR = "S"
 LVM_THIN_VOL_ATTR = "V"
 LVM_COW_ORIGIN_ATTR = "o"
 LVM_ACTIVE_ATTR = "a"
@@ -216,7 +220,7 @@ def _check_lvm_version():
         )
 
 
-def get_lvs_json_report(vg_lv=None):
+def get_lvs_json_report(vg_lv=None, lvs_all=False):
     """
     Call out to the ``lvs`` program and return a report in JSON format.
     """
@@ -231,6 +235,8 @@ def get_lvs_json_report(vg_lv=None):
     ]
     if vg_lv:
         lvs_cmd_args.append(vg_lv)
+    if lvs_all:
+        lvs_cmd_args.append(LVS_ALL)
     try:
         lvs_cmd = run(lvs_cmd_args, capture_output=True, check=True)
     except CalledProcessError as err:
@@ -430,6 +436,8 @@ class Lvm2Snapshot(Snapshot):
     def status(self):
         lv_dict = self._get_lv_dict_cache()
         lv_attr = lv_dict[LVS_LV_ATTR]
+        if lv_attr.startswith(LVM_MERGE_SNAP_ATTR):
+            return SnapStatus.REVERTING
         if lv_attr[LVM_LV_STATE_ATTR_IDX] == LVM_ACTIVE_ATTR:
             return SnapStatus.ACTIVE
         if lv_attr[LVM_LV_STATE_ATTR_IDX] == LVM_INVALID_ATTR:
@@ -489,6 +497,19 @@ class Lvm2ThinSnapshot(Lvm2Snapshot):
         return pool_free_space(self.vg_name, lv_dict[LVS_POOL_LV])
 
 
+def _volume_type_or_merging(lv_dict, lv_type):
+    """
+    Return ``True`` if the logical volume represented by ``lv_dict`` is either
+    the specified ``lv_type``, or a merging snapshot volume, or ``False``
+    otherwise.
+    """
+    if lv_dict[LVS_LV_ATTR].startswith(lv_type):
+        return True
+    if lv_dict[LVS_LV_ATTR].startswith(LVM_MERGE_SNAP_ATTR):
+        return True
+    return False
+
+
 def filter_cow_snapshot(lv_dict):
     """
     Filter LVM2 CoW snapshots.
@@ -497,7 +518,7 @@ def filter_cow_snapshot(lv_dict):
     COW snapshot or ``False`` otherwise. The ``lv_dict`` argument must be a
     dictionary representing the output of the ``lvs`` reporting command.
     """
-    if not lv_dict[LVS_LV_ATTR].startswith(LVM_COW_SNAP_ATTR):
+    if not _volume_type_or_merging(lv_dict, LVM_COW_SNAP_ATTR):
         return False
     if LVM_COW_SNAPSHOT_ROLE not in lv_dict[LVS_LV_ROLE]:
         return False
@@ -514,7 +535,7 @@ def filter_thin_snapshot(lv_dict):
     thin snapshot or ``False`` otherwise. The ``lv_dict`` argument must be a
     dictionary representing the output of the ``lvs`` reporting command.
     """
-    if not lv_dict[LVS_LV_ATTR].startswith(LVM_THIN_VOL_ATTR):
+    if not _volume_type_or_merging(lv_dict, LVM_THIN_VOL_ATTR):
         return False
     if LVM_THIN_SNAPSHOT_ROLE not in lv_dict[LVS_LV_ROLE]:
         return False
@@ -814,18 +835,19 @@ class Lvm2Cow(_Lvm2):
         :returns: A list of ``Lvm2Snapshot`` objects discovered by this plugin.
         """
         snapshots = []
-        lvs_dict = get_lvs_json_report()
+        lvs_dict = get_lvs_json_report(lvs_all=True)
         for lv_dict in lvs_dict[LVS_REPORT][0][LVS_LV]:
             if filter_cow_snapshot(lv_dict):
                 try:
-                    fields = parse_snapshot_name(
-                        lv_dict[LVS_LV_NAME], lv_dict[LVS_LV_ORIGIN]
-                    )
+                    lv_name = lv_dict[LVS_LV_NAME]
+                    if lv_name.startswith(LVS_LV_HIDDEN_START):
+                        lv_name = lv_name[1:-1]
+                    fields = parse_snapshot_name(lv_name, lv_dict[LVS_LV_ORIGIN])
                 except ValueError:
                     continue
                 if fields is not None:
                     (snapset, timestamp, mount_point) = fields
-                    full_name = f"{lv_dict[LVS_VG_NAME]}/{lv_dict[LVS_LV_NAME]}"
+                    full_name = f"{lv_dict[LVS_VG_NAME]}/{lv_name}"
                     self._log_debug("Found %s snapshot: %s", self.name, full_name)
                     snapshots.append(
                         Lvm2CowSnapshot(
@@ -836,7 +858,7 @@ class Lvm2Cow(_Lvm2):
                             mount_point,
                             self,
                             f"{lv_dict[LVS_VG_NAME]}",
-                            f"{lv_dict[LVS_LV_NAME]}",
+                            f"{lv_name}",
                             lv_dict=lv_dict,
                         )
                     )
@@ -983,17 +1005,18 @@ class Lvm2Thin(_Lvm2):
 
     def discover_snapshots(self):
         snapshots = []
-        lvs_dict = get_lvs_json_report()
+        lvs_dict = get_lvs_json_report(lvs_all=True)
         for lv_dict in lvs_dict[LVS_REPORT][0][LVS_LV]:
             if filter_thin_snapshot(lv_dict):
                 try:
-                    fields = parse_snapshot_name(
-                        lv_dict[LVS_LV_NAME], lv_dict[LVS_LV_ORIGIN]
-                    )
+                    lv_name = lv_dict[LVS_LV_NAME]
+                    if lv_name.startswith(LVS_LV_HIDDEN_START):
+                        lv_name = lv_name[1:-1]
+                    fields = parse_snapshot_name(lv_name, lv_dict[LVS_LV_ORIGIN])
                 except ValueError:
                     continue
                 if fields is not None:
-                    full_name = f"{lv_dict[LVS_VG_NAME]}/{lv_dict[LVS_LV_NAME]}"
+                    full_name = f"{lv_dict[LVS_VG_NAME]}/{lv_name}"
                     self._log_debug("Found %s snapshot: %s", self.name, full_name)
                     (snapset, timestamp, mount_point) = fields
                     snapshots.append(
@@ -1005,7 +1028,7 @@ class Lvm2Thin(_Lvm2):
                             mount_point,
                             self,
                             f"{lv_dict[LVS_VG_NAME]}",
-                            f"{lv_dict[LVS_LV_NAME]}",
+                            f"{lv_name}",
                             lv_dict=lv_dict,
                         )
                     )

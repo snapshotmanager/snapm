@@ -165,6 +165,7 @@ def main(args):
     parser.add_argument("--reportformat", type=str, help="Report format")
     parser.add_argument("-o", "--options", type=str, help="Report fields")
     parser.add_argument("--units", type=str, help="Report units")
+    parser.add_argument("-a", "--all", action="store_true", help="Show information about internal LVs")
     parser.add_argument("vg_lv", type=str, default="", nargs="?", help="Logical volume to report on")
     
     args = parser.parse_args()
