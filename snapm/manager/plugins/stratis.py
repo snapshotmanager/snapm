@@ -222,6 +222,9 @@ class StratisSnapshot(Snapshot):
 
     @property
     def status(self):
+        (_, filesystem) = self._get_dbus_cache()
+        if filesystem.MergeScheduled() is True:
+            return SnapStatus.REVERTING
         return SnapStatus.ACTIVE
 
     @property
