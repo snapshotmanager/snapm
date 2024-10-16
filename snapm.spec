@@ -6,7 +6,7 @@ Version:	0.3.1
 Release:	1%{?dist}
 Summary:	%{summary}
 
-License:	GPL-2.0-only
+License:	GPL-2.0-only AND Apache-2.0
 URL:		https://github.com/snapshotmanager/snapm
 Source0:	%{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 

@@ -5,6 +5,9 @@ import os
 
 _LOSETUP_CMD = "losetup"
 
+_UDEVADM = "udevadm"
+_SETTLE = "settle"
+
 _VGCREATE_CMD = "vgcreate"
 _LVCREATE_CMD = "lvcreate"
 _VGREMOVE_CMD = "vgremove"
@@ -20,14 +23,10 @@ _UMOUNT_CMD = "umount"
 
 _MKFS_EXT4_CMD = "mkfs.ext4"
 
+# LVM2
 _VG_NAME = "test_vg0"
 
 _THIN_POOL_NAME = "pool0"
-
-_VAR_TMP = "/var/tmp"
-
-# 20GiB
-_LOOP_DEVICE_SIZE = 20 * 2**30
 
 # 1GiB
 _LV_SIZE = 1024**3
@@ -37,6 +36,25 @@ _SNAPSHOT_SIZE = 512 * 2**20
 
 # GiB
 _THIN_POOL_SIZE = 6
+
+# Stratis
+_STRATIS_CMD = "stratis"
+_POOL_CMD = "pool"
+_FILESYSTEM_CMD = "filesystem"
+_CREATE_CMD = "create"
+_DESTROY_CMD = "destroy"
+_LIST_CMD = "list"
+_SIZE_ARG = "--size"
+
+_POOL_NAME = "pool1"
+
+_FS_SIZE = "1GiB"
+
+# Path in which to create temporary files
+_VAR_TMP = "/var/tmp"
+
+# 20GiB
+_LOOP_DEVICE_SIZE = 20 * 2**30
 
 
 def _version_string_to_tuple(version):
@@ -154,7 +172,7 @@ class LvmLoopBacked(object):
     def _lvcreate(self, name, thin=False):
         if not thin:
             subprocess.check_call(
-                [_LVCREATE_CMD, "--size", f"{_LV_SIZE}b", "--name", name, _VG_NAME]
+                [_LVCREATE_CMD, _SIZE_ARG, f"{_LV_SIZE}b", "--name", name, _VG_NAME]
             )
         else:
             subprocess.check_call(
@@ -177,7 +195,7 @@ class LvmLoopBacked(object):
         subprocess.check_call(
             [
                 _LVCREATE_CMD,
-                "--size",
+                _SIZE_ARG,
                 f"{_THIN_POOL_SIZE}g",
                 "--thin",
                 "--name",
@@ -194,7 +212,7 @@ class LvmLoopBacked(object):
             [
                 _LVCREATE_CMD,
                 "--snapshot",
-                "--size",
+                _SIZE_ARG,
                 f"{_SNAPSHOT_SIZE}b",
                 "--name",
                 f"{name}",
@@ -278,5 +296,161 @@ class LvmLoopBacked(object):
         os.rmdir(self.mount_root)
 
         subprocess.check_call([_VGREMOVE_CMD, "--force", "--yes", _VG_NAME])
+
+        self._lb.destroy_all()
+
+
+class StratisLoopBacked(object):
+    """
+    Class to create Stratis pools using loop devices.
+    """
+
+    def __init__(self, volumes):
+        """
+        Initialize a new test pool named ``_POOL_NAME``
+
+        :param volumes: A list of linear volumes to create. Each volume
+        will be of ``_FS_SIZE``.
+        :param thin_volumes: A list of thin volumes to create in the
+                             volume group. Each volume will have a
+                             virtual size of ``_FS_SIZE``.
+        """
+        self.mount_root = tempfile.mkdtemp("_snapm_mounts", dir=_VAR_TMP)
+
+        # Create loopback device to back pool
+        self._lb = LoopBackDevices()
+        self._lb.create_devices(1)
+
+        self._create_pool()
+
+        self._create_and_mount_volumes(volumes)
+        self.volumes = volumes
+
+    def _create_pool(self):
+        _stratis_pool_create_cmd = [_STRATIS_CMD, _POOL_CMD, _CREATE_CMD, _POOL_NAME]
+        _stratis_pool_create_cmd.extend(self._lb.device_nodes())
+        subprocess.check_call(_stratis_pool_create_cmd)
+
+    def _create_and_mount_volumes(self, volumes):
+        for fs in volumes:
+            os.makedirs(os.path.join(self.mount_root, fs))
+            self._fs_create(fs)
+            subprocess.check_call(
+                [
+                    _UDEVADM,
+                    _SETTLE,
+                ]
+            )
+            self.mount(fs)
+
+    def _fs_create(self, name, thin=False):
+        subprocess.check_call(
+            [
+                _STRATIS_CMD,
+                _FILESYSTEM_CMD,
+                _CREATE_CMD,
+                _SIZE_ARG,
+                _FS_SIZE,
+                _POOL_NAME,
+                name,
+            ]
+        )
+
+    def create_snapshot(self, origin, name):
+        """
+        Create a snapshot of volume `origin` in the test pool.
+        """
+        if origin in self.volumes:
+            return subprocess.check_call(
+                [
+                    _STRATIS_CMD,
+                    _FILESYSTEM_CMD,
+                    "snapshot",
+                    _POOL_NAME,
+                    origin,
+                    name,
+                ]
+            )
+        raise ValueError(f"Unknown origin: {origin}")
+
+    def all_volumes(self):
+        return self.volumes
+
+    def mount(self, name):
+        subprocess.check_call(
+            [_MOUNT_CMD, f"/dev/stratis/{_POOL_NAME}/{name}", f"{self.mount_root}/{name}"]
+        )
+
+    def mount_all(self):
+        for fs in self.all_volumes():
+            self.mount(fs)
+
+    def umount(self, name):
+        subprocess.check_call([_UMOUNT_CMD, f"{self.mount_root}/{name}"])
+
+    def umount_all(self):
+        for fs in self.all_volumes():
+            self.umount(fs)
+
+    def mount_points(self):
+        return [f"{self.mount_root}/{name}" for name in self.all_volumes()]
+
+    def touch_path(self, relpath):
+        path = Path(f"{self.mount_root}/{relpath}")
+        path.touch()
+
+    def test_path(self, relpath):
+        path = Path(f"{self.mount_root}/{relpath}")
+        return path.exists()
+
+    def dump_fs(self):
+        subprocess.check_call([_STRATIS_CMD, _FILESYSTEM_CMD])
+
+    def dump_pools(self):
+        subprocess.check_call([_STRATIS_CMD, _POOL_CMD])
+
+    def _destroy_one_filesystem(self, pool, filesystem):
+        subprocess.check_call(
+            [
+                _STRATIS_CMD,
+                _FILESYSTEM_CMD,
+                _DESTROY_CMD,
+                pool,
+                filesystem,
+            ]
+        )
+
+    def _destroy_all_filesystems(self):
+        stratis_filesystem_cmd_args = [
+            _STRATIS_CMD,
+            _FILESYSTEM_CMD,
+            _LIST_CMD,
+            _POOL_NAME,
+        ]
+
+        stratis_filesystem_cmd = subprocess.run(
+            stratis_filesystem_cmd_args,
+            capture_output=True
+        )
+
+        for line in stratis_filesystem_cmd.stdout.decode('utf8').splitlines():
+            if "Pool" in line and "Filesystem" in line:
+                continue
+            fields = line.split()
+            self._destroy_one_filesystem(_POOL_NAME, fields[1])
+
+    def destroy(self):
+        self.umount_all()
+        for fs in self.all_volumes():
+            os.rmdir(f"{self.mount_root}/{fs}")
+        os.rmdir(self.mount_root)
+
+        for fs in self.all_volumes():
+            self._destroy_one_filesystem(_POOL_NAME, fs)
+
+        # Cleanup left-over file systems
+        self._destroy_all_filesystems()
+
+        subprocess.check_call([_STRATIS_CMD, _POOL_CMD, _DESTROY_CMD, _POOL_NAME])
 
         self._lb.destroy_all()
