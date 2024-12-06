@@ -29,7 +29,9 @@ import logging
 from snapm import (
     SnapmInvalidIdentifierError,
     SNAPSET_NAME,
+    SNAPSET_SOURCES,
     SNAPSET_MOUNT_POINTS,
+    SNAPSET_DEVICES,
     SNAPSET_NR_SNAPSHOTS,
     SNAPSET_TIME,
     SNAPSET_TIMESTAMP,
@@ -41,6 +43,7 @@ from snapm import (
     SNAPSET_REVERT_ENTRY,
     SNAPSHOT_NAME,
     SNAPSHOT_ORIGIN,
+    SNAPSHOT_SOURCE,
     SNAPSHOT_MOUNT_POINT,
     SNAPSHOT_PROVIDER,
     SNAPSHOT_UUID,
@@ -179,12 +182,30 @@ _snapshot_set_fields = [
     ),
     FieldType(
         PR_SNAPSET,
+        "sources",
+        SNAPSET_SOURCES,
+        "Snapshot set sources",
+        8,
+        REP_STR_LIST,
+        lambda f, d: f.report_str_list(d.sources),
+    ),
+    FieldType(
+        PR_SNAPSET,
         "mountpoints",
         SNAPSET_MOUNT_POINTS,
         "Snapshot set mount points",
         24,
         REP_STR_LIST,
         lambda f, d: f.report_str_list(d.mount_points),
+    ),
+    FieldType(
+        PR_SNAPSET,
+        "devices",
+        SNAPSET_DEVICES,
+        "Snapshot set devices",
+        9,
+        REP_STR_LIST,
+        lambda f, d: f.report_str_list(d.devices),
     ),
     FieldType(
         PR_SNAPSET,
@@ -233,7 +254,7 @@ _snapshot_set_fields = [
     ),
 ]
 
-_DEFAULT_SNAPSET_FIELDS = "name,time,nr_snapshots,status,mountpoints"
+_DEFAULT_SNAPSET_FIELDS = "name,time,nr_snapshots,status,sources"
 
 _snapshot_fields = [
     FieldType(
@@ -262,6 +283,15 @@ _snapshot_fields = [
         16,
         REP_STR,
         lambda f, d: f.report_str(d.origin),
+    ),
+    FieldType(
+        PR_SNAPSHOT,
+        "source",
+        SNAPSHOT_SOURCE,
+        "Snapshot source",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(d.source),
     ),
     FieldType(
         PR_SNAPSHOT,
@@ -347,7 +377,7 @@ _snapshot_fields = [
 ]
 
 _DEFAULT_SNAPSHOT_FIELDS = (
-    "snapset_name,name,origin,mountpoint,status,size,free,autoactivate,provider"
+    "snapset_name,name,origin,source,status,size,free,autoactivate,provider"
 )
 
 _plugin_fields = [
@@ -434,18 +464,20 @@ def _do_print_type(
     return report.report_output()
 
 
-def create_snapset(
-    manager, name, mount_points, size_policy=None, boot=False, revert=False
-):
+def create_snapset(manager, name, sources, size_policy=None, boot=False, revert=False):
     """
-    Create a new snapshot set from a list of mount points.
+    Create a new snapshot set from a list of mount point and block device
+    source paths.
 
     :param manager: The manager context to use
     :param name: The name of the new snapshot set
-    :param mount_points: A list of mount points to snapshot
+    :param sources: A list of mount point or block devices to snapshot
+    :param size_policy: The default size policy for this snapshot set.
+    :param boot: Create a boot entry for this snapshot set.
+    :param revert: Create a revert boot entry for this snapshot set.
     """
     snapset = manager.create_snapshot_set(
-        name, mount_points, default_size_policy=size_policy
+        name, sources, default_size_policy=size_policy
     )
 
     # Snapshot sets must be active to create boot entries.
@@ -489,17 +521,18 @@ def rename_snapset(manager, old_name, new_name):
     return manager.rename_snapshot_set(old_name, new_name)
 
 
-def resize_snapset(
-    manager, mount_points, name=None, uuid=None, default_size_policy=None
-):
+def resize_snapset(manager, sources, name=None, uuid=None, default_size_policy=None):
     """
-    Revert snapshot set matching selection criteria.
+    Resize snapshot set by name or UUID.
 
     :param manager: The manager context to use
-    :param selection: Selection criteria for the snapshot set to resize.
+    :param sources: A list of mount point or block devices to snapshot
+    :param name: The name of the snapshot set to resize.
+    :param uuid: The uuid of the snapshot set to resize.
+    :param default_size_policy: The default size policy for this snapshot set.
     """
     return manager.resize_snapshot_set(
-        mount_points, name=name, uuid=uuid, default_size_policy=default_size_policy
+        sources, name=name, uuid=uuid, default_size_policy=default_size_policy
     )
 
 
@@ -736,7 +769,7 @@ def _create_cmd(cmd_args):
     snapset = create_snapset(
         manager,
         cmd_args.snapset_name,
-        cmd_args.mount_points,
+        cmd_args.sources,
         size_policy=cmd_args.size_policy,
         boot=cmd_args.bootable,
         revert=cmd_args.revert,
@@ -807,7 +840,7 @@ def _resize_cmd(cmd_args):
 
     resize_snapset(
         manager,
-        cmd_args.mount_points,
+        cmd_args.sources,
         name=name,
         uuid=uuid,
         default_size_policy=cmd_args.size_policy,
@@ -1271,11 +1304,11 @@ def _add_snapset_subparser(type_subparser):
         help="The name of the snapshot set to create",
     )
     snapset_create_parser.add_argument(
-        "mount_points",
-        metavar="MOUNT_POINT",
+        "sources",
+        metavar="SOURCE",
         type=str,
         nargs="+",
-        help="A list of mount points to include in this snapshot set",
+        help="A device or mount point path to include in this snapshot set",
     )
     snapset_create_parser.add_argument(
         "-s",
@@ -1331,11 +1364,11 @@ def _add_snapset_subparser(type_subparser):
     snapset_resize_parser.set_defaults(func=_resize_cmd)
     _add_identifier_args(snapset_resize_parser, snapset=True)
     snapset_resize_parser.add_argument(
-        "mount_points",
-        metavar="MOUNT_POINT",
+        "sources",
+        metavar="SOURCE",
         type=str,
-        nargs="*",
-        help="A list of mount points to include in this snapshot set",
+        nargs="+",
+        help="A device or mount point path to include in this snapshot set",
     )
     snapset_resize_parser.add_argument(
         "-s",

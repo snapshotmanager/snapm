@@ -7,6 +7,8 @@ LVS_FIELD_OPTIONS = (
     "vg_name,lv_name,lv_attr,origin,pool_lv,lv_size,data_percent,lv_role"
 )
 
+LVS_VG_LV_FIELD_OPTIONS = "vg_name,lv_name"
+
 LVM_JSON = "json"
 LVM_BYTES = "b"
 
@@ -159,10 +161,28 @@ dev_map = {
     "fedora/srv-snapset_backup_1693921253_-srv": fedora_srv_snapset_backup_1693921253_srv,
 }
 
+mapper_dev_map = {
+    "fedora-home": "fedora home",
+    "fedora-root": "fedora root",
+    "fedora-var": "fedora var",
+    "appdata-datavol1--test": "appdata datavol1-test",
+    "vg_test0-lv_test0": "vg_test0 lv_test0",
+}
+
+vg_lv_dev_map = {
+    "fedora/home": "fedora home",
+    "fedora/root": "fedora root",
+    "fedora/var": "fedora var",
+    "appdata/datavol1-test": "appdata datavol1-test",
+    "vg_test0/lv_test0": "vg_test0 lv_test0",
+}
+
+
 def main(args):
     parser = argparse.ArgumentParser(prog="lvs", description="Mock lvs command")
 
     parser.add_argument("--reportformat", type=str, help="Report format")
+    parser.add_argument("--noheadings", action="store_true", help="Do not print column headings")
     parser.add_argument("-o", "--options", type=str, help="Report fields")
     parser.add_argument("--units", type=str, help="Report units")
     parser.add_argument("-a", "--all", action="store_true", help="Show information about internal LVs")
@@ -170,20 +190,26 @@ def main(args):
     
     args = parser.parse_args()
 
-    if args.reportformat != LVM_JSON:
-        return 1
-    if args.options != LVS_FIELD_OPTIONS:
-        return 1
-    if args.units != LVM_BYTES:
-        return 1
-
-    if not args.vg_lv:
-        print(default)
-        return 0
-
-    if args.vg_lv in dev_map:
-        print(dev_map[args.vg_lv])
-        return 0
+    if args.options == LVS_FIELD_OPTIONS:
+        if args.reportformat != LVM_JSON:
+            return 1
+        if args.units != LVM_BYTES:
+            return 1
+        if not args.vg_lv:
+            print(default)
+            return 0
+        if args.vg_lv in dev_map:
+            print(dev_map[args.vg_lv])
+            return 0
+    elif args.options == LVS_VG_LV_FIELD_OPTIONS:
+        if args.vg_lv.startswith("/dev/mapper/"):
+            dm_dev = args.vg_lv.removeprefix("/dev/mapper/")
+            print(mapper_dev_map[dm_dev])
+            return 0
+        else:
+            vg_lv = args.vg_lv.removeprefix("/dev/")
+            print(vg_lv_dev_map[vg_lv])
+            return 0
     return 1
 
 if __name__ == "__main__":

@@ -80,7 +80,7 @@ class SnapmTests(unittest.TestCase):
         self.assertTrue(s.is_single())
 
     def test_Selection_is_not_single(self):
-        s = snapm.Selection(origin="fedora/root")
+        s = snapm.Selection(origin="/dev/fedora/root")
         self.assertFalse(s.is_single())
 
     def test_Selection_is_not_null(self):
@@ -116,11 +116,11 @@ class SnapmTests(unittest.TestCase):
         s.check_valid_selection(snapshot_set=True)
 
     def test_valid_selection_snapshot(self):
-        s = snapm.Selection(origin="home", mount_point="/home")
+        s = snapm.Selection(origin="/dev/fedora/home", mount_point="/home")
         s.check_valid_selection(snapshot=True)
 
     def test_valid_selection_snapset_invalid(self):
-        s = snapm.Selection(origin="home")
+        s = snapm.Selection(origin="/dev/fedora/home")
         with self.assertRaises(ValueError) as cm:
             s.check_valid_selection(snapshot_set=True)
 
@@ -130,56 +130,56 @@ class SnapmTests(unittest.TestCase):
             s.check_valid_selection(snapshot=True)
 
     def test_valid_size_policy_fixed(self):
-        policy = snapm.SizePolicy("/", TEN_GIB, FOUR_GIB, TEN_GIB, "2G")
+        policy = snapm.SizePolicy("/", "/", TEN_GIB, FOUR_GIB, TEN_GIB, "2G")
         self.assertEqual(policy.size, TWO_GIB)
-        policy = snapm.SizePolicy("/", TEN_TIB, FOUR_TIB, TEN_TIB, "2T")
+        policy = snapm.SizePolicy("/", "/", TEN_TIB, FOUR_TIB, TEN_TIB, "2T")
         self.assertEqual(policy.size, TWO_TIB)
-        policy = snapm.SizePolicy("/", TEN_GIB, FOUR_GIB, TEN_GIB, "2GiB")
+        policy = snapm.SizePolicy("/", "/", TEN_GIB, FOUR_GIB, TEN_GIB, "2GiB")
         self.assertEqual(policy.size, TWO_GIB)
-        policy = snapm.SizePolicy("/", TEN_TIB, FOUR_TIB, TEN_TIB, "2TiB")
+        policy = snapm.SizePolicy("/", "/", TEN_TIB, FOUR_TIB, TEN_TIB, "2TiB")
         self.assertEqual(policy.size, TWO_TIB)
 
     def test_valid_size_policy_free(self):
-        policy = snapm.SizePolicy("/", TEN_GIB, FOUR_GIB, TEN_GIB, "10%FREE")
+        policy = snapm.SizePolicy("/", "/", TEN_GIB, FOUR_GIB, TEN_GIB, "10%FREE")
         self.assertEqual(policy.size, ONE_GIB)
-        policy = snapm.SizePolicy("/", TEN_GIB, FOUR_GIB, TEN_GIB, "50%FREE")
+        policy = snapm.SizePolicy("/", "/", TEN_GIB, FOUR_GIB, TEN_GIB, "50%FREE")
         self.assertEqual(policy.size, FIVE_GIB)
-        policy = snapm.SizePolicy("/", TEN_TIB, FOUR_TIB, TEN_TIB, "80%FREE")
+        policy = snapm.SizePolicy("/", "/", TEN_TIB, FOUR_TIB, TEN_TIB, "80%FREE")
         self.assertEqual(policy.size, EIGHT_TIB)
-        policy = snapm.SizePolicy("/", TEN_TIB, FOUR_TIB, TEN_TIB, "100%FREE")
+        policy = snapm.SizePolicy("/", "/", TEN_TIB, FOUR_TIB, TEN_TIB, "100%FREE")
         self.assertEqual(policy.size, TEN_TIB)
 
     def test_valid_size_policy_used(self):
-        policy = snapm.SizePolicy("/", TEN_GIB, FOUR_GIB, TEN_GIB, "25%USED")
+        policy = snapm.SizePolicy("/", "/", TEN_GIB, FOUR_GIB, TEN_GIB, "25%USED")
         self.assertEqual(policy.size, ONE_GIB)
-        policy = snapm.SizePolicy("/", TEN_GIB, FOUR_GIB, TEN_GIB, "50%USED")
+        policy = snapm.SizePolicy("/", "/", TEN_GIB, FOUR_GIB, TEN_GIB, "50%USED")
         self.assertEqual(policy.size, TWO_GIB)
-        policy = snapm.SizePolicy("/", TEN_TIB, FOUR_TIB, TEN_TIB, "100%USED")
+        policy = snapm.SizePolicy("/", "/", TEN_TIB, FOUR_TIB, TEN_TIB, "100%USED")
         self.assertEqual(policy.size, FOUR_TIB)
-        policy = snapm.SizePolicy("/", TEN_TIB, FOUR_TIB, TEN_TIB, "200%USED")
+        policy = snapm.SizePolicy("/", "/", TEN_TIB, FOUR_TIB, TEN_TIB, "200%USED")
         self.assertEqual(policy.size, EIGHT_TIB)
 
     def test_valid_size_policy_size(self):
-        policy = snapm.SizePolicy("/", TEN_GIB, FOUR_GIB, TEN_GIB, "20%SIZE")
+        policy = snapm.SizePolicy("/", "/", TEN_GIB, FOUR_GIB, TEN_GIB, "20%SIZE")
         self.assertEqual(policy.size, TWO_GIB)
-        policy = snapm.SizePolicy("/", TEN_GIB, FOUR_GIB, TEN_GIB, "50%SIZE")
+        policy = snapm.SizePolicy("/", "/", TEN_GIB, FOUR_GIB, TEN_GIB, "50%SIZE")
         self.assertEqual(policy.size, FIVE_GIB)
-        policy = snapm.SizePolicy("/", TEN_TIB, FOUR_TIB, TEN_TIB, "80%SIZE")
+        policy = snapm.SizePolicy("/", "/", TEN_TIB, FOUR_TIB, TEN_TIB, "80%SIZE")
         self.assertEqual(policy.size, EIGHT_TIB)
-        policy = snapm.SizePolicy("/", TEN_TIB, FOUR_TIB, TEN_TIB, "100%SIZE")
+        policy = snapm.SizePolicy("/", "/", TEN_TIB, FOUR_TIB, TEN_TIB, "100%SIZE")
         self.assertEqual(policy.size, TEN_TIB)
 
     def test_size_policy_size_over_limit_raises(self):
-        with self.assertRaises(snapm.SnapmNoSpaceError) as cm:
-            policy = snapm.SizePolicy("/", TEN_TIB, FOUR_TIB, TEN_TIB, "200%SIZE")
+        with self.assertRaises(snapm.SnapmSizePolicyError) as cm:
+            policy = snapm.SizePolicy("/", "/", TEN_TIB, FOUR_TIB, TEN_TIB, "200%SIZE")
 
     def test_size_policy_fixed_bad_unit_raises(self):
-        with self.assertRaises(snapm.SnapmParseError) as cm:
-            policy = snapm.SizePolicy("/", TEN_GIB, FOUR_GIB, TEN_GIB, "2A")
+        with self.assertRaises(snapm.SnapmSizePolicyError) as cm:
+            policy = snapm.SizePolicy("/", "/", TEN_GIB, FOUR_GIB, TEN_GIB, "2A")
 
     def test_size_policy_invalid_policy_raises(self):
-        with self.assertRaises(snapm.SnapmParseError) as cm:
-            policy = snapm.SizePolicy("/", TEN_GIB, FOUR_GIB, TEN_GIB, "100%QUX")
+        with self.assertRaises(snapm.SnapmSizePolicyError) as cm:
+            policy = snapm.SizePolicy("/", "/", TEN_GIB, FOUR_GIB, TEN_GIB, "100%QUX")
 
     def test_is_size_policy_valid(self):
         self.assertEqual(True, snapm.is_size_policy("2G"))

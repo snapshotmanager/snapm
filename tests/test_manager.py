@@ -24,6 +24,14 @@ from tests import have_root, BOOT_ROOT_TEST
 from ._util import LvmLoopBacked, StratisLoopBacked
 
 
+import snapm
+import snapm.manager as manager
+import boom
+
+from tests import have_root, BOOT_ROOT_TEST
+from ._util import LvmLoopBacked, StratisLoopBacked
+
+
 _log = logging.getLogger()
 _log.level = logging.DEBUG
 _log.addHandler(logging.FileHandler("test.log"))
@@ -235,6 +243,10 @@ class ManagerTestsSimple(unittest.TestCase):
 
 @unittest.skipIf(not have_root(), "requires root privileges")
 class ManagerTests(unittest.TestCase):
+    """
+    Tests for snapm.manager.Manager that apply to all supported snapshot
+    providers.
+    """
     volumes = ["root", "home", "var", "data_vol"]
     thin_volumes = ["opt", "srv", "thin-vol"]
     stratis_volumes = ["fs1", "fs2"]
@@ -305,6 +317,38 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(len(sets), 1)
         self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
+    def test_create_snapshot_set_blockdevs(self):
+        snapset = self.manager.create_snapshot_set(
+            "testset0", self._lvm.block_devs() + self._stratis.block_devs()
+        )
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
+
+    def test_create_snapshot_set_blockdevs_unmounted(self):
+        self._lvm.umount_all()
+        self._stratis.umount_all()
+        snapset = self.manager.create_snapshot_set(
+            "testset0", self._lvm.block_devs() + self._stratis.block_devs()
+        )
+        self._lvm.mount_all()
+        self._stratis.mount_all()
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
+
+    def test_create_snapshot_set_mixed_1(self):
+        self._stratis.umount_all()
+        snapset = self.manager.create_snapshot_set(
+            "testset0", self._lvm.mount_points() + self._stratis.block_devs()
+        )
+        self._stratis.mount_all()
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
+
+    def test_create_snapshot_set_mixed_2(self):
+        self._lvm.umount_all()
+        snapset = self.manager.create_snapshot_set(
+            "testset0", self._lvm.block_devs() + self._stratis.mount_points()
+        )
+        self._lvm.mount_all()
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
+
     def test_create_snapshot_set_default_size_policy(self):
         self.manager.create_snapshot_set(
             "testset0", self.mount_points(), default_size_policy="10%FREE"
@@ -353,6 +397,37 @@ class ManagerTests(unittest.TestCase):
         sets = self.manager.find_snapshot_sets(selection=s)
         self.assertEqual(len(sets), 1)
         self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
+
+    def test_create_snapshot_set_size_policy_size_over_100_raises(self):
+        with self.assertRaises(snapm.SnapmSizePolicyError) as cm:
+            self.manager.create_snapshot_set(
+                "testset0", self.mount_points(), default_size_policy="150%SIZE"
+            )
+
+    def test_create_snapshot_set_size_policy_free_over_100_raises(self):
+        with self.assertRaises(snapm.SnapmSizePolicyError) as cm:
+            self.manager.create_snapshot_set(
+                "testset0", self.mount_points(), default_size_policy="150%FREE"
+            )
+
+    def test_create_snapshot_set_size_policy_bad_units_raises(self):
+        with self.assertRaises(snapm.SnapmSizePolicyError) as cm:
+            self.manager.create_snapshot_set(
+                "testset0", self.mount_points(), default_size_policy="2FiB"
+            )
+
+    def test_create_snapshot_set_size_policy_non_num_raises(self):
+        with self.assertRaises(snapm.SnapmSizePolicyError) as cm:
+            self.manager.create_snapshot_set(
+                "testset0", self.mount_points(), default_size_policy="quux"
+            )
+
+    def test_create_snapshot_set_size_policies_blockdev_used_raises(self):
+        dev_specs = [f"{dev}:100%USED" for dev in self._lvm.block_devs()]
+        self._lvm.umount_all()
+        with self.assertRaises(snapm.SnapmSizePolicyError) as cm:
+            self.manager.create_snapshot_set("testset0", dev_specs)
+        self._lvm.mount_all()
 
     def test_create_snapshot_set_bad_name_backslash(self):
         with self.assertRaises(snapm.SnapmInvalidIdentifierError) as cm:
@@ -485,6 +560,7 @@ class ManagerTests(unittest.TestCase):
             self.manager.rename_snapshot_set("testset0", "testset1")
 
         self.assertEqual(sset.name, "testset0")
+        self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
     def test_find_snapshots(self):
         self.manager.create_snapshot_set("testset0", self.mount_points())
@@ -701,3 +777,39 @@ class ManagerTests(unittest.TestCase):
         for snapshot in snapset.snapshots:
             if snapshot.provider.name == "lvm2cow":
                 self.assertEqual(snapshot.size, 1024 ** 3)
+
+class ManagerTestsThin(unittest.TestCase):
+    """
+    Tests for snapm.manager.Manager that apply only to thin provisioned
+    snapshot providers (lvm2thin and stratis).
+    """
+    volumes = [] # Do not use lvm2cow
+    thin_volumes = ["root", "home", "var", "data_vol"]
+    stratis_volumes = ["fs1", "fs2"]
+
+    def setUp(self):
+        def cleanup_lvm():
+            if hasattr(self, "_lvm"):
+                self._lvm.destroy()
+
+        def cleanup_stratis():
+            if hasattr(self, "_stratis"):
+                self._stratis.destroy()
+
+        self.addCleanup(cleanup_lvm)
+        self.addCleanup(cleanup_stratis)
+
+        self._lvm = LvmLoopBacked(self.volumes, thin_volumes=self.thin_volumes)
+        self._stratis = StratisLoopBacked(self.stratis_volumes)
+
+        self.manager = snapm.manager.Manager()
+
+    def mount_points(self):
+        return self._lvm.mount_points() + self._stratis.mount_points()
+
+    def test_create_snapshot_set_recursion_raises(self):
+        sset = self.manager.create_snapshot_set("testset0", self.mount_points())
+        self.manager.activate_snapshot_sets(snapm.Selection(name="testset0"))
+        snap_devs = [snapshot.devpath for snapshot in sset.snapshots]
+        with self.assertRaises(snapm.SnapmRecursionError) as cm:
+            sset = self.manager.create_snapshot_set("testset1", snap_devs)

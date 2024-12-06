@@ -18,6 +18,8 @@ from subprocess import run, CalledProcessError
 from json import loads, JSONDecodeError
 from math import floor
 from os.path import join as path_join
+from os import stat
+from stat import S_ISBLK
 from time import time
 from shutil import which
 
@@ -37,14 +39,10 @@ from snapm.manager.plugins import (
     DEV_PREFIX,
     DEV_MAPPER_PREFIX,
     DMSETUP_CMD,
-    DMSETUP_SPLITNAME,
     DMSETUP_INFO,
-    DMSETUP_LVM_SUBSYS,
     DMSETUP_NO_HEADINGS,
     DMSETUP_COLUMNS,
-    DMSETUP_FIELDS_VG_LV,
     DMSETUP_FIELDS_UUID,
-    DMSETUP_REPORT_SEP,
     parse_snapshot_name,
     device_from_mount_point,
     mount_point_space_used,
@@ -92,6 +90,11 @@ LVS_LV_HIDDEN_END = "]"
 LVS_FIELD_OPTIONS = (
     "vg_name,lv_name,lv_attr,origin,pool_lv,lv_size,data_percent,lv_role"
 )
+
+# lvs options for devpath to vg/lv name
+LVS_FIELD_MIN_OPTIONS = "vg_name,lv_name"
+LVS_NO_HEADINGS = "--noheadings"
+
 
 # lv_attr flag values
 LVM_COW_SNAP_ATTR = "s"
@@ -175,6 +178,18 @@ _LVM_CMDS = [
 MINIMUM_LVM_VERSION = (2, 3, 11)
 
 
+def _decode_stderr(err):
+    """
+    Decode and strip the stderr member of a ``CalledProcessError`` and
+    return the result as a string.
+
+    :param err: A ``CalledProcessError`` like exception.
+    :returns: A stripped string representation of the exception's stderr
+              member.
+    """
+    return err.stderr.decode("utf8").strip()
+
+
 def _check_lvm_present():
     """
     Check for the presence of the required LVM2 commands.
@@ -215,7 +230,9 @@ def _check_lvm_version():
     try:
         lvm_version = _get_lvm_version()
     except CalledProcessError as err:
-        raise SnapmPluginError(f"Error getting LVM2 version: {err}") from err
+        raise SnapmPluginError(
+            f"Error getting LVM2 version: {_decode_stderr(err)}"
+        ) from err
     if lvm_version < MINIMUM_LVM_VERSION:
         raise SnapmPluginError(
             f"Unsupported LVM2 version: {_version_string(lvm_version)} "
@@ -243,7 +260,9 @@ def get_lvs_json_report(vg_lv=None, lvs_all=False):
     try:
         lvs_cmd = run(lvs_cmd_args, capture_output=True, check=True)
     except CalledProcessError as err:
-        raise SnapmCalloutError(f"Error calling {LVS_CMD}: {err}") from err
+        raise SnapmCalloutError(
+            f"Error calling {LVS_CMD}: {_decode_stderr(err)}"
+        ) from err
     try:
         lvs_dict = loads(lvs_cmd.stdout)
     except JSONDecodeError as err:
@@ -271,7 +290,9 @@ def get_vgs_json_report(vg_name=None):
     try:
         vgs_cmd = run(vgs_cmd_args, capture_output=True, check=True)
     except CalledProcessError as err:
-        raise SnapmCalloutError(f"Error calling {VGS_CMD}: {err}") from err
+        raise SnapmCalloutError(
+            f"Error calling {VGS_CMD}: {_decode_stderr(err)}"
+        ) from err
     try:
         vgs_dict = loads(vgs_cmd.stdout)
     except JSONDecodeError as err:
@@ -288,9 +309,12 @@ def is_lvm_device(devpath):
     Return ``True`` if the device at ``devpath`` is an LVM device or
     ``False`` otherwise.
     """
-    if not devpath.startswith(DEV_MAPPER_PREFIX):
-        return False
-    dm_name = devpath.removeprefix(DEV_MAPPER_PREFIX)
+
+    if devpath.startswith(DEV_MAPPER_PREFIX):
+        dm_name = devpath.removeprefix(DEV_MAPPER_PREFIX)
+    else:
+        dm_name = devpath
+
     dmsetup_cmd_args = [
         DMSETUP_CMD,
         DMSETUP_INFO,
@@ -302,7 +326,9 @@ def is_lvm_device(devpath):
     try:
         dmsetup_cmd = run(dmsetup_cmd_args, capture_output=True, check=True)
     except CalledProcessError as err:
-        raise SnapmCalloutError(f"Error calling {DMSETUP_CMD}") from err
+        raise SnapmCalloutError(
+            f"Error calling {DMSETUP_CMD}: {_decode_stderr(err)}"
+        ) from err
     uuid = dmsetup_cmd.stdout.decode("utf8").strip()
     return uuid.startswith(LVM_UUID_PREFIX)
 
@@ -312,21 +338,30 @@ def vg_lv_from_device_path(devpath):
     Return a ``(vg_name, lv_name)`` tuple for the LVM device at
     ``devpath``.
     """
-    dm_name = devpath.removeprefix(DEV_MAPPER_PREFIX)
-    dmsetup_cmd_args = [
-        DMSETUP_CMD,
-        DMSETUP_SPLITNAME,
-        DMSETUP_NO_HEADINGS,
-        DMSETUP_FIELDS_VG_LV,
-        dm_name,
-        DMSETUP_LVM_SUBSYS,
+    lvs_cmd_args = [
+        LVS_CMD,
+        LVS_NO_HEADINGS,
+        "-o",
+        LVS_FIELD_MIN_OPTIONS,
+        devpath,
     ]
     try:
-        dmsetup_cmd = run(dmsetup_cmd_args, capture_output=True, check=True)
+        lvs_cmd = run(lvs_cmd_args, capture_output=True, check=True)
     except CalledProcessError as err:
-        raise SnapmCalloutError(f"Error calling {DMSETUP_CMD}") from err
-    name = dmsetup_cmd.stdout.decode("utf8").strip()
-    name_parts = name.split(DMSETUP_REPORT_SEP)
+        raise SnapmCalloutError(
+            f"Error calling {LVS_CMD}: {_decode_stderr(err)}"
+        ) from err
+    name = lvs_cmd.stdout.decode("utf8").strip()
+    name_parts = name.split(" ")
+    return (name_parts[0], name_parts[1])
+
+
+def vg_lv_from_origin(origin):
+    """
+    Return a ``(vg_name, lv_name)`` tuple for the LVM device with origin
+    path ``origin``.
+    """
+    name_parts = origin.removeprefix(DEV_PREFIX + "/").split("/")
     return (name_parts[0], name_parts[1])
 
 
@@ -567,7 +602,9 @@ def _activate(active, name, silent=False):
         run(lvchange_cmd, capture_output=True, check=True)
     except CalledProcessError as err:
         if not silent:
-            raise SnapmCalloutError(f"{LVCHANGE_CMD} failed with: {err}") from err
+            raise SnapmCalloutError(
+                f"{LVCHANGE_CMD} failed with: {_decode_stderr(err)}"
+            ) from err
 
 
 class _Lvm2(Plugin):
@@ -590,13 +627,14 @@ class _Lvm2(Plugin):
         """
         raise NotImplementedError
 
-    def can_snapshot(self, mount_point):
+    def can_snapshot(self, source):
         """
-        Test whether this plugin can snapshot the specified mount point.
+        Test whether this plugin can snapshot the specified block device or
+        mount point path.
 
-        :param mount_point: The mount point path to test.
-        :returns: ``True`` if this plugin can snapshot the file system mounted
-                  at ``mount_point``, or ``False`` otherwise.
+        :param source: The mount point or block device path to test.
+        :returns: ``True`` if this plugin can snapshot the file system or
+                  block device at ``source``, or ``False`` otherwise.
         """
         raise NotImplementedError
 
@@ -636,11 +674,14 @@ class _Lvm2(Plugin):
         """
         Return a string representing the origin from a given mount point path.
         """
-        device = device_from_mount_point(mount_point)
+        if S_ISBLK(stat(mount_point).st_mode):
+            device = mount_point
+        else:
+            device = device_from_mount_point(mount_point)
         if not is_lvm_device(device):
             return None
         (vg_name, lv_name) = vg_lv_from_device_path(device)
-        return f"{vg_name}/{lv_name}"
+        return path_join(DEV_PREFIX, vg_name, lv_name)
 
     def delete_snapshot(self, name):
         """
@@ -652,7 +693,9 @@ class _Lvm2(Plugin):
         try:
             run(lvremove_cmd, capture_output=True, check=True)
         except CalledProcessError as err:
-            raise SnapmCalloutError(f"{LVREMOVE_CMD} failed with: {err}") from err
+            raise SnapmCalloutError(
+                f"{LVREMOVE_CMD} failed with: {_decode_stderr(err)}"
+            ) from err
 
     # pylint: disable=too-many-arguments
     def rename_snapshot(self, old_name, origin, snapset_name, timestamp, mount_point):
@@ -666,7 +709,7 @@ class _Lvm2(Plugin):
         :param timestamp: The snapshot set timestamp.
         :param mount_point: The mount point of the snapshot.
         """
-        (_, _, vg_name, lv_name) = origin.split("/")
+        vg_name, lv_name = vg_lv_from_origin(origin)
         new_name = format_snapshot_name(
             lv_name, snapset_name, timestamp, encode_mount_point(mount_point)
         )
@@ -686,7 +729,9 @@ class _Lvm2(Plugin):
         try:
             run(lvrename_cmd, capture_output=True, check=True)
         except CalledProcessError as err:
-            raise SnapmCalloutError(f"{LVRENAME_CMD} failed with: {err}") from err
+            raise SnapmCalloutError(
+                f"{LVRENAME_CMD} failed with: {_decode_stderr(err)}"
+            ) from err
 
         return self._build_snapshot(
             f"{vg_name}/{new_name}",
@@ -711,7 +756,7 @@ class _Lvm2(Plugin):
         ``SnapmPluginError`` if another reason prevents the snapshot from being
         merged.
         """
-        vg_name, lv_name = origin.removeprefix(DEV_PREFIX + "/").split("/")
+        vg_name, lv_name = vg_lv_from_origin(origin)
         lvs_dict = get_lvs_json_report(f"{vg_name}/{lv_name}")
         lv_report = lvs_dict[LVS_REPORT][0][LVS_LV][0]
         lv_attr = lv_report[LVS_LV_ATTR]
@@ -737,7 +782,9 @@ class _Lvm2(Plugin):
         try:
             run(lvconvert_cmd, capture_output=False, check=True)
         except CalledProcessError as err:
-            raise SnapmCalloutError(f"{LVCONVERT_CMD} failed with: {err}") from err
+            raise SnapmCalloutError(
+                f"{LVCONVERT_CMD} failed with: {_decode_stderr(err)}"
+            ) from err
 
     def activate_snapshot(self, name):
         """
@@ -773,7 +820,9 @@ class _Lvm2(Plugin):
         try:
             run(lvchange_cmd, capture_output=True, check=True)
         except CalledProcessError as err:
-            raise SnapmCalloutError(f"{LVCHANGE_CMD} failed with: {err}") from err
+            raise SnapmCalloutError(
+                f"{LVCHANGE_CMD} failed with: {_decode_stderr(err)}"
+            ) from err
 
     def _check_lvm_name(self, vg_name, lv_name):
         """
@@ -867,15 +916,20 @@ class Lvm2Cow(_Lvm2):
                     )
         return snapshots
 
-    def can_snapshot(self, mount_point):
+    def can_snapshot(self, source):
         """
-        Test whether the lvm2-cow plugin can snapshot the specified ``mount_point``.
+        Test whether the lvm2-cow plugin can snapshot the specified ``source``.
 
-        :param mount_point: The mount point path to test.
-        :returns: ``True`` if this plugin can snapshot the file system mounted
-                  at ``mount_point``, or ``False`` otherwise.
+        :param source: The mount point or block device path to test.
+        :returns: ``True`` if this plugin can snapshot the file system or block
+                  device found at ``source``, or ``False`` otherwise.
         """
-        device = device_from_mount_point(mount_point)
+
+        if S_ISBLK(stat(source).st_mode):
+            device = source
+        else:
+            device = device_from_mount_point(source)
+
         if not is_lvm_device(device):
             return False
         (vg_name, lv_name) = vg_lv_from_device_path(device)
@@ -890,7 +944,7 @@ class Lvm2Cow(_Lvm2):
             return False
         return True
 
-    def _check_free_space(self, vg_name, lv_name, mount_point, size_policy):
+    def _check_free_space(self, origin, mount_point, size_policy):
         """
         Check for available space in volume group ``vg_name`` for the specified
         mount point.
@@ -901,10 +955,11 @@ class Lvm2Cow(_Lvm2):
         :raises: ``SnapmNoSpaceError`` if the minimum snapshot size exceeds the
                  available space.
         """
+        vg_name, lv_name = vg_lv_from_origin(origin)
         fs_used = mount_point_space_used(mount_point)
         vg_free = vg_free_space(vg_name)
         lv_size = lv_dev_size(vg_name, lv_name)
-        policy = SizePolicy(mount_point, vg_free, fs_used, lv_size, size_policy)
+        policy = SizePolicy(origin, mount_point, vg_free, fs_used, lv_size, size_policy)
         snapshot_min_size = _snapshot_min_size(policy.size)
         if vg_free < (sum(self.size_map[vg_name].values()) + snapshot_min_size):
             raise SnapmNoSpaceError(
@@ -915,32 +970,33 @@ class Lvm2Cow(_Lvm2):
     def check_create_snapshot(
         self, origin, snapset_name, timestamp, mount_point, size_policy
     ):
-        (vg_name, lv_name) = origin.split("/")
+        vg_name, lv_name = vg_lv_from_origin(origin)
         snapshot_name = format_snapshot_name(
             lv_name, snapset_name, timestamp, encode_mount_point(mount_point)
         )
         self._check_lvm_name(vg_name, snapshot_name)
         if vg_name not in self.size_map:
             self.size_map[vg_name] = {}
-        self.size_map[vg_name][mount_point] = self._check_free_space(
-            vg_name, lv_name, mount_point, size_policy
+        self.size_map[vg_name][lv_name] = self._check_free_space(
+            origin, mount_point, size_policy
         )
 
     def create_snapshot(
         self, origin, snapset_name, timestamp, mount_point, size_policy
     ):
-        (vg_name, lv_name) = origin.split("/")
+        vg_name, lv_name = vg_lv_from_origin(origin)
         self._log_debug(
-            "Creating CoW snapshot for %s/%s mounted at %s",
+            "Creating CoW snapshot for %s/%s %s %s",
             vg_name,
             lv_name,
+            "mounted at" if mount_point else "",
             mount_point,
         )
         snapshot_name = format_snapshot_name(
             lv_name, snapset_name, timestamp, encode_mount_point(mount_point)
         )
         self._check_lvm_name(vg_name, snapshot_name)
-        snapshot_size = self.size_map[vg_name][mount_point]
+        snapshot_size = self.size_map[vg_name][lv_name]
         lvcreate_cmd = [
             LVCREATE_CMD,
             LVCREATE_SNAPSHOT,
@@ -954,7 +1010,7 @@ class Lvm2Cow(_Lvm2):
             run(lvcreate_cmd, capture_output=True, check=True)
         except CalledProcessError as err:
             raise SnapmCalloutError(
-                f"{LVCREATE_CMD} failed with: {err.stderr.decode('utf8')}"
+                f"{LVCREATE_CMD} failed with: {_decode_stderr(err)}"
             ) from err
         return Lvm2CowSnapshot(
             f"{vg_name}/{snapshot_name}",
@@ -968,16 +1024,16 @@ class Lvm2Cow(_Lvm2):
         )
 
     def check_resize_snapshot(self, name, origin, mount_point, size_policy):
-        vg_name, lv_name = origin.removeprefix(DEV_PREFIX + "/").split("/")
+        vg_name, lv_name = vg_lv_from_origin(origin)
         if vg_name not in self.size_map:
             self.size_map[vg_name] = {}
-        self.size_map[vg_name][mount_point] = self._check_free_space(
-            vg_name, lv_name, mount_point, size_policy
+        self.size_map[vg_name][lv_name] = self._check_free_space(
+            origin, mount_point, size_policy
         )
 
     def resize_snapshot(self, name, origin, mount_point, size_policy):
-        vg_name, _ = origin.removeprefix(DEV_PREFIX + "/").split("/")
-        snapshot_size = self.size_map[vg_name][mount_point]
+        vg_name, lv_name = vg_lv_from_origin(origin)
+        snapshot_size = self.size_map[vg_name][lv_name]
 
         lvresize_cmd = [
             LVRESIZE_CMD,
@@ -989,7 +1045,7 @@ class Lvm2Cow(_Lvm2):
             run(lvresize_cmd, capture_output=True, check=True)
         except CalledProcessError as err:
             raise SnapmCalloutError(
-                f"{LVRESIZE_CMD} failed with: {err.stderr.decode('utf8')}"
+                f"{LVRESIZE_CMD} failed with: {_decode_stderr(err)}"
             ) from err
 
     def _build_snapshot(
@@ -1062,8 +1118,19 @@ class Lvm2Thin(_Lvm2):
                     )
         return snapshots
 
-    def can_snapshot(self, mount_point):
-        device = device_from_mount_point(mount_point)
+    def can_snapshot(self, source):
+        """
+        Test whether the lvm2-thin plugin can snapshot the specified ``source``.
+
+        :param source: The mount point or block device path to test.
+        :returns: ``True`` if this plugin can snapshot the file system or block
+                  device found at ``source``, or ``False`` otherwise.
+        """
+        if S_ISBLK(stat(source).st_mode):
+            device = source
+        else:
+            device = device_from_mount_point(source)
+
         if not is_lvm_device(device):
             return False
         (vg_name, lv_name) = vg_lv_from_device_path(device)
@@ -1078,11 +1145,14 @@ class Lvm2Thin(_Lvm2):
             return False
         return True
 
-    def _check_free_space(self, vg_name, lv_name, pool_name, mount_point, size_policy):
+    def _check_free_space(self, origin, pool_name, mount_point, size_policy):
+        vg_name, lv_name = vg_lv_from_origin(origin)
         fs_used = mount_point_space_used(mount_point)
         lv_size = lv_dev_size(vg_name, lv_name)
         pool_free = pool_free_space(vg_name, pool_name)
-        policy = SizePolicy(mount_point, pool_free, fs_used, lv_size, size_policy)
+        policy = SizePolicy(
+            origin, mount_point, pool_free, fs_used, lv_size, size_policy
+        )
         snapshot_min_size = policy.size
         if pool_free < (
             sum(self.size_map[vg_name][pool_name].values()) + snapshot_min_size
@@ -1096,7 +1166,7 @@ class Lvm2Thin(_Lvm2):
     def check_create_snapshot(
         self, origin, snapset_name, timestamp, mount_point, size_policy
     ):
-        (vg_name, lv_name) = origin.split("/")
+        vg_name, lv_name = vg_lv_from_origin(origin)
         pool_name = pool_name_from_vg_lv(origin)
         snapshot_name = format_snapshot_name(
             lv_name, snapset_name, timestamp, encode_mount_point(mount_point)
@@ -1106,14 +1176,14 @@ class Lvm2Thin(_Lvm2):
             self.size_map[vg_name] = {}
         if pool_name not in self.size_map[vg_name]:
             self.size_map[vg_name][pool_name] = {}
-        self.size_map[vg_name][pool_name][mount_point] = self._check_free_space(
-            vg_name, lv_name, pool_name, mount_point, size_policy
+        self.size_map[vg_name][pool_name][lv_name] = self._check_free_space(
+            origin, pool_name, mount_point, size_policy
         )
 
     def create_snapshot(
         self, origin, snapset_name, timestamp, mount_point, size_policy
     ):
-        (vg_name, lv_name) = origin.split("/")
+        vg_name, lv_name = vg_lv_from_origin(origin)
         self._log_debug(
             "Creating thin snapshot for %s/%s mounted at %s",
             vg_name,
@@ -1135,7 +1205,9 @@ class Lvm2Thin(_Lvm2):
         try:
             run(lvcreate_cmd, capture_output=True, check=True)
         except CalledProcessError as err:
-            raise SnapmCalloutError(f"{LVCREATE_CMD} failed with: {err}") from err
+            raise SnapmCalloutError(
+                f"{LVCREATE_CMD} failed with: {_decode_stderr(err)}"
+            ) from err
         return Lvm2ThinSnapshot(
             f"{vg_name}/{snapshot_name}",
             snapset_name,
@@ -1148,15 +1220,14 @@ class Lvm2Thin(_Lvm2):
         )
 
     def check_resize_snapshot(self, name, origin, mount_point, size_policy):
-        origin = origin.removeprefix(DEV_PREFIX + "/")
-        vg_name, lv_name = origin.split("/")
+        vg_name, lv_name = vg_lv_from_origin(origin)
         pool_name = pool_name_from_vg_lv(origin)
         if vg_name not in self.size_map:
             self.size_map[vg_name] = {}
         if pool_name not in self.size_map[vg_name]:
             self.size_map[vg_name][pool_name] = {}
-        self.size_map[vg_name][mount_point] = self._check_free_space(
-            vg_name, lv_name, pool_name, mount_point, size_policy
+        self.size_map[vg_name][pool_name][lv_name] = self._check_free_space(
+            origin, pool_name, mount_point, size_policy
         )
 
     def resize_snapshot(self, name, origin, mount_point, size_policy):

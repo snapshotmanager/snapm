@@ -61,10 +61,13 @@ SECTOR_SIZE = 512
 ETC_FSTAB = "/etc/fstab"
 
 DEFAULT_PERCENT_USED = 200.0
+DEFAULT_PERCENT_SIZE = 25.0
 
 # Constants for SnapshotSet property names
 SNAPSET_NAME = "SnapsetName"
+SNAPSET_SOURCES = "Sources"
 SNAPSET_MOUNT_POINTS = "MountPoints"
+SNAPSET_DEVICES = "Devices"
 SNAPSET_NR_SNAPSHOTS = "NrSnapshots"
 SNAPSET_TIME = "Time"
 SNAPSET_TIMESTAMP = "Timestamp"
@@ -80,6 +83,7 @@ SNAPSET_SNAPSHOTS = "Snapshots"
 # Constants for Snapshot property names
 SNAPSHOT_NAME = "Name"
 SNAPSHOT_ORIGIN = "Origin"
+SNAPSHOT_SOURCE = "Source"
 SNAPSHOT_MOUNT_POINT = "MountPoint"
 SNAPSHOT_PROVIDER = "Provider"
 SNAPSHOT_UUID = "UUID"
@@ -189,6 +193,12 @@ class SnapmNoProviderError(SnapmError):
     """
 
 
+class SnapmSizePolicyError(SnapmError):
+    """
+    An invalid size policy was specified.
+    """
+
+
 class SnapmExistsError(SnapmError):
     """
     The named snapshot set already exists.
@@ -205,7 +215,7 @@ class SnapmBusyError(SnapmError):
 class SnapmPathError(SnapmError):
     """
     An invalid path was supplied, for example attempting to snapshot
-    something that is not a mount point.
+    something that is not a mount point or block device.
     """
 
 
@@ -236,6 +246,13 @@ class SnapmPluginError(SnapmError):
 class SnapmStateError(SnapmError):
     """
     The status of an object does not allow an operation to proceed.
+    """
+
+
+class SnapmRecursionError(SnapmError):
+    """
+    A snapshot set source corresponds to a snapshot of another snapshot
+    set.
     """
 
 
@@ -483,7 +500,7 @@ def parse_size_with_units(value):
     """
     match = _SIZE_RE.search(value)
     if match is None:
-        raise SnapmParseError(f"Malformed size expression: {value}")
+        raise SnapmSizePolicyError(f"Malformed size expression: {value}")
     (size, unit) = (match.group("size"), match.group("units").upper())
     size_bytes = int(size) * _SIZE_SUFFIXES[unit[0]]
     return size_bytes
@@ -497,19 +514,11 @@ def is_size_policy(policy):
     :returns: ``True`` if ``policy`` is a valid size policy string or
               ``False`` otherwise.
     """
-    if policy is None:
-        return False
-    if "%" not in policy:
-        try:
-            parse_size_with_units(policy)
-        except SnapmParseError:
-            return False
+    try:
+        _ = SizePolicy("/", "/", 0, 0, 0, policy)
         return True
-    (_, policy_type) = policy.rsplit("%", maxsplit=1)
-    for ptype in SizePolicyType:
-        if ptype.value == policy_type:
-            return True
-    return False
+    except SnapmSizePolicyError:
+        return False
 
 
 class SizePolicyType(Enum):
@@ -533,8 +542,11 @@ class SizePolicy:
         Parse a string representation of a size policy.
         """
         if policy is None:
-            self._percent = DEFAULT_PERCENT_USED
-            return SizePolicyType.PERCENT_USED
+            if self._mount:
+                self._percent = DEFAULT_PERCENT_USED
+                return SizePolicyType.PERCENT_USED
+            self._percent = DEFAULT_PERCENT_SIZE
+            return SizePolicyType.PERCENT_SIZE
         if "%" not in policy:
             self._size = parse_size_with_units(policy)
             return SizePolicyType.FIXED
@@ -543,24 +555,33 @@ class SizePolicy:
         cap_percent = (SizePolicyType.PERCENT_SIZE, SizePolicyType.PERCENT_FREE)
         for ptype in SizePolicyType:
             if ptype.value == policy_type:
+                if ptype == SizePolicyType.PERCENT_USED and not self._mount:
+                    raise SnapmSizePolicyError(
+                        f"Cannot apply %USED size policy to unmounted block device {self._source}"
+                    )
                 if ptype in cap_percent and self._percent > 100.0:
-                    raise SnapmNoSpaceError(
+                    raise SnapmSizePolicyError(
                         f"Size {self._mount}:{self._percent}%{ptype.value} "
                         "cannot be greater than 100%"
                     )
                 return ptype
-        raise SnapmParseError(f"Could not parse size policy: {policy}")
+        raise SnapmSizePolicyError(f"Could not parse size policy: {policy}")
 
-    def __init__(self, mount, free_space, fs_used, dev_size, policy):
+    def __init__(self, source, mount, free_space, fs_used, dev_size, policy):
         """
         Initialise a new `SizePolicy` object using the supplied parameters.
 
+        :param source: The source for this SizePolicy: a mount point or block
+                       device path.
+        :param mount: The mount point path if mounted.
         :param free_space: The free space available to provision the snapshot
                            in bytes.
         :param fs_used: The current file system occupancy in bytes.
         :param dev_size: The origin device size in bytes.
+        :param policy: A size policy string.
         :returns: A `SizePolicy` object configured for the specified size.
         """
+        self._source = source
         self._mount = mount
         self._free_space = free_space
         self._fs_used = fs_used
@@ -636,10 +657,13 @@ class SnapshotSet:
         self._timestamp = timestamp
         self._snapshots = snapshots
         self._by_mount_point = {}
+        self._by_origin = {}
         self.boot_entry = None
         self.revert_entry = None
         for snapshot in self._snapshots:
-            self._by_mount_point[snapshot.mount_point] = snapshot
+            if snapshot.mount_point:
+                self._by_mount_point[snapshot.mount_point] = snapshot
+            self._by_origin[snapshot.origin] = snapshot
 
     def __str__(self):
         """
@@ -649,7 +673,16 @@ class SnapshotSet:
         """
         snapset_str = (
             f"{SNAPSET_NAME}:      {self.name}\n"
-            f"{SNAPSET_MOUNT_POINTS}:      {', '.join([s.mount_point for s in self.snapshots])}\n"
+            f"{SNAPSET_SOURCES}:          {', '.join(self.sources)}\n"
+        )
+
+        if len(self.mount_points) > 0 and len(self.devices) > 0:
+            snapset_str += (
+                f"  {SNAPSET_MOUNT_POINTS}:    {', '.join(self.mount_points)}\n"
+                f"  {SNAPSET_DEVICES}:        {', '.join(self.devices)}\n"
+            )
+
+        snapset_str += (
             f"{SNAPSET_NR_SNAPSHOTS}:      {self.nr_snapshots}\n"
             f"{SNAPSET_TIME}:             {datetime.fromtimestamp(self.timestamp)}\n"
             f"{SNAPSET_UUID}:             {self.uuid}\n"
@@ -657,6 +690,7 @@ class SnapshotSet:
             f"{SNAPSET_AUTOACTIVATE}:     {'yes' if self.autoactivate else 'no'}\n"
             f"{SNAPSET_BOOTABLE}:         {'yes' if self.boot_entry is not None else 'no'}"
         )
+
         if self.boot_entry or self.revert_entry:
             snapset_str += f"\n{SNAPSET_BOOT_ENTRIES}:"
         if self.boot_entry:
@@ -675,7 +709,9 @@ class SnapshotSet:
         """
         pmap = {}
         pmap[SNAPSET_NAME] = self.name
-        pmap[SNAPSET_MOUNT_POINTS] = [s.mount_point for s in self.snapshots]
+        pmap[SNAPSET_SOURCES] = self.sources
+        pmap[SNAPSET_MOUNT_POINTS] = self.mount_points
+        pmap[SNAPSET_DEVICES] = self.devices
         pmap[SNAPSET_NR_SNAPSHOTS] = self.nr_snapshots
         pmap[SNAPSET_TIMESTAMP] = self.timestamp
         pmap[SNAPSET_TIME] = self.time
@@ -751,11 +787,25 @@ class SnapshotSet:
         return len(self._snapshots)
 
     @property
+    def sources(self):
+        """
+        The list of souce mount points and block devices in this snapshot set.
+        """
+        return [s.source for s in self.snapshots]
+
+    @property
     def mount_points(self):
         """
         The list of mount points in this snapshot set.
         """
-        return [s.mount_point for s in self.snapshots]
+        return [s.mount_point for s in self.snapshots if s.mount_point]
+
+    @property
+    def devices(self):
+        """
+        The list of block devices in this snapshot set.
+        """
+        return [s.source for s in self.snapshots if s.source not in self.mount_points]
 
     @property
     def status(self):
@@ -848,6 +898,23 @@ class SnapshotSet:
             f"Mount point {mount_point} not found in snapset {self.name}"
         )
 
+    def snapshot_by_source(self, source):
+        """
+        Return the snapshot corresponding to ``source``.
+
+        :param source: The block device or mount point path to search for.
+        :returns: A ``Snapshot`` object for the given source path.
+        :raises: ``SnapmNotFoundError`` if the specified source path
+                 is not present in this ``SnapshotSet``.
+        """
+        if source in self._by_mount_point:
+            return self._by_mount_point[source]
+        if source in self._by_origin:
+            return self._by_origin[source]
+        raise SnapmNotFoundError(
+            f"Source path {source} not found in snapset {self.name}"
+        )
+
 
 # pylint: disable=too-many-instance-attributes,too-many-public-methods
 class Snapshot:
@@ -888,6 +955,7 @@ class Snapshot:
             f"{SNAPSET_NAME}:    {self.snapset_name}\n"
             f"{SNAPSHOT_ORIGIN}:         {self.origin}\n"
             f"{SNAPSET_TIME}:           {datetime.fromtimestamp(self.timestamp)}\n"
+            f"{SNAPSHOT_SOURCE}:         {self.source}\n"
             f"{SNAPSHOT_MOUNT_POINT}:     {self.mount_point}\n"
             f"{SNAPSHOT_PROVIDER}:       {self.provider.name}\n"
             f"{SNAPSHOT_UUID}:           {self.uuid}\n"
@@ -908,6 +976,7 @@ class Snapshot:
         pmap[SNAPSHOT_ORIGIN] = self.origin
         pmap[SNAPSET_TIMESTAMP] = self.timestamp
         pmap[SNAPSET_TIME] = self.time
+        pmap[SNAPSHOT_SOURCE] = self.source
         pmap[SNAPSHOT_MOUNT_POINT] = self.mount_point
         pmap[SNAPSHOT_PROVIDER] = self.provider.name
         pmap[SNAPSHOT_UUID] = str(self.uuid)
@@ -981,6 +1050,14 @@ class Snapshot:
         The mount point of this snapshot.
         """
         return self._mount_point
+
+    @property
+    def source(self):
+        """
+        The block device or mount point from which this ``Snapshot``
+        was created.
+        """
+        return self.mount_point if self.mount_point else self.origin
 
     @property
     def snapshot_set(self):
@@ -1173,7 +1250,9 @@ class Snapshot:
 __all__ = [
     "ETC_FSTAB",
     "SNAPSET_NAME",
+    "SNAPSET_SOURCES",
     "SNAPSET_MOUNT_POINTS",
+    "SNAPSET_DEVICES",
     "SNAPSET_NR_SNAPSHOTS",
     "SNAPSET_TIME",
     "SNAPSET_TIMESTAMP",
@@ -1187,6 +1266,7 @@ __all__ = [
     "SNAPSET_SNAPSHOTS",
     "SNAPSHOT_NAME",
     "SNAPSHOT_ORIGIN",
+    "SNAPSHOT_SOURCE",
     "SNAPSHOT_MOUNT_POINT",
     "SNAPSHOT_PROVIDER",
     "SNAPSHOT_UUID",
@@ -1208,6 +1288,7 @@ __all__ = [
     "SnapmCalloutError",
     "SnapmNoSpaceError",
     "SnapmNoProviderError",
+    "SnapmSizePolicyError",
     "SnapmExistsError",
     "SnapmBusyError",
     "SnapmPathError",
@@ -1216,6 +1297,7 @@ __all__ = [
     "SnapmParseError",
     "SnapmPluginError",
     "SnapmStateError",
+    "SnapmRecursionError",
     "Selection",
     "size_fmt",
     "is_size_policy",
