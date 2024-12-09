@@ -15,7 +15,7 @@
 Snapshot manager plugin helpers.
 """
 import os
-from os.path import sep as path_sep
+from os.path import sep as path_sep, ismount
 
 _MOUNT_SEPARATOR = "-"
 _ESCAPED_MOUNT_SEPARATOR = "--"
@@ -226,6 +226,8 @@ def mount_point_space_used(mount_point):
     Return the space used on the file system mounted at ``mount_point``
     as a value in bytes.
     """
+    if not mount_point or not ismount(mount_point):
+        return -1
     stat = os.statvfs(mount_point)
     return (stat.f_blocks - stat.f_bfree) * stat.f_frsize
 

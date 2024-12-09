@@ -22,14 +22,23 @@ dmsetup_splitname_noheadings_ovgname_lvname = {
     "vg_test0-lv_test0": "vg_test0:lv_test0",
 }
 
+stratis_pool_fs_to_dm_name = {
+    "p1/fs1": "stratis-1-1c7c941a2dba4eb78d57d3fb01aacc61-thin-fs-202ea1667fa54123bd24f0c353b9914c"
+}
 
 def dmsetup_info(args):
     if args.columns:
         if args.noheadings:
             if args.options == "uuid":
                 if args.device_name:
-                    if args.device_name in dmsetup_info_columns_noheadings_ouuid:
-                        print(dmsetup_info_columns_noheadings_ouuid[args.device_name])
+                    if args.device_name.startswith("/dev/mapper/"):
+                        device_name = args.device_name.removeprefix("/dev/mapper/")
+                    elif args.device_name.startswith("/dev/stratis/"):
+                        device_name = stratis_pool_fs_to_dm_name[args.device_name.removeprefix("/dev/stratis/")]
+                    else:
+                        device_name = args.device_name
+                    if device_name in dmsetup_info_columns_noheadings_ouuid:
+                        print(dmsetup_info_columns_noheadings_ouuid[device_name])
                         return 0
                     else:
                         return 1

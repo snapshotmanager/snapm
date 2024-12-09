@@ -1,4 +1,4 @@
-.TH SNAPM 8 "Oct 14 2024" "Linux" "MAINTENANCE COMMANDS"
+.TH SNAPM 8 "Dec 05 2024" "Linux" "MAINTENANCE COMMANDS"
 
 .de ARG_GLOBAL
 .  RI [ global_args ]
@@ -80,7 +80,7 @@ Snapm \(em Linux snapshot manager
 .  RB [ -s | --size-policy
 .  IR policy ]
 .  IR \fIname\fP
-.  IR \fImount_point[size_policy]\fP ...
+.  IR \fIsource[size_policy]\fP ...
 .  ad b
 ..
 .CMD_SNAPSET_CREATE
@@ -140,7 +140,7 @@ Snapm \(em Linux snapshot manager
 .  IR uuid ]
 .  RB [ -s | --size-policy
 .  IR policy ]
-.  IR \fImount_point[size_policy]\fP ...
+.  IR \fIsource[size_policy]\fP ...
 .  ad b
 ..
 .CMD_SNAPSET_RESIZE
@@ -481,16 +481,17 @@ Display the version of \fBsnapm\fP and exit.
 .SH SNAPSHOT SETS AND SNAPSHOTS
 .
 Snapm manages named collections of snapshots taken at a common point in time as
-\fIsnapshot sets\fP. A snapshot set is created from a list of mount points and
-allows the state of the system to be captured spanning over several volumes.
-Valid characters for snapset names are A-Z, a-z, 0-9, -, ., and +. Snapshot sets
-and snapshots are also identified by a unique UUID value. The terms \fIsnapshot
-set\fP and \fIsnapset\fP are used interchangeably in this manual page.
+\fIsnapshot sets\fP. A snapshot set is created from a list of sources (mount
+point or block device paths) and allows the state of the system to be captured
+spanning over several volumes.  Valid characters for snapset names are A-Z,
+a-z, 0-9, -, ., and +. Snapshot sets and snapshots are also identified by a
+unique UUID value. The terms \fIsnapshot set\fP and \fIsnapset\fP are used
+interchangeably in this manual page.
 
-A plugin model is used to map mount points onto possible snapshot
-\fIproviders\fP. A provider plugin must exist for each mount point specified
-when creating a snapshot set. The current plugins support LVM2 copy-on-write and
-LVM2 thinly provisioned snapshots.
+A plugin model is used to map mount points or devices onto possible snapshot
+\fIproviders\fP. A provider plugin must exist for each source path specified
+when creating a snapshot set. The current plugins support LVM2 copy-on-write,
+LVM2 thin provisioned and Stratis snapshots.
 
 The \fIsnapset\fP subcommand allows snapsets to be created, deleted,
 enumerated, renamed, reverted, and activated or deactivated.
@@ -509,8 +510,9 @@ specific size for the snapshot data store. If this space is completely consumed
 the snapshot becomes \fIinvalid\fP and can no longer be accessed.
 
 When a revert is executed for a snapshot set that is currently mounted the
-status of the snapshot set is \fIreverting\fP. The revert will take place the
-next time the volumes making up the snapshot set are activated.
+status of the snapshot set is \fIreverting\fP. If the snapshot set is in use
+(either the origin or snapshot volumes are mounted) The revert will take place
+the next time the volumes making up the snapshot set are activated.
 
 The status of a snapset is an aggregation of the status of the individual
 snapshots it contains: if any snapshots are \fIinactive\fP then the overall
@@ -521,7 +523,7 @@ are \fIinvalid\fP then the snapshot set status as a whole is also
 .B Snapshot size policies
 .P
 An optional size policy hint can be specified when creating a snapshot set,
-either as a global default or individually for each mount point. The policy is
+either as a global default or individually for each source path. The policy is
 used at creation time to check that sufficient space is present.
 
 For snapshot providers that require a fixed space to be allocated for the
@@ -542,7 +544,8 @@ A percentage of the free space available from 0 to 100%.
 .B %USED
 A percentage of the space currently consumed on the mount point, as reported
 by \fIdf\fP. Values greater than 100% can be used to allow the existing content
-to be completely overwritten without running out of space.
+to be completely overwritten without running out of space. This policy can only
+be applied to snapshot sources that correspond to mounted file systems.
 .TP
 .B %SIZE
 A percentage of the size of the origin volume from 0 to 100%.
@@ -550,7 +553,8 @@ A percentage of the size of the origin volume from 0 to 100%.
 .
 .P
 .br
-The default size policy for all volumes if none is specified is 200%USED.
+The default size policy mounted volumes if none is specified is 200%USED. The
+default size policy for unmounted block devices is 25%SIZE.
 .
 .P
 .B Snapshot Set Commands
@@ -560,25 +564,30 @@ The default size policy for all volumes if none is specified is 200%USED.
 .B snapm
 .CMD_SNAPSET_CREATE
 .br
-Create a new snapshot set using the specified list of mount points.
+Create a new snapshot set using the specified list of mount points and block
+devices.
 
 The newly created snapset is displayed on the terminal on success:
 
 .br
 #
-.B snapm snapset create backup / /home /data /opt /srv
+.B snapm snapset create backup / /home /var /opt /srv
 .br
-SnapsetName:  backup
+SnapsetName:      backup
 .br
-MountPoints:  /, /home, /data, /opt, /srv
+Sources:          /, /home, /var, /opt, /srv
 .br
-NrSnapshots:  5
+NrSnapshots:      5
 .br
-Time:         2023-11-17 18:10:06
+Time:             2024-12-05 17:46:12
 .br
-UUID:         f217177c-f35a-5b57-b33e-4c8ba0bb231a
+UUID:             87c89914-51a5-5043-8513-667100213243
 .br
-Status:       Inactive
+Status:           Inactive
+.br
+Autoactivate:     no
+.br
+Bootable:         no
 .br
 
 When creating snapshot sets \fB--bootable\fP and \fB--revert\fP can optionally
@@ -586,25 +595,30 @@ be used to automatically create snapshot boot and revert boot entries
 respectively.
 
 A size policy can be specified on the create command line, either as a global
-default or individually for each mount point. To specify a default policy use
-the \fB--size-policy\fP argument.  To specify a per-mount point size policy
-append the policy to the mount point path separated by the \fB:\fP character:
+default or individually for each source path. To specify a default policy use
+the \fB--size-policy\fP argument.  To specify a per-source path size policy
+append the policy to the source path separated by the \fB:\fP character:
 
 .br
 #
 .B snapm snapset create backup --size-policy 25%FREE /:4G /home /var
 .br
-SnapsetName:    backup
+SnapsetName:      backup
 .br
-MountPoints:    /, /home, /var
+Sources:          /, /home, /var
 .br
-NrSnapshots:    3
+NrSnapshots:      3
 .br
-Time:           2024-06-05 18:43:43
+Time:             2024-12-05 17:47:19
 .br
-UUID:           51b14f55-5281-54ca-87b9-1ff4991cb830
+UUID:             4106d5b5-b521-504d-8822-8826594debb5
 .br
-Status:         Inactive
+Status:           Inactive
+.br
+Autoactivate:     no
+.br
+Bootable:         no
+.br
 
 .br
 Snapshot providers that do not allocate a fixed size for snapshot data will
@@ -654,9 +668,9 @@ dynamically allocate space the command will check that the requested space is
 available at the time of the resize command. An error is returned if the
 specified size policies cannot be satisfied.
 
-Size policies may be specified on a per-mount basis using the same syntax as
+Size policies may be specified on a per-source basis using the same syntax as
 the \fBsnapset create\fP command. A default size policy can be set using the
-\fB--size-policy\fP argument. If no mount points are specified the command
+\fB--size-policy\fP argument. If no source paths are specified the command
 applies the default size policy to each member of the snapshot set.
 .
 .HP
@@ -880,15 +894,21 @@ Snapshot set Fields
 .br
   nr_snapshots - Number of snapshots [num]
 .br
+  sources      - Snapshot set sources [strlist]
+.br
   mountpoints  - Snapshot set mount points [strlist]
+.br
+  devices      - Snapshot set devices [strlist]
 .br
   status       - Snapshot set status [str]
 .br
-  autoactivate  - Autoactivation status [str]
+  autoactivate - Autoactivation status [str]
 .br
-  bootentry     - Snapshot set boot entry [sha]
+  bootable     - Configured for snapshot boot [str]
 .br
-  revertentry - Snapshot set revert boot entry [sha]
+  bootentry    - Snapshot set boot entry [sha]
+.br
+  revertentry  - Snapshot set revert boot entry [sha]
 .br
 .
 .SH REPORT FIELDS
@@ -917,8 +937,14 @@ The snapshot set creation time as a human readable string.
 .B nr_snapshots
 The number of snapshots contained in this snapshot set.
 .TP
+.B sources
+The list of sources (devices or mount points) contained in this snapshot set.
+.TP
 .B mountpoints
 The list of mount points contained in this snapshot set.
+.TP
+.B devices
+The list of block devices contained in this snapshot set.
 .TP
 .B status
 The current status of this snapshot set. Possible values are \fIActive\fP,
@@ -991,24 +1017,27 @@ List the available snapshot sets
 #
 .B snapm snapset list
 .br
-SnapsetName  Time                 NrSnapshots Status   MountPoints
+SnapsetName  Time                 NrSnapshots Status   Sources
 .br
-backup       2023-11-30 14:26:10            5 Inactive /, /data, /home, /opt, /srv
+backup       2024-12-05 17:53:10            4 Active   /, /opt, /srv, /var
 .br
-userdata     2023-11-22 18:03:35            2 Active   /data, /home
+userdata     2024-12-05 17:53:22            2 Inactive /data, /home
+.br
 .P
 List the available snapshots
 .br
 #
 .B snapm snapshot list
 .br
-SnapsetName  Origin           MountPoint       Status   Size   Free   Autoactivate Provider
+SnapsetName  Name                                          Origin              Source  Status   Size     Free     Autoactivate Provider
 .br
-backup       /dev/fedora/root /                Active   4.0GiB 4.0GiB yes          lvm2-cow
+backup       fedora/root-snapset_backup_1733421190_-       /dev/fedora/root    /       Active     8.8GiB   8.8GiB yes          lvm2-cow
 .br
-backup       /dev/fedora/var  /var             Active   5.8GiB 5.8GiB yes          lvm2-cow
+backup       fedora/var-snapset_backup_1733421190_-var     /dev/fedora/var     /var    Active     6.4GiB   6.4GiB yes          lvm2-cow
 .br
-backup       /dev/fedora/home /home            Inactive 1.0GiB 1.9GiB no           lvm2-thin
+backup       p1/fs2-snapset_backup_1733421190_-srv         /dev/stratis/p1/fs2 /srv    Active     2.0GiB   3.2GiB yes          stratis
+.br
+backup       p1/fs1-snapset_backup_1733421190_-opt         /dev/stratis/p1/fs1 /opt    Active     1.0GiB   3.2GiB yes          stratis
 .br
 .P
 Create a new snapshot set from the mount points /, /home, and /var
@@ -1016,38 +1045,49 @@ Create a new snapshot set from the mount points /, /home, and /var
 #
 .B snapm snapset create backup / /home /var
 .br
-SnapsetName:  backup
+SnapsetName:      backup
 .br
-MountPoints:  /, /home, /var
+Sources:          /, /home, /var
 .br
-NrSnapshots:  3
+NrSnapshots:      3
 .br
-Time:         2023-11-21 16:01:31
+Time:             2024-12-05 17:57:05
 .br
-UUID:         fb76b84b-b615-5aa7-8b2c-713614794a12
+UUID:             b9b4cd96-75a5-5826-a26b-b617c06bd877
 .br
-Status:       Active
+Status:           Active
+.br
+Autoactivate:     no
+.br
+Bootable:         no
+.br
 .P
 Create a bootable snapshot set from the mount points /, /home, and /var
 .br
 #
-.B snapm snapset create upgrade -rb / /home /var
+.B snapm snapset create -br upgrade / /home /var
 .br
-SnapsetName:    upgrade
+SnapsetName:      upgrade
 .br
-MountPoints:    /, /home, /var
+Sources:          /, /home, /var
 .br
-NrSnapshots:    3
+NrSnapshots:      3
 .br
-Time:           2024-06-06 13:19:15
+Time:             2024-12-05 17:58:37
 .br
-UUID:           5c38930a-6907-54a3-9482-3f2b29a5fc09
+UUID:             1a2b5bc4-e123-5553-a4a3-6ba798baa945
 .br
-Status:         Active
+Status:           Active
 .br
-Boot entry:     b0eb722
+Autoactivate:     yes
 .br
-Revert entry: c707e9c
+Bootable:         yes
+.br
+BootEntries:
+.br
+  SnapshotEntry:  f3a98eb
+.br
+  RevertEntry:    79bfab1
 .br
 .P
 Delete the snapset named 'backup'
@@ -1075,55 +1115,57 @@ Display the snapset named 'upgrade'
 #
 .B snapm snapset show upgrade
 .br
-SnapsetName:    upgrade
+SnapsetName:      upgrade
 .br
-MountPoints:    /, /var, /home
+Sources:          /, /var, /home
 .br
-NrSnapshots:    3
+NrSnapshots:      3
 .br
-Time:           2024-06-06 13:19:15
+Time:             2024-12-05 17:58:37
 .br
-UUID:           5c38930a-6907-54a3-9482-3f2b29a5fc09
+UUID:             b5752dfa-b3a0-5a1d-ab1d-0cab2c41e0c9
 .br
-Status:         Active
+Status:           Active
 .br
-Boot entry:     b0eb722
+Autoactivate:     yes
 .br
-Revert entry: c707e9c
+Bootable:         no
 .br
 .P
-Display the snapshot with UUID 96a652ed-1951-569e-86bf-ad2bafcce9d9
+Display the snapshot with UUID b201bdba-89b7-5014-a80d-f5d4b9a690ed
 .br
 #
-.B snapm snapshot show -U 96a652ed-1951-569e-86bf-ad2bafcce9d9
+.B snapm snapshot show -U b201bdba-89b7-5014-a80d-f5d4b9a690ed
 .br
-Name:           fedora/root-snapset_upgrade_1717676355_-
+Name:           fedora/home-snapset_upgrade_1733421517_-home
 .br
 SnapsetName:    upgrade
 .br
-Origin:         /dev/fedora/root
+Origin:         /dev/fedora/home
 .br
-Time:           2024-06-06 13:19:15
+Time:           2024-12-05 17:58:37
 .br
-MountPoint:     /
+Source:         /home
 .br
-Provider:       lvm2-cow
+MountPoint:     /home
 .br
-UUID:           96a652ed-1951-569e-86bf-ad2bafcce9d9
+Provider:       lvm2-thin
+.br
+UUID:           b201bdba-89b7-5014-a80d-f5d4b9a690ed
 .br
 Status:         Active
 .br
-Size:           6.1GiB
+Size:           1.0GiB
 .br
-Free:           6.1GiB
+Free:           1.9GiB
 .br
 Autoactivate:   yes
 .br
-DevicePath:     /dev/fedora/root-snapset_upgrade_1717676355_-
+DevicePath:     /dev/fedora/home-snapset_upgrade_1733421517_-home
 .br
 VolumeGroup:    fedora
 .br
-LogicalVolume:  root-snapset_upgrade_1717676355_-
+LogicalVolume:  home-snapset_upgrade_1733421517_-home
 .br
 .P
 .SH AUTHORS
@@ -1139,4 +1181,6 @@ Snapm project page: https://github.com/snapshotmanager/snapm
 Boom project page: https://github.com/snapshotmanager/boom
 .br
 LVM2 resource page: https://www.sourceware.org/lvm2/
+.br
+Stratis resource page: https://stratis-storage.github.io/
 .br

@@ -14,8 +14,10 @@
 """
 Stratis snapshot manager plugin
 """
+from os import stat
 from os.path import join as path_join
 from subprocess import run, CalledProcessError
+from stat import S_ISBLK
 from time import time
 from uuid import UUID
 
@@ -40,7 +42,6 @@ from snapm import (
 from snapm.manager import Plugin
 from snapm.manager.plugins import (
     DEV_PREFIX,
-    DEV_MAPPER_PREFIX,
     DMSETUP_CMD,
     DMSETUP_INFO,
     DMSETUP_NO_HEADINGS,
@@ -91,16 +92,13 @@ def is_stratis_device(devpath):
     Return ``True`` if the device at ``devpath`` is a Stratis device or
     ``False`` otherwise.
     """
-    if not devpath.startswith(DEV_MAPPER_PREFIX):
-        return False
-    dm_name = devpath.removeprefix(DEV_MAPPER_PREFIX)
     dmsetup_cmd_args = [
         DMSETUP_CMD,
         DMSETUP_INFO,
         DMSETUP_COLUMNS,
         DMSETUP_NO_HEADINGS,
         DMSETUP_FIELDS_UUID,
-        dm_name,
+        devpath,
     ]
     try:
         dmsetup_cmd = run(dmsetup_cmd_args, capture_output=True, check=True)
@@ -166,6 +164,14 @@ def pool_fs_from_device_path(devpath):
         raise SnapmCalloutError(f"Error calling {STRATIS_DECODE_DM_CMD}") from err
     symlink = stratis_decode_dm_cmd.stdout.decode("utf8").strip()
     return symlink.removeprefix(DEV_STRATIS_PREFIX).split("/")
+
+
+def pool_fs_from_origin(origin):
+    """
+    Return a ``(pool_name, fs_name)`` tuple for the Stratis device with
+    origin path ``origin``.
+    """
+    return origin.removeprefix(DEV_STRATIS_PREFIX).split("/")
 
 
 class StratisSnapshot(Snapshot):
@@ -504,40 +510,47 @@ class Stratis(Plugin):
 
         return snapshots
 
-    def can_snapshot(self, mount_point):
+    def can_snapshot(self, source):
         """
         Test whether this plugin can snapshot the specified mount point.
 
-        :param mount_point: The mount point path to test.
+        :param source: The mount point path to test.
         :returns: ``True`` if this plugin can snapshot the file system mounted
                   at ``mount_point``, or ``False`` otherwise.
         """
-        device = device_from_mount_point(mount_point)
+        if S_ISBLK(stat(source).st_mode):
+            device = source
+        else:
+            device = device_from_mount_point(source)
+
         if not is_stratis_device(device):
             return False
         if not is_stratisd_running():
-            self._log_error("Stratis mount point specified but stratisd is not running")
+            self._log_error("Stratis source specified but stratisd is not running")
             return False
         return True
 
     # pylint: disable=too-many-arguments
-    def _check_free_space(
-        self, managed_objects, pool_name, fs_name, mount_point, size_policy
-    ):
+    def _check_free_space(self, managed_objects, origin, mount_point, size_policy):
         """
-        Check for available space in volume group ``vg_name`` for the specified
+        Check for available space in pool ``pool_name`` for the specified
         mount point.
 
-        :param vg_name: The name of the volume group to check.
+        :param pool_name: The name of the pool to check.
+        :param fs_name: The name of the filesystem to check.
         :param mount_point: The mount point path to check.
-        :returns: The space used on the mount point.
+        :param size_policy: The size policy to be applied.
+        :returns: The minimum size required for the snapshot.
         :raises: ``SnapmNoSpaceError`` if the minimum snapshot size exceeds the
                  available space.
         """
+        pool_name, fs_name = pool_fs_from_origin(origin)
         fs_used = mount_point_space_used(mount_point)
         pool_free = _pool_free_space_bytes(managed_objects, pool_name)
         fs_size = _fs_size_bytes(managed_objects, pool_name, fs_name)
-        policy = SizePolicy(mount_point, pool_free, fs_used, fs_size, size_policy)
+        policy = SizePolicy(
+            origin, mount_point, pool_free, fs_used, fs_size, size_policy
+        )
         snapshot_min_size = _snapshot_min_size(policy.size)
         if pool_free < (sum(self.size_map[pool_name].values()) + snapshot_min_size):
             raise SnapmNoSpaceError(
@@ -559,6 +572,7 @@ class Stratis(Plugin):
         :raises: ``SnapmNoSpaceError`` if there is insufficient free space to
                  create the snapshot.
         """
+        pool_name, fs_name = pool_fs_from_origin(origin)
         try:
             proxy = get_object(TOP_OBJECT)
             managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
@@ -567,11 +581,10 @@ class Stratis(Plugin):
                 f"Failed to communicate with stratisd: {err}"
             ) from err
 
-        (pool_name, fs_name) = origin.split("/")
         if pool_name not in self.size_map:
             self.size_map[pool_name] = {}
             self.size_map[pool_name][fs_name] = self._check_free_space(
-                managed_objects, pool_name, fs_name, mount_point, size_policy
+                managed_objects, origin, mount_point, size_policy
             )
 
     # pylint: disable=too-many-arguments
@@ -588,7 +601,7 @@ class Stratis(Plugin):
         :raises: ``SnapmNoSpaceError`` if there is insufficient free space to
                  create the snapshot.
         """
-        (pool_name, fs_name) = origin.split("/")
+        pool_name, fs_name = pool_fs_from_origin(origin)
 
         snapshot_name = format_snapshot_name(
             fs_name, snapset_name, timestamp, encode_mount_point(mount_point)
@@ -602,9 +615,7 @@ class Stratis(Plugin):
                 f"Failed to communicate with stratisd: {err}"
             ) from err
 
-        self._check_free_space(
-            managed_objects, pool_name, fs_name, mount_point, size_policy
-        )
+        self._check_free_space(managed_objects, origin, mount_point, size_policy)
 
         self._log_debug(
             "Creating Stratis snapshot for %s/%s mounted at %s",
@@ -655,7 +666,7 @@ class Stratis(Plugin):
         if not is_stratis_device(device):
             return None
         (pool_name, fs_name) = pool_fs_from_device_path(device)
-        return f"{pool_name}/{fs_name}"
+        return path_join(DEV_STRATIS_PREFIX, pool_name, fs_name)
 
     def delete_snapshot(self, name):
         """
@@ -735,7 +746,7 @@ class Stratis(Plugin):
         :param mount_point: The mount point of the snapshot.
         """
         (pool_name, fs_name) = old_name.split("/")
-        origin = origin.removeprefix(DEV_STRATIS_PREFIX).split("/")[1]
+        _, origin = pool_fs_from_origin(origin)
         new_name = format_snapshot_name(
             origin, snapset_name, timestamp, encode_mount_point(mount_point)
         )
@@ -797,7 +808,7 @@ class Stratis(Plugin):
                  the snapshot according to ``size_policy`` or ``SnapmPluginError``
                  if another error occurs.
         """
-        origin = origin.removeprefix(DEV_STRATIS_PREFIX)
+        pool_name, fs_name = pool_fs_from_origin(origin)
         try:
             proxy = get_object(TOP_OBJECT)
             managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
@@ -806,11 +817,10 @@ class Stratis(Plugin):
                 f"Failed to communicate with stratisd: {err}"
             ) from err
 
-        (pool_name, fs_name) = origin.split("/")
         if pool_name not in self.size_map:
             self.size_map[pool_name] = {}
             self.size_map[pool_name][fs_name] = self._check_free_space(
-                managed_objects, pool_name, fs_name, mount_point, size_policy
+                managed_objects, origin, mount_point, size_policy
             )
 
     def resize_snapshot(self, name, origin, mount_point, size_policy):
@@ -833,8 +843,7 @@ class Stratis(Plugin):
         ``SnapmPluginError`` if another reason prevents the snapshot from being
         merged.
         """
-        (pool_name, _) = name.split("/")
-        origin = origin.removeprefix(DEV_STRATIS_PREFIX + pool_name + "/")
+        pool_name, origin = pool_fs_from_origin(origin)
 
         try:
             proxy = get_object(TOP_OBJECT)

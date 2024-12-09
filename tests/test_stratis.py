@@ -66,10 +66,21 @@ class StratisTestsSimple(unittest.TestCase):
             "/dev/mapper/fedora-root": False,
             "/dev/mapper/fedora-var": False,
             "/dev/mapper/stratis-1-1c7c941a2dba4eb78d57d3fb01aacc61-thin-fs-202ea1667fa54123bd24f0c353b9914c": True,
+            "/dev/stratis/p1/fs1": True,
             "/dev/mapper/mpatha": False,
         }
         for dev in devs.keys():
             self.assertEqual(stratis.is_stratis_device(dev), devs[dev])
+
+    def pool_fs_from_origin(self):
+        devs = {
+            "/dev/stratis/p1/fs1": ("p1", "fs1"),
+            "/dev/stratis/p1/fs2": ("p1", "fs2"),
+            "/dev/stratis/pool0/fs0": ("pool0", "fs0"),
+            "/dev/stratis/data/vol0": ("data", "vol0"),
+        }
+        for dev in devs.keys():
+            self.assertEqual(stratis.pool_fs_from_origin(dev), devs[dev])
 
     def test_is_stratisd_running(self):
         running = False

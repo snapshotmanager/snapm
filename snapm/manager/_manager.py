@@ -18,7 +18,9 @@ from subprocess import run, CalledProcessError
 import logging
 from time import time
 from math import floor
-from os.path import ismount, normpath
+from stat import S_ISBLK
+from os import stat
+from os.path import exists, ismount, normpath, samefile
 import fnmatch
 import inspect
 import os
@@ -46,6 +48,7 @@ from snapm import (
     SnapmInvalidIdentifierError,
     SnapmPluginError,
     SnapmStateError,
+    SnapmRecursionError,
     Selection,
     is_size_policy,
     SnapStatus,
@@ -144,11 +147,12 @@ class Plugin(metaclass=PluginRegistry):
         """
         raise NotImplementedError
 
-    def can_snapshot(self, mount_point):
+    def can_snapshot(self, source):
         """
-        Test whether this plugin can snapshot the specified mount point.
+        Test whether this plugin can snapshot the specified mount point or
+        block device.
 
-        :param mount_point: The mount point path to test.
+        :param source: The block device or mount point path to test.
         :returns: ``True`` if this plugin can snapshot the file system mounted
                   at ``mount_point``, or ``False`` otherwise.
         """
@@ -521,32 +525,32 @@ def _resume_journal():
         ) from err
 
 
-def _parse_mount_point_specs(mount_point_specs, default_size_policy):
+def _parse_source_specs(source_specs, default_size_policy):
     """
-    Parse and normalize mount point paths and size policies.
+    Parse and normalize source paths and size policies.
 
-    :param mount_point_specs: A list of mount points and optional size
-                              policies.
-    :returns: A tuple (mont_points, size_policies) containing a list of
-              normalized mount points and a dictionary mapping mount
-              points to size policies.
+    :param source_specs: A list of mount point or block device paths and
+                         optional size policy strings.
+    :returns: A tuple (sources, size_policies) containing a list of
+              normalized mount point and block device paths and a dictionary
+              mapping source paths to size policies.
     """
-    mount_points = []
+    sources = []
     size_policies = {}
 
     # Parse size policies and normalise mount paths
-    for mp_spec in mount_point_specs:
-        if ":" in mp_spec:
-            (mount, policy) = mp_spec.rsplit(":", maxsplit=1)
+    for spec in source_specs:
+        if ":" in spec:
+            (source, policy) = spec.rsplit(":", maxsplit=1)
             if not is_size_policy(policy):
-                mount = f"{mount}:{policy}"
+                source = f"{source}:{policy}"
                 policy = default_size_policy
         else:
-            (mount, policy) = (mp_spec, default_size_policy)
-        mount = normpath(mount)
-        mount_points.append(mount)
-        size_policies[mount] = policy
-    return (mount_points, size_policies)
+            (source, policy) = (spec, default_size_policy)
+        source = normpath(source)
+        sources.append(source)
+        size_policies[source] = policy
+    return (sources, size_policies)
 
 
 def _check_revert_snapshot_set(snapset):
@@ -603,6 +607,20 @@ def _check_snapset_status(snapset, operation):
         raise SnapmStateError(f"Failed to {operation} snapset '{snapset.name}'")
 
 
+def _find_mount_point_for_devpath(devpath):
+    """
+    Return the first mount point found in /proc/mounts that corresponds to
+    ``device``, or the empty string if no mount point can be found.
+    """
+    with open("/proc/mounts", "r", encoding="utf8") as mounts:
+        for line in mounts:
+            fields = line.split(" ")
+            if exists(fields[0]):
+                if samefile(devpath, fields[0]):
+                    return fields[1]
+    return ""
+
+
 class Manager:
     """
     Snapshot Manager high level interface.
@@ -635,38 +653,42 @@ class Manager:
                 _log_error("Disabling plugin %s: %s", plugin_class.__name__, err)
         self.discover_snapshot_sets()
 
-    def _find_and_verify_plugins(self, mount_points, size_policies):
+    def _find_and_verify_plugins(
+        self, sources, size_policies, _requested_provider=None
+    ):
         """
-        Find snapshot provider plugins for each mount point in ``mount_points``
-        and verify that a provider exists for each mount present.
+        Find snapshot provider plugins for each source in ``sources``
+        and verify that a provider exists for each source present.
 
-        :param mount_points: A list of mount points.
-        :param size_policies: A dictionary mapping mount points to size policies.
-        :returns: A dictionary mapping mount points to plugins.
+        :param sources: A list of source mount point or block device paths.
+        :param size_policies: A dictionary mapping sources to size policies.
+        :returns: A dictionary mapping sources to plugins.
         """
         # Initialise provider mapping.
-        provider_map = {k: None for k in mount_points}
+        provider_map = {k: None for k in sources}
 
-        # Find provider plugins for mount points
-        for mount in mount_points:
+        # Find provider plugins for sources
+        for source in sources:
             _log_debug(
                 "Probing plugins for %s with size policy %s",
-                mount,
-                size_policies[mount],
+                source,
+                size_policies[source],
             )
 
-            if not ismount(mount):
-                raise SnapmPathError(f"Path '{mount}' is not a mount point")
+            if not ismount(source) and not S_ISBLK(stat(source).st_mode):
+                raise SnapmPathError(
+                    f"Path '{source}' is not a block device or mount point"
+                )
 
             for plugin in self.plugins:
-                if plugin.can_snapshot(mount):
-                    provider_map[mount] = plugin
+                if plugin.can_snapshot(source):
+                    provider_map[source] = plugin
 
         # Verify each mount point has a provider plugin
-        for mount in provider_map:
-            if provider_map[mount] is None:
+        for source in provider_map:
+            if provider_map[source] is None:
                 raise SnapmNoProviderError(
-                    f"Could not find snapshot provider for {mount}"
+                    f"Could not find snapshot provider for {source}"
                 )
         return provider_map
 
@@ -703,6 +725,26 @@ class Manager:
                 )
 
         return snapset
+
+    def _check_recursion(self, origins):
+        """
+        Verify that each entry in  ``origins`` corresponds to a device that is
+        not a snapshot belonging to another snapshot set.
+
+        :param origins: A list of origin devices to check.
+        :raises: ``SnapmRecursionError`` if an origin device is a snapshot.
+        """
+        snapshot_devices = [
+            snapshot.devpath
+            for snapset in self.snapshot_sets
+            for snapshot in snapset.snapshots
+        ]
+        for source, device in origins.items():
+            if device in snapshot_devices:
+                raise SnapmRecursionError(
+                    "Snapshots of snapshots are not supported: "
+                    f"{source} corresponds to snapshot device {device}"
+                )
 
     def discover_snapshot_sets(self):
         """
@@ -827,59 +869,82 @@ class Manager:
                     f"Snapshot set name cannot include '{char}'"
                 )
 
-    def create_snapshot_set(self, name, mount_point_specs, default_size_policy=None):
+    # pylint: disable=too-many-branches,too-many-locals
+    def create_snapshot_set(self, name, source_specs, default_size_policy=None):
         """
         Create a snapshot set of the supplied mount points with the name
         ``name``.
 
         :param name: The name of the snapshot set.
-        :param mount_points: A list of mount point paths to include in the set.
+        :param source_specs: A list of mount point and block device paths to
+                             include in the set.
+        :param default_size_policy: A default size policy to use for the set.
         :raises: ``SnapmExistsError`` if the name is already in use, or
                  ``SnapmInvalidIdentifierError`` if the name fails validation.
         """
         self._validate_snapset_name(name)
 
         # Parse size policies and normalise mount paths
-        (mount_points, size_policies) = _parse_mount_point_specs(
-            mount_point_specs, default_size_policy
+        (sources, size_policies) = _parse_source_specs(
+            source_specs, default_size_policy
         )
 
         # Initialise provider mapping.
-        provider_map = self._find_and_verify_plugins(mount_points, size_policies)
+        provider_map = self._find_and_verify_plugins(sources, size_policies, None)
 
         for provider in set(provider_map.values()):
             provider.start_transaction()
 
         timestamp = floor(time())
         origins = {}
-        for mount in provider_map:
-            origins[mount] = provider_map[mount].origin_from_mount_point(mount)
+        mounts = {}
+
+        for source in provider_map:
+            if S_ISBLK(stat(source).st_mode):
+                mounts[source] = _find_mount_point_for_devpath(source)
+                origins[source] = source
+                mount = mounts[source]
+                if mount in provider_map:
+                    raise SnapmInvalidIdentifierError(
+                        f"Duplicate snapshot source {source} already added to {name} as {mount}"
+                    )
+            else:
+                mount = source
+                origins[source] = provider_map[source].origin_from_mount_point(mount)
+
             try:
-                provider_map[mount].check_create_snapshot(
-                    origins[mount], name, timestamp, mount, size_policies[mount]
+                provider_map[source].check_create_snapshot(
+                    origins[source], name, timestamp, mount, size_policies[source]
                 )
             except SnapmInvalidIdentifierError as err:
                 _log_error(
-                    "Error creating %s snapshot: %s", provider_map[mount].name, err
+                    "Error creating %s snapshot: %s", provider_map[source].name, err
                 )
                 raise SnapmInvalidIdentifierError(
                     f"Snapset name {name} too long"
                 ) from err
             except SnapmNoSpaceError as err:
                 _log_error(
-                    "Error creating %s snapshot: %s", provider_map[mount].name, err
+                    "Error creating %s snapshot: %s", provider_map[source].name, err
                 )
                 raise SnapmNoSpaceError(
                     f"Insufficient free space for snapshot set {name}"
                 ) from err
 
+        self._check_recursion(origins)
+
         _suspend_journal()
+
         snapshots = []
-        for mount in provider_map:
+        for source in provider_map:
+            if S_ISBLK(stat(source).st_mode):
+                mount = mounts[source]
+            else:
+                mount = source
             try:
                 snapshots.append(
-                    provider_map[mount].create_snapshot(
-                        origins[mount], name, timestamp, mount, size_policies[mount]
+                    provider_map[source].create_snapshot(
+                        origins[source], name, timestamp, mount, size_policies[source]
                     )
                 )
             except SnapmError as err:
@@ -890,6 +955,7 @@ class Manager:
                 raise SnapmPluginError(
                     f"Could not create all snapshots for set {name}"
                 ) from err
+
         _resume_journal()
 
         for provider in set(provider_map.values()):
@@ -983,10 +1049,10 @@ class Manager:
                     f"Snapshots from snapshot set {snapset.name} are mounted: cannot delete"
                 )
             if snapset.status == SnapStatus.REVERTING:
-                _log_error("Cannot operate on reverting snapshot set '%s'", snapset.name)
-                raise SnapmBusyError(
-                    f"Failed to delete snapshot set {snapset.name}"
+                _log_error(
+                    "Cannot operate on reverting snapshot set '%s'", snapset.name
                 )
+                raise SnapmBusyError(f"Failed to delete snapshot set {snapset.name}")
             delete_snapset_boot_entry(snapset)
             delete_snapset_revert_entry(snapset)
             for snapshot in snapset.snapshots.copy():
@@ -1012,40 +1078,40 @@ class Manager:
 
     # pylint: disable=too-many-branches
     def resize_snapshot_set(
-        self, mount_point_specs, name=None, uuid=None, default_size_policy=None
+        self, source_specs, name=None, uuid=None, default_size_policy=None
     ):
         """
         Resize snapshot set named ``name`` or having UUID ``uuid``.
 
-        Request to resize each snapshot included in ``mount_point_specs``
+        Request to resize each snapshot included in ``source_specs``
         according to the given size policy, or apply ``default_size_policy``
         if set.
 
         :param name: The name of the snapshot set to resize.
         :param uuid: The UUID of the snapshot set to resize.
-        :param mount_point_specs: A list of mount points and optional size
+        :param source_specs: A list of mount points and optional size
                                   policies.
         :param default_size_policy: A default size policy to apply to the
                                     resize.
         """
         snapset = self._snapset_from_name_or_uuid(name=name, uuid=uuid)
 
-        if mount_point_specs:
+        if source_specs:
             # Parse size policies and normalise mount paths
-            (mount_points, size_policies) = _parse_mount_point_specs(
-                mount_point_specs, default_size_policy
+            (sources, size_policies) = _parse_source_specs(
+                source_specs, default_size_policy
             )
         else:
-            mount_points = [snapshot.mount_point for snapshot in snapset.snapshots]
-            size_policies = {mount: default_size_policy for mount in mount_points}
+            sources = [snapshot.source for snapshot in snapset.snapshots]
+            size_policies = {source: default_size_policy for source in sources}
 
-        for mount in mount_points:
+        for source in sources:
             try:
-                _ = snapset.snapshot_by_mount_point(mount)
+                _ = snapset.snapshot_by_source(source)
             except SnapmNotFoundError as err:
                 _log_error(
-                    "Cannot resize %s: mount point not a member of snapset %s",
-                    mount,
+                    "Cannot resize %s: source path not a member of snapset %s",
+                    source,
                     snapset.name,
                 )
                 raise err
@@ -1054,9 +1120,9 @@ class Manager:
         for provider in providers:
             provider.start_transaction()
 
-        for mount in mount_points:
-            snapshot = snapset.snapshot_by_mount_point(mount)
-            size_policy = size_policies[mount]
+        for source in sources:
+            snapshot = snapset.snapshot_by_source(source)
+            size_policy = size_policies[source]
             try:
                 snapshot.check_resize(size_policy)
             except SnapmNoSpaceError as err:
@@ -1065,9 +1131,9 @@ class Manager:
                     f"Insufficient free space to resize snapshot set {snapset.name}"
                 ) from err
 
-        for mount in mount_points:
-            snapshot = snapset.snapshot_by_mount_point(mount)
-            size_policy = size_policies[mount]
+        for source in sources:
+            snapshot = snapset.snapshot_by_source(source)
+            size_policy = size_policies[source]
             try:
                 snapshot.resize(size_policy)
             except SnapmNoSpaceError as err:
