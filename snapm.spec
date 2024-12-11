@@ -2,7 +2,7 @@
 %global sphinx_docs 1
 
 Name:		snapm
-Version:	0.3.1
+Version:	0.4.0
 Release:	1%{?dist}
 Summary:	%{summary}
 
@@ -98,6 +98,131 @@ rm doc/conf.py
 %doc tests
 
 %changelog
+* Tue Dec 11 2024 Bryn M. Reeves <bmr@redhat.com> - 0.4.0
+- stratis: return False for non-DM devices from is_stratis_device()
+- command: accept zero or more source spec arguments to snapset resize
+- doc: add snapset resize command to README.md
+- snapm: disable recursive snapshot sets (snapshots-of-snapshots)
+- doc: update examples in README.md
+- doc: update examples in snapm.8
+- snapm: Manager.delete_snapshot_sets(): fix formatting
+- snapm: simplify is_size_policy() and re-use SizePolicy validation
+- tests: additional tests for size policy validation
+- snapm: use SnapmSizePolicyError consistently for size policy validation
+- snapm: add missing SnapmSizePolicyError to snapm.__all__
+- snapm: check for block device sources that duplicate mount point sources
+- snapm: suppress redundant fields in SnapshotSet string output
+- doc: update README.md for block device snapshot support
+- doc: update snapm.8 for block device snapshot support
+- doc: add Stratis project URL to snapm.8
+- snapm: make 25%SIZE the default size policy for block device snapshots
+- tests: fix mock dmsetup for test_is_stratis_device
+- snapm: fix detection of unmounted block devices for %USED size policy
+- tests: extend coverage for block device snapshot sets
+- tests: extend test_create_snapshot_set_blockdevs to Stratis devices
+- stratis: accept /dev/stratis/$POOL/$FS form in is_stratis_device()
+- tests: merge ManagerBlockdevTests into ManagerTests
+- command: convert command line arguments from 'mount_points' to 'sources'
+- command: convert resize_snapset() from mount_points to sources
+- command: convert create_snapset() from mount_points to sources
+- manager: disable lints on Manager.create_snapshot_set()
+- lvm2: fix size_map indexing on resize
+- manager: accept mount point or device sources in resize_snapshot_set()
+- manager: accept mount point or device sources in create_snapshot_set()
+- manager: generalise _find_and_verify_plugins() for block device sources
+- manager: generalise _parse_mount_point_specs()
+- manager: add _find_mount_point_for_devpath() helper
+- snapm: add devices FieldType to snapshot set reports
+- snapm: add Devices to SnapshotSet string and JSON representation
+- command: replace 'mountpoint' with 'source' in default snapshot report
+- command: replace 'mountpoints' with 'sources' in default snapset report
+- command: add source FieldType to snapshot reports
+- command: add sources FieldType to snapshotset reports
+- snapm: add SnapshotSet.devices property
+- snapm: move 'SnapshotSet.sources' ahead of 'SnapshotSet.mount_points'
+- snapm: add Source to Snapshot string and JSON representation
+- snapm: add Sources to SnapshotSet string and JSON representation
+- snapm: add SnapshotSet.snapshot_by_source()
+- snapm: add Snapshot.source and SnapshotSet.sources properties
+- plugins: rename Plugin.can_snapshot() argument to 'source'
+- stratis: fix errors in Stratis._check_free_space() docstring
+- lvm2: index size_map by lv_name instead of mount_point
+- snapm: handle non-mount points in mount_point_space_used()
+- snapm: restrict %USED SizePolicy to mounted sources
+- lvm2, stratis: pass origin directly to Plugin._check_free_space()
+- lvm2, stratis: always include '/dev' prefix in origin
+- lvm2: include stderr in exceptions raised from failed callouts
+- snapm: fix lints in snapm.manager
+- snapm: check that source paths are either a mount point or block device
+- lvm2: accept paths in /dev/vg/lv format in vg_lv_from_device_path()
+- add support for block devices as a snapshot source
+- tests: move logging initialisation after local imports
+- tests: extend test coverage to Stratis plugin
+- snapm: fix license header typo
+- dist: add COPYING.stratislib to RPM spec file
+- tests: use 'udevadm settle' after starting Stratis pool
+- tests: don't capture stratis stdout/stderr
+- tests: move logging initialisation after local imports
+- tests: use upstream stratisd-3.7 branch for testing
+- tests: extend test coverage to Stratis plugin
+- tests: add StratisLoopBacked.{stop,start}_pool()
+- tests: add infrastructure for Stratis plugin tests
+- stratis: add resize support
+- stratis: add revert support to Stratis plugin
+- stratis: add Stratis plugin
+- tests: build and install stratisd and stratis-cli in CI
+- plugins: add stratislib infrastructure for Stratis plugin
+- tests: move simple tests to CommandTestsSimple
+- tests: test resizing fails when out-of-space
+- tests: test resize of non-member mount point fails
+- snapm: resume journal in Manager.create_snapshot_set() error branch
+- tests: add bad name/uuid tests for revert and resize
+- manager: factor out common code for name/uuid lookup
+- tests: test rename error and rollback action
+- tests: check that an error deleting snapshots raises SnapmPluginError
+- snapm: remove snapshot set members on successful delete
+- snapm: check for REVERTING state when deleting snapshot sets
+- tests: check that deleting a mounted snapshot set fails
+- tests: test that revert, rename or delete on a reverting snapset fails
+- snapm: invalidate cache on Snapshot.revert()
+- tests: call 'lvs -a' in LvmLoopBacked.dump_lvs()
+- snapm: mark _{suspend,resume}_journal() error paths as no cover
+- doc: add 'snapset resize' subcommand to snapm.8
+- doc: add missing 'revert' subcommand to ARG_SNAPSET_COMMANDS
+- tests: improve coverage for Plugin base class
+- tests: Manager.resize_snapshot_set() tests
+- command: add snapset resize command
+- snapm: add Manager.resize_snapshot_set() method
+- snapm: add Snapshot.check_resize() and Snapshot.resize() methods
+- lvm2: add Lvm2Thin.{check_,}resize_snapshot()
+- lvm2: add Lvm2Cow.{check_,}resize_snapshot()
+- snapm: add Plugin.{check_,}resize_snapshot()
+- snapm: make Snapshot provider member public
+- snapm: fix Manager.revert_snapshot_set() docstring comment
+- lvm2: re-check LVM name in Lvm2Thin.create_snapshot()
+- lvm2: fix lvm2thin free space check
+- lvm2: check for INVALID status before REVERTING
+- doc: add reverting status to snapm.8
+- snapm: check for invalid status before reverting
+- snapm: check for INVALID or REVERTING snapset status before operations
+- lvm2: report REVERTING status for merging snapshot volumes
+- lvm2: extend lvm2cow and lvm2thin plugins to include merging snapshots
+- lvm2: extend snapshot filtering to include merging snapshots
+- lvm2: add lvs_all keyword argument to lvm2.get_lvs_json_report()
+- snapm: add 'Reverting' status to SnapStatus
+- snapm: index Manager.by_uuid by UUID object rather than str(uuid)
+- snapm: validate UUIDs during argument parsing
+- lvm2: fix Snapshot initialisation after Lvm2Plugin.rename_snapshot()
+- snapm: check for mounted snapshots before attempting to delete set
+- snapm: fix Snapshot.snapshot_mounted property
+- lvm2: don't capture lvconvert output during --merge operation
+- snapm: fix exception when reverting unmounted snapset
+- tests: make lvm2 test cleanup more robust
+- lvm2: log debug message when renaming snapshot
+- manager: handle errors when initialising plugins
+- manager: call origin_from_mount_point() once per mount point during create
+- snapm: check for ability to revert before reverting snapset
+
 * Thu Jul 25 2024 Bryn M. Reeves <bmr@redhat.com> - 0.3.1
 - tests: add test for mount_point_space_used()
 - tests: add tests for device_from_mount_point()
