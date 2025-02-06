@@ -638,6 +638,7 @@ class SnapStatus(Enum):
         return "Invalid"
 
 
+# pylint: disable=too-many-public-methods
 class SnapshotSet:
     """
     Representation of a set of snapshots taken at the same point
@@ -945,6 +946,129 @@ class SnapshotSet:
                 )
                 raise SnapmPluginError(
                     f"Could not delete all snapshots for set {self.name}"
+                ) from err
+
+    def resize(self, sources, size_policies):
+        """
+        Attempt to resize the ``SnapshotSet`` according to the list of
+        ``sources`` and corresponding ``size_policy`` strings.
+
+        :raises: ``SnapmNoSpaceError`` if there is insufficient space available
+                 for the requested operation.
+        """
+        for source in sources:
+            try:
+                _ = self.snapshot_by_source(source)
+            except SnapmNotFoundError as err:
+                _log_error(
+                    "Cannot resize %s: source path not a member of snapset %s",
+                    source,
+                    self.name,
+                )
+                raise err
+
+        providers = set(snapshot.provider for snapshot in self.snapshots)
+        for provider in providers:
+            provider.start_transaction()
+
+        for source in sources:
+            snapshot = self.snapshot_by_source(source)
+            size_policy = size_policies[source]
+            try:
+                snapshot.check_resize(size_policy)
+            except SnapmNoSpaceError as err:
+                _log_error("Cannot resize %s snapshot: %s", snapshot.name, err)
+                raise SnapmNoSpaceError(
+                    f"Insufficient free space to resize snapshot set {self.name}"
+                ) from err
+
+        for source in sources:
+            snapshot = self.snapshot_by_source(source)
+            size_policy = size_policies[source]
+            try:
+                snapshot.resize(size_policy)
+            except SnapmNoSpaceError as err:
+                _log_error("Cannot resize %s snapshot: %s", snapshot.name, err)
+                raise SnapmNoSpaceError(
+                    f"Insufficient free space to resize snapshot set {self.name}"
+                ) from err
+
+        for provider in providers:
+            provider.end_transaction()
+
+    def revert(self):
+        """
+        Initiate a revert operation on this ``SnapshotSet``.
+
+        :raises: ``SnapmPluginError`` if a plugin fails to perform the
+                 requested operation.
+        """
+        revert_entry = self.revert_entry
+        mounted = self.mounted
+        name = self.name
+
+        # Perform revert operation on all snapshots
+        for snapshot in self.snapshots:
+            try:
+                snapshot.revert()
+            except SnapmError as err:
+                _log_error(
+                    "Failed to revert snapshot set member %s: %s",
+                    snapshot.name,
+                    err,
+                )
+                raise SnapmPluginError(
+                    f"Could not revert all snapshots for set {self.name}"
+                ) from err
+        if mounted:
+            _log_warn(
+                "Snaphot set %s is in use: reboot required to complete revert",
+                name,
+            )
+            if revert_entry:
+                _log_warn(
+                    "Boot into '%s' to continue",
+                    revert_entry.title,
+                )
+
+    def activate(self):
+        """
+        Attempt to activate all members of this ``SnapshotSet``.
+
+        :raises: ``SnapmPluginError`` if a plugin fails to perform the
+                 requested operation.
+        """
+        for snapshot in self.snapshots:
+            try:
+                snapshot.activate()
+            except SnapmError as err:
+                _log_error(
+                    "Failed to activate snapshot set member %s: %s",
+                    snapshot.name,
+                    err,
+                )
+                raise SnapmPluginError(
+                    f"Could not activate all snapshots for set {self.name}"
+                ) from err
+
+    def deactivate(self):
+        """
+        Attempt to deactivate all members of this ``SnapshotSet``.
+
+        :raises: ``SnapmPluginError`` if a plugin fails to perform the
+                 requested operation.
+        """
+        for snapshot in self.snapshots:
+            try:
+                snapshot.deactivate()
+            except SnapmError as err:
+                _log_error(
+                    "Failed to deactivate snapshot set member %s: %s",
+                    snapshot.name,
+                    err,
+                )
+                raise SnapmPluginError(
+                    f"Could not deactivate all snapshots for set {self.name}"
                 ) from err
 
 

@@ -1111,45 +1111,7 @@ class Manager:
             sources = [snapshot.source for snapshot in snapset.snapshots]
             size_policies = {source: default_size_policy for source in sources}
 
-        for source in sources:
-            try:
-                _ = snapset.snapshot_by_source(source)
-            except SnapmNotFoundError as err:
-                _log_error(
-                    "Cannot resize %s: source path not a member of snapset %s",
-                    source,
-                    snapset.name,
-                )
-                raise err
-
-        providers = set(snapshot.provider for snapshot in snapset.snapshots)
-        for provider in providers:
-            provider.start_transaction()
-
-        for source in sources:
-            snapshot = snapset.snapshot_by_source(source)
-            size_policy = size_policies[source]
-            try:
-                snapshot.check_resize(size_policy)
-            except SnapmNoSpaceError as err:
-                _log_error("Cannot resize %s snapshot: %s", snapshot.name, err)
-                raise SnapmNoSpaceError(
-                    f"Insufficient free space to resize snapshot set {snapset.name}"
-                ) from err
-
-        for source in sources:
-            snapshot = snapset.snapshot_by_source(source)
-            size_policy = size_policies[source]
-            try:
-                snapshot.resize(size_policy)
-            except SnapmNoSpaceError as err:
-                _log_error("Cannot resize %s snapshot: %s", snapshot.name, err)
-                raise SnapmNoSpaceError(
-                    f"Insufficient free space to resize snapshot set {snapset.name}"
-                ) from err
-
-        for provider in providers:
-            provider.end_transaction()
+        snapset.resize(sources, size_policies)
 
     @suspend_signals
     def revert_snapshot_set(self, name=None, uuid=None):
@@ -1169,33 +1131,7 @@ class Manager:
         # Snapshot boot entry becomes invalid as soon as revert is initiated.
         delete_snapset_boot_entry(snapset)
 
-        revert_entry = snapset.revert_entry
-        mounted = snapset.mounted
-        name = snapset.name
-
-        # Perform revert operation on all snapshots
-        for snapshot in snapset.snapshots:
-            try:
-                snapshot.revert()
-            except SnapmError as err:
-                _log_error(
-                    "Failed to revert snapshot set member %s: %s",
-                    snapshot.name,
-                    err,
-                )
-                raise SnapmPluginError(
-                    f"Could not revert all snapshots for set {snapset.name}"
-                ) from err
-        if mounted:
-            _log_warn(
-                "Snaphot set %s is in use: reboot required to complete revert",
-                name,
-            )
-            if revert_entry:
-                _log_warn(
-                    "Boot into '%s' to continue",
-                    revert_entry.title,
-                )
+        snapset.revert()
 
         self._boot_cache.refresh_cache()
         return snapset
@@ -1235,19 +1171,7 @@ class Manager:
             )
         for snapset in sets:
             _check_snapset_status(snapset, "activate")
-
-            for snapshot in snapset.snapshots:
-                try:
-                    snapshot.activate()
-                except SnapmError as err:
-                    _log_error(
-                        "Failed to activate snapshot set member %s: %s",
-                        snapshot.name,
-                        err,
-                    )
-                    raise SnapmPluginError(
-                        f"Could not activate all snapshots for set {snapset.name}"
-                    ) from err
+            snapset.activate()
             activated += 1
         return activated
 
@@ -1266,19 +1190,7 @@ class Manager:
             )
         for snapset in sets:
             _check_snapset_status(snapset, "deactivate")
-
-            for snapshot in snapset.snapshots:
-                try:
-                    snapshot.deactivate()
-                except SnapmError as err:
-                    _log_error(
-                        "Failed to deactivate snapshot set member %s: %s",
-                        snapshot.name,
-                        err,
-                    )
-                    raise SnapmPluginError(
-                        f"Could not deactivate all snapshots for set {snapset.name}"
-                    ) from err
+            snapset.deactivate()
             deactivated += 1
         return deactivated
 
