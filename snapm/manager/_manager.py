@@ -45,6 +45,7 @@ from snapm import (
     SnapmStateError,
     SnapmRecursionError,
     Selection,
+    bool_to_yes_no,
     is_size_policy,
     SnapStatus,
     SnapshotSet,
@@ -1172,7 +1173,8 @@ class Manager:
         :param auto:  ``True`` to enable autoactivation or ``False`` otherwise.
         """
         _check_snapset_status(snapset, "set autoactivate status for")
-        _log_info(f"Setting autoactivation={auto} for snapshot set {snapset.name}")
+        state = bool_to_yes_no(auto)
+        _log_info("Setting autoactivation=%s for snapshot set %s", state, snapset.name)
         snapset.autoactivate = auto
 
     @suspend_signals
