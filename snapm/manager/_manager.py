@@ -966,7 +966,6 @@ class Manager:
 
         snapset = SnapshotSet(name, timestamp, snapshots)
         for snapshot in snapset.snapshots:
-            snapshot.snapshot_set = snapset
             if boot or revert:
                 snapshot.autoactivate = True
                 snapshot.activate()

@@ -643,6 +643,7 @@ class SnapshotSet:
         self._by_mount_point = {}
         self._by_origin = {}
         for snapshot in self._snapshots:
+            snapshot.snapshot_set = self
             if snapshot.mount_point:
                 self._by_mount_point[snapshot.mount_point] = snapshot
             self._by_origin[snapshot.origin] = snapshot
