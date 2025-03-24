@@ -838,7 +838,7 @@ class SnapshotSet:
         """
         for snapshot in self.snapshots:
             try:
-                snapshot.set_autoactivate(auto=value)
+                snapshot.autoactivate = value
             except SnapmError as err:
                 _log_error(
                     "Failed to set autoactivation for snapshot set member %s: %s",
@@ -1309,6 +1309,16 @@ class Snapshot:
         """
         raise NotImplementedError
 
+    @autoactivate.setter
+    def autoactivate(self, value):
+        """
+        Set the autoactivation state of this snapshot.
+
+        :param value: ``True`` to enable autoactivation or ``False`` otherwise.
+        """
+        self.provider.set_autoactivate(self.name, auto=value)
+        self.invalidate_cache()
+
     @property
     def origin_mounted(self):
         """
@@ -1428,15 +1438,6 @@ class Snapshot:
         Deactivate this snapshot.
         """
         self.provider.deactivate_snapshot(self.name)
-        self.invalidate_cache()
-
-    def set_autoactivate(self, auto=False):
-        """
-        Set the autoactivation state of this snapshot.
-
-        :param auto: ``True`` to enable autoactivation or ``False`` otherwise.
-        """
-        self.provider.set_autoactivate(self.name, auto=auto)
         self.invalidate_cache()
 
 

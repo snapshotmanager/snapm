@@ -243,7 +243,9 @@ class StratisSnapshot(Snapshot):
         used = int(pool.TotalPhysicalUsed()[1]) if pool.TotalPhysicalUsed()[0] else 0
         return size - used
 
-    @property
+    # Pylint does not understand the decorator notation.
+    # pylint: disable=invalid-overridden-method
+    @Snapshot.autoactivate.getter
     def autoactivate(self):
         # Stratis filesystems always autoactivate with the pool
         return True

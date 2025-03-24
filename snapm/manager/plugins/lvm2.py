@@ -364,7 +364,9 @@ class Lvm2Snapshot(Snapshot):
     def free(self):
         raise NotImplementedError
 
-    @property
+    # Pylint does not understand the decorator notation.
+    # pylint: disable=invalid-overridden-method
+    @Snapshot.autoactivate.getter
     def autoactivate(self):
         lv_dict = self._get_lv_dict_cache()
         lv_attr = lv_dict[LVS_LV_ATTR]

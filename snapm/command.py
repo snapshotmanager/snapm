@@ -1002,7 +1002,7 @@ def _snapshot_autoactivate_cmd(cmd_args):
     count = 0
     auto = bool(cmd_args.yes)
     for snapshot in snapshots:
-        snapshot.set_autoactivate(auto=auto)
+        snapshot.autoactivate = auto
         count += 1
     _log_info("Set autoactivation status for %d snapshots", count)
     return 0
