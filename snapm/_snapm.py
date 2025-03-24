@@ -855,7 +855,7 @@ class SnapshotSet:
                 snapshot.autoactivate = value
             except SnapmError as err:
                 _log_error(
-                    "Failed to set autoactivation for snapshot set member %s: %s",
+                    "Failed to set autoactivation for snapshot set member '%s': %s",
                     snapshot.name,
                     err,
                 )
@@ -935,6 +935,9 @@ class SnapshotSet:
         :raises: ``SnapmError`` if a call to rename any member of the snapshot
                  set fails.
         """
+        _log_info(
+            "Attempting rename for snapshot set '%s' to '%s'", self.name, new_name
+        )
         old_name = self.name
         snapshots = self.snapshots
         new_snapshots = []
@@ -942,6 +945,7 @@ class SnapshotSet:
         for snapshot in snapshots.copy():
             snapshots.remove(snapshot)
             try:
+                _log_debug("Renaming snapshot set member '%s'", snapshot.name)
                 new_snapshot = snapshot.rename(new_name)
                 new_snapshots.append(new_snapshot)
             except SnapmError as err:
@@ -975,6 +979,7 @@ class SnapshotSet:
                  ``SnapmPluginError`` if an error occurs deleting snapshot
                  set members.
         """
+        _log_info("Attempting delete for snapshot set '%s'", self.name)
         if any(snapshot.snapshot_mounted for snapshot in self.snapshots):
             raise SnapmBusyError(
                 f"Snapshots from snapshot set {self.name} are mounted: cannot delete"
@@ -983,6 +988,7 @@ class SnapshotSet:
             _log_error("Cannot operate on reverting snapshot set '%s'", self.name)
             raise SnapmBusyError(f"Failed to delete snapshot set {self.name}")
         for snapshot in self.snapshots.copy():
+            _log_debug("Deleting snapshot set member '%s'", snapshot.name)
             try:
                 snapshot.delete()
                 self.snapshots.remove(snapshot)
@@ -991,7 +997,7 @@ class SnapshotSet:
                 self._by_origin.pop(snapshot.origin)
             except SnapmError as err:
                 _log_error(
-                    "Failed to delete snapshot set member %s: %s",
+                    "Failed to delete snapshot set member '%s': %s",
                     snapshot.name,
                     err,
                 )
@@ -1007,6 +1013,7 @@ class SnapshotSet:
         :raises: ``SnapmNoSpaceError`` if there is insufficient space available
                  for the requested operation.
         """
+        _log_info("Attempting resize for snapshot set '%s'", self.name)
         for source in sources:
             try:
                 _ = self.snapshot_by_source(source)
@@ -1036,6 +1043,7 @@ class SnapshotSet:
         for source in sources:
             snapshot = self.snapshot_by_source(source)
             size_policy = size_policies[source]
+            _log_debug("Resizing snapshot set member '%s'", snapshot.name)
             try:
                 snapshot.resize(size_policy)
             except SnapmNoSpaceError as err:
@@ -1054,6 +1062,7 @@ class SnapshotSet:
         :raises: ``SnapmPluginError`` if a plugin fails to perform the
                  requested operation.
         """
+        _log_info("Attempting revert for snapshot set '%s'", self.name)
         revert_entry = self.revert_entry
         mounted = self.mounted
         name = self.name
@@ -1061,10 +1070,11 @@ class SnapshotSet:
         # Perform revert operation on all snapshots
         for snapshot in self.snapshots:
             try:
+                _log_debug("Reverting snapshot set member '%s'", snapshot.name)
                 snapshot.revert()
             except SnapmError as err:
                 _log_error(
-                    "Failed to revert snapshot set member %s: %s",
+                    "Failed to revert snapshot set member '%s': %s",
                     snapshot.name,
                     err,
                 )
@@ -1089,12 +1099,14 @@ class SnapshotSet:
         :raises: ``SnapmPluginError`` if a plugin fails to perform the
                  requested operation.
         """
+        _log_info("Attempting to activate snapshot set '%s'", self.name)
         for snapshot in self.snapshots:
             try:
+                _log_debug("Activating snapshot set member '%s'", snapshot.name)
                 snapshot.activate()
             except SnapmError as err:
                 _log_error(
-                    "Failed to activate snapshot set member %s: %s",
+                    "Failed to activate snapshot set member '%s': %s",
                     snapshot.name,
                     err,
                 )
@@ -1109,12 +1121,14 @@ class SnapshotSet:
         :raises: ``SnapmPluginError`` if a plugin fails to perform the
                  requested operation.
         """
+        _log_info("Attempting to deactivate snapshot set '%s'", self.name)
         for snapshot in self.snapshots:
             try:
+                _log_debug("Deactivating snapshot set member '%s'", snapshot.name)
                 snapshot.deactivate()
             except SnapmError as err:
                 _log_error(
-                    "Failed to deactivate snapshot set member %s: %s",
+                    "Failed to deactivate snapshot set member '%s': %s",
                     snapshot.name,
                     err,
                 )
