@@ -968,7 +968,10 @@ class Manager:
         snapset = SnapshotSet(name, timestamp, snapshots)
 
         if boot or revert:
-            snapset.autoactivate = True
+            _log_info(
+                "Autoactivation required for bootable snapshot set '%s'", snapset.name
+            )
+            self._set_autoactivate(snapset, auto=True)
             snapset.activate()
 
         if boot:
