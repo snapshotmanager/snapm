@@ -53,6 +53,7 @@ from snapm import (
     SNAPM_DEBUG_REPORT,
     SNAPM_DEBUG_ALL,
     set_debug_mask,
+    bool_to_yes_no,
     Selection,
     __version__,
 )
@@ -112,16 +113,6 @@ _report_obj_types = [
     ReportObjType(PR_SNAPSHOT, "Snapshot", "snapshot_", lambda o: o.snapshot),
     ReportObjType(PR_PLUGIN, "Plugin", "plugin_", lambda o: o.plugin),
 ]
-
-
-def _bool_to_yes_no(bval):
-    """
-    Convert boolean to yes/no string.
-
-    :param bval: A boolean value to evaluate
-    :returns: 'yes' if ``bval`` is ``True`` or ``False`` otherwise.
-    """
-    return "yes" if bval else "no"
 
 
 #
@@ -217,7 +208,7 @@ _snapshot_set_fields = [
         "Autoactivation status",
         12,
         REP_STR,
-        lambda f, d: f.report_str(_bool_to_yes_no(d.autoactivate)),
+        lambda f, d: f.report_str(bool_to_yes_no(d.autoactivate)),
     ),
     FieldType(
         PR_SNAPSET,
@@ -226,7 +217,7 @@ _snapshot_set_fields = [
         "Configured for snapshot boot",
         8,
         REP_STR,
-        lambda f, d: f.report_str(_bool_to_yes_no(d.boot_entry is not None)),
+        lambda f, d: f.report_str(bool_to_yes_no(d.boot_entry is not None)),
     ),
     FieldType(
         PR_SNAPSET,
@@ -366,7 +357,7 @@ _snapshot_fields = [
         "Autoactivation status",
         12,
         REP_STR,
-        lambda f, d: f.report_str(_bool_to_yes_no(d.autoactivate)),
+        lambda f, d: f.report_str(bool_to_yes_no(d.autoactivate)),
     ),
 ]
 
@@ -897,7 +888,7 @@ def _autoactivate_cmd(cmd_args):
     select = Selection.from_cmd_args(cmd_args)
     auto = bool(cmd_args.yes)
     count = manager.set_autoactivate(select, auto=auto)
-    _log_info("Set autoactivate=%s for %d snapshot sets", auto, count)
+    _log_info("Set autoactivate=%s for %d snapshot sets", bool_to_yes_no(auto), count)
     return 0
 
 

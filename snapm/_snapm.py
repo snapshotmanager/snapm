@@ -500,6 +500,20 @@ def parse_size_with_units(value):
     return size_bytes
 
 
+def bool_to_yes_no(value):
+    """
+    Convert boolean-like to yes/no string.
+
+    Return the string "yes" if ``value`` evaluates to ``True``, or "no"
+    otherwise.
+
+    :param value: A boolean value to interpet.
+    :returns: A string value that is "yes" if ``value`` is ``True``, or "no"
+              otherwise.
+    """
+    return "yes" if bool(value) is True else "no"
+
+
 def is_size_policy(policy):
     """
     Test whether a string is a valid size policy
@@ -1496,6 +1510,7 @@ __all__ = [
     "size_fmt",
     "is_size_policy",
     "parse_size_with_units",
+    "bool_to_yes_no",
     "SizePolicyType",
     "SizePolicy",
     "SnapStatus",
