@@ -965,10 +965,10 @@ class Manager:
             provider.end_transaction()
 
         snapset = SnapshotSet(name, timestamp, snapshots)
-        for snapshot in snapset.snapshots:
-            if boot or revert:
-                snapshot.autoactivate = True
-                snapshot.activate()
+
+        if boot or revert:
+            snapset.autoactivate = True
+            snapset.activate()
 
         if boot:
             try:
