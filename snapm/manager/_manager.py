@@ -1164,6 +1164,17 @@ class Manager:
             deactivated += 1
         return deactivated
 
+    def _set_autoactivate(self, snapset, auto=False):
+        """
+        Set autoactivation for ``snapset``.
+
+        :param snapset: The ``SnapshotSet`` object to operate on.
+        :param auto:  ``True`` to enable autoactivation or ``False`` otherwise.
+        """
+        _check_snapset_status(snapset, "set autoactivate status for")
+        _log_info(f"Setting autoactivation={auto} for snapshot set {snapset.name}")
+        snapset.autoactivate = auto
+
     @suspend_signals
     def set_autoactivate(self, selection, auto=False):
         """
@@ -1181,8 +1192,7 @@ class Manager:
                 f"Could not find snapshot sets matching {selection}"
             )
         for snapset in sets:
-            _check_snapset_status(snapset, "set autoactivate status for")
-            snapset.autoactivate = auto
+            self._set_autoactivate(snapset, auto=auto)
             changed += 1
         return changed
 
