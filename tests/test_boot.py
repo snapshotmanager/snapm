@@ -110,6 +110,9 @@ class BootTests(unittest.TestCase):
             "enable = False\n",
             "format = grub1\n",
             "sync = False\n",
+            "enable = True\n",
+            "auto_clean = True\n",
+            "cache_path = %(boom_root)/cache\n",
         ]
         with open(os.path.join(boom_dir, "boom.conf"), "w", encoding="utf8") as file:
             file.writelines(boom_conf)
