@@ -977,6 +977,7 @@ class Manager:
         if boot:
             try:
                 create_snapset_boot_entry(snapset)
+                self._boot_cache.refresh_cache()
             except (OSError, ValueError) as err:
                 _log_error("Failed to create snapshot set boot entry: %s", err)
                 snapset.delete()
@@ -985,6 +986,7 @@ class Manager:
         if revert:
             try:
                 create_snapset_revert_entry(snapset)
+                self._boot_cache.refresh_cache()
             except (OSError, ValueError) as err:
                 _log_error("Failed to create snapshot set revert boot entry: %s", err)
                 snapset.delete()
