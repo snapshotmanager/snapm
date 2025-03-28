@@ -13,10 +13,12 @@ import logging
 from time import time
 from math import floor
 from stat import S_ISBLK
-from os import stat
-from os.path import exists, ismount, normpath, samefile
+from os import stat, makedirs
+from os.path import exists, ismount, join, normpath, samefile
+from functools import wraps
 import fnmatch
 import inspect
+import fcntl
 import os
 
 import snapm.manager.plugins
@@ -63,6 +65,12 @@ _log_warn = _log.warning
 _log_error = _log.error
 
 JOURNALCTL_CMD = "journalctl"
+
+_SNAPSET_LOCK_DIR = "/run/lock/snapm"
+
+_SNAPSET_LOCK_DIR_UNPRIV = "lock/snapm"
+
+_SNAPSET_LOCK_DIR_MODE = 0o700
 
 
 class PluginRegistry(type):
@@ -622,6 +630,191 @@ def _find_mount_point_for_devpath(devpath):
     return ""
 
 
+def _check_lock_dir():
+    """
+    Check for the presence of the snapm runtime lock directory and create
+    it if necessary.
+    """
+    euid = os.geteuid()
+    egid = os.getegid()
+    if euid == 0 and egid == 0:
+        lockdir = _SNAPSET_LOCK_DIR
+    else:
+        if "XDG_RUNTIME_DIR" in os.environ:
+            lockdir = join(os.environ["XDG_RUNTIME_DIR"], _SNAPSET_LOCK_DIR_UNPRIV)
+        else:
+            _log_warn(
+                "Could not find XDG_RUNTIME_DIR for snapset lock directory:"
+                " falling back to /run/user/{euid}"
+            )
+            if not exists(f"/run/user/{euid}"):
+                _log_warn(
+                    "Could not find /run/user/%s for snapset lock directory:"
+                    " falling back to /tmp"
+                )
+                if not exists("/tmp"):
+                    raise SnapmError("Could not find usable locking directory")
+                lockdir = join(f"/tmp/{euid}", _SNAPSET_LOCK_DIR_UNPRIV)
+            else:
+                lockdir = join(f"/run/user/{euid}", _SNAPSET_LOCK_DIR_UNPRIV)
+
+    if not exists(lockdir):
+        makedirs(lockdir, mode=_SNAPSET_LOCK_DIR_MODE, exist_ok=True)
+    return lockdir
+
+
+def _escape_path(path):
+    """
+    Escape illegal filesystem characters in ``path``.
+    """
+    escaped = ""
+    for char in path:
+        if char == "/":
+            escaped = escaped + "\\x" + char.encode("utf8").hex()
+        else:
+            escaped = escaped + char
+    return escaped
+
+
+def _unescape_path(escaped):
+    """
+    Unescape illegale filesystem characters in ``path``.
+    """
+
+    def decode_byte(byte):
+        return bytearray.fromhex(byte).decode("utf8")
+
+    path = ""
+    i = 0
+    while i < len(escaped):
+        if escaped[i] == "\\":
+            if escaped[i + 1] == "\\":
+                path += "\\"
+                i += 1
+            elif escaped[i + 1] == "x":
+                path += decode_byte(escaped[i + 2 : i + 4])
+                i += 3
+            else:
+                raise ValueError(f"Invalid escape sequence: {escaped[i: i + 2]}")
+        else:
+            path += escaped[i]
+        i += 1
+    return path
+
+
+def _lock_snapshot_set(lockdir, name):
+    """
+    Lock the snapshot set ``name``.
+
+    :param name: The name of the snapshot set to lock.
+    :returns: A file descriptor open on the lock file.
+    """
+
+    def cleanup():
+        os.close(fd)
+        os.unlink(lockfile)
+
+    def busy(err):
+        return SnapmBusyError(
+            f"Snapshot set {name} already locked at '{lockfile}': {err}"
+        )
+
+    lockfile = f"{lockdir}/{_escape_path(name)}.lock"
+    _log_debug("Locking snapset %s (%s)", name, lockfile)
+
+    try:
+        fd = os.open(lockfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+    except FileExistsError as err:
+        raise busy(err) from err
+    except OSError as err:
+        raise SnapmError(
+            f"Failed to create snapshot set lockfile {lockfile}: {err}"
+        ) from err
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as err:
+        cleanup()
+        raise busy(err) from err
+    except OSError as err:
+        cleanup()
+        raise SnapmError(
+            f"Failed to take exclusive lock on lockfile {lockfile}: {err}"
+        ) from err
+    return fd
+
+
+def _unlock_snapshot_set(lockdir, name, fd):
+    """
+    Unlock the snapshot set ``name`` using the open file descriptor ``fd``.
+
+    :param name: The name of the snapshot set to unlock.
+    """
+    lockfile = f"{lockdir}/{_escape_path(name)}.lock"
+    _log_debug("Unlocking snapset %s (%s)", name, lockfile)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError as err:
+        try:
+            os.close(fd)
+        except OSError as err2:
+            raise SnapmError(
+                f"Error closing snapshot set lockfile {lockfile}: {err2}"
+            ) from err2
+        raise SnapmError(
+            f"Failed to release exclusive lock on lockfile {lockfile}: {err}"
+        ) from err
+    try:
+        os.close(fd)
+    except OSError as err:
+        try:
+            os.unlink(lockfile)
+        except OSError as err2:
+            raise SnapmError(
+                f"Error unlinking snapshot set lockfile {lockfile}: {err2}"
+            ) from err2
+        raise SnapmError(
+            f"Error closing snapshot set lockfile {lockfile}: {err}"
+        ) from err
+    try:
+        os.unlink(lockfile)
+    except OSError as err:
+        raise SnapmError(
+            f"Error unlinking snapshot set lockfile {lockfile}: {err}"
+        ) from err
+
+
+# pylint: disable=protected-access
+def _with_snapset_lock(func):
+    """
+    Decorator for Manager methods that either accept 'name' as their first
+    positional parameter, or that accept 'name' as a keyword argument.
+
+    If ``kwargs`` is not None and contains the key 'name' it is assumed that
+    this is the 'name' argument for the locking function.
+    """
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # args[0] is self
+        theself = args[0]
+        lockdir = theself._lock_dir
+        if kwargs and 'name' in kwargs:
+            name = kwargs.get("name", None)
+        elif kwargs and 'uuid' in kwargs:
+            name = str(theself.by_uuid.get(kwargs["uuid"], kwargs["uuid"]))
+        else:
+            # args[1] is snapset name.
+            name = args[1]
+        theself._lock_fd = _lock_snapshot_set(lockdir, name)
+        try:
+            ret = func(*args, **kwargs)
+        finally:
+            _unlock_snapshot_set(lockdir, name, theself._lock_fd)
+        return ret
+
+    return wrapper
+
+
 class Manager:
     """
     Snapshot Manager high level interface.
@@ -634,6 +827,14 @@ class Manager:
 
     @suspend_signals
     def __init__(self):
+        # Verify existence of lock path before initialising Manager
+        try:
+            self._lock_dir = _check_lock_dir()
+        except OSError as err:
+            raise SnapmNotFoundError(
+                f"Failed to create lock directory at {_SNAPSET_LOCK_DIR}: {err}"
+            ) from err
+
         self.plugins = []
         self.snapshot_sets = []
         self.by_name = {}
@@ -889,6 +1090,7 @@ class Manager:
 
     # pylint: disable=too-many-branches,too-many-locals,too-many-statements
     @suspend_signals
+    @_with_snapset_lock
     def create_snapshot_set(
         self,
         name,
@@ -914,7 +1116,6 @@ class Manager:
                  ``SnapmInvalidIdentifierError`` if the name fails validation.
         """
         self._validate_snapset_name(name)
-
         if autoindex:
             index = self._find_next_index(name)
             name = f"{name}.{index}"
@@ -1029,6 +1230,7 @@ class Manager:
         return snapset
 
     @suspend_signals
+    @_with_snapset_lock
     def rename_snapshot_set(self, old_name, new_name):
         """
         Rename snapshot set ``old_name`` as ``new_name``.
@@ -1090,6 +1292,7 @@ class Manager:
 
     # pylint: disable=too-many-branches
     @suspend_signals
+    @_with_snapset_lock
     def resize_snapshot_set(
         self, source_specs, name=None, uuid=None, default_size_policy=None
     ):
@@ -1121,6 +1324,7 @@ class Manager:
         snapset.resize(sources, size_policies)
 
     @suspend_signals
+    @_with_snapset_lock
     def revert_snapshot_set(self, name=None, uuid=None):
         """
         Revert snapshot set named ``name`` or having UUID ``uuid``.
