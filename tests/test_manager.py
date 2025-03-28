@@ -10,6 +10,8 @@ import logging
 import os
 from uuid import UUID
 from json import loads
+import tempfile
+import errno
 
 
 import snapm
@@ -25,6 +27,7 @@ log = logging.getLogger()
 boom.set_boot_path(BOOT_ROOT_TEST)
 
 
+@unittest.skipIf(not have_root(), "requires root privileges")
 class ManagerTestsSimple(unittest.TestCase):
     """
     Test manager interfaces with mock callouts
@@ -107,6 +110,43 @@ class ManagerTestsSimple(unittest.TestCase):
         s = snapm.Selection(nr_snapshots=5)
         sets = m.find_snapshot_sets(selection=s)
         self.assertEqual(len(sets), 2)
+
+    def test__escape_unescape_path(self):
+        paths = (
+            ("/", "\\x2f"),
+            ("/home", "\\x2fhome"),
+            ("/foo/bar/baz", "\\x2ffoo\\x2fbar\\x2fbaz"),
+            ("//quux", "\\x2f\\x2fquux"),
+        )
+        for path, xescape in paths:
+            with self.subTest(path=path):
+                self.assertEqual(manager._manager._escape_path(path), xescape)
+                self.assertEqual(manager._manager._unescape_path(xescape), path)
+
+    def test__check_lock_dir(self):
+        _manager = manager._manager
+        _orig_lock_dir = _manager._SNAPSET_LOCK_DIR
+        self.addCleanup(setattr, _manager, "_SNAPSET_LOCK_DIR", _orig_lock_dir)
+        with tempfile.TemporaryDirectory(suffix="_test_run_lock", dir="/tmp") as tempdir:
+            _manager._SNAPSET_LOCK_DIR = str(tempdir) + _orig_lock_dir
+            self.assertEqual(_manager._check_lock_dir(), _manager._SNAPSET_LOCK_DIR)
+            st = os.stat(_manager._SNAPSET_LOCK_DIR)
+            self.assertEqual(st.st_mode & 0o777, _manager._SNAPSET_LOCK_DIR_MODE)
+
+    def test__lock_unlock_snapshot_set(self):
+        _manager = manager._manager
+        _orig_lock_dir = _manager._SNAPSET_LOCK_DIR
+        self.addCleanup(setattr, _manager, "_SNAPSET_LOCK_DIR", _orig_lock_dir)
+        with tempfile.TemporaryDirectory(suffix="_test_run_lock", dir="/tmp") as tempdir:
+            _manager._SNAPSET_LOCK_DIR = str(tempdir) + _orig_lock_dir
+            lockdir = _manager._check_lock_dir()
+            fd = _manager._lock_snapshot_set(lockdir, "foo")
+            self.assertGreater(fd, 0)
+            self.assertTrue(os.path.exists(os.path.join(lockdir, "foo.lock")))
+            _manager._unlock_snapshot_set(lockdir, "foo", fd)
+            with self.assertRaises(OSError) as cm:
+                os.dup(fd)
+            self.assertEqual(cm.exception.errno, errno.EBADF)
 
 
 @unittest.skipIf(not have_root(), "requires root privileges")
