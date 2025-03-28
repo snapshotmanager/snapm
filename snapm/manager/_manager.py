@@ -15,15 +15,20 @@ import logging
 from time import time
 from math import floor
 from stat import S_ISBLK
-from os import stat, listdir
+from os import stat, listdir, makedirs
 from os.path import exists, ismount, join, normpath, samefile
 from json import JSONDecodeError
 from typing import List, Union
+from functools import wraps
+import threading
+import fcntl
+import os
 
 from snapm import (
     SNAPM_DEBUG_MANAGER,
     SNAPM_VALID_NAME_CHARS,
     SnapmError,
+    SnapmSystemError,
     SnapmCalloutError,
     SnapmNoSpaceError,
     SnapmNoProviderError,
@@ -84,6 +89,12 @@ _PLUGINS_D_PATH = join(_SNAPM_CFG_DIR, "plugins.d")
 
 #: Path to directory for Schedule configuration files
 _SCHEDULE_D_PATH = join(_SNAPM_CFG_DIR, "schedule.d")
+
+#: Directory for snapshot set lock files
+_SNAPSET_LOCK_DIR = "/run/lock/snapm"
+
+#: Permissions for lock directory
+_SNAPSET_LOCK_DIR_MODE = 0o700
 
 
 @dataclass
@@ -351,6 +362,135 @@ def _find_mount_point_for_devpath(devpath):
     return ""
 
 
+def _check_lock_dir() -> str:
+    """
+    Check for the presence of the snapm runtime lock directory and create
+    it if necessary.
+    """
+    lockdir = _SNAPSET_LOCK_DIR
+    makedirs(lockdir, mode=_SNAPSET_LOCK_DIR_MODE, exist_ok=True)
+    try:
+        os.chmod(lockdir, _SNAPSET_LOCK_DIR_MODE)
+    except OSError as err:
+        st = os.stat(lockdir)
+        if (st.st_mode & 0o777) != _SNAPSET_LOCK_DIR_MODE:
+            raise SnapmSystemError(
+                f"Lock directory {lockdir} has insecure permissions"
+            ) from err
+        _log_error(
+            "Failed to set permissions on lock directory (current mode: %o) %s: %s",
+            st.st_mode & 0o777,
+            lockdir,
+            err,
+        )
+    return lockdir
+
+
+def _lock_manager(lockdir: str) -> int:
+    """
+    Lock the Manager.
+
+    :returns: A file descriptor open on the lock file.
+    """
+
+    def cleanup():
+        try:
+            os.close(fd)
+        except OSError as err:
+            _log_debug("Exception closing lock fd %d: %s", fd, err)
+
+    lockfile = join(lockdir, "manager.lock")
+    _log_debug("Locking Manager via %s", lockfile)
+
+    # Use a persistent lock file; coordinate via flock only.
+    try:
+        flags = os.O_RDWR | os.O_CREAT
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        fd = os.open(lockfile, flags, 0o600)
+    except OSError as err:
+        raise SnapmSystemError(
+            f"Failed to create manager lockfile {lockfile}: {err}"
+        ) from err
+
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as err:
+        cleanup()
+        raise SnapmBusyError(
+            f"Manager already locked at '{lockfile}': {err}"
+        ) from err
+    except OSError as err:
+        cleanup()
+        raise SnapmSystemError(
+            f"Failed to take exclusive lock on Manager lockfile {lockfile}: {err}"
+        ) from err
+
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode("utf8"))
+    except OSError:
+        pass
+
+    # If O_CLOEXEC was unavailable, make fd non-inheritable.
+    if not hasattr(os, "O_CLOEXEC"):
+        try:
+            os.set_inheritable(fd, False)
+        except OSError:
+            pass
+
+    return fd
+
+
+def _unlock_manager(lockdir: str, fd: int):
+    """
+    Unlock the Manager using the open file descriptor ``fd``.
+
+    :param fd: The open locking file descriptor.
+    """
+    lockfile = join(lockdir, "manager.lock")
+    _log_debug("Unlocking Manager (%s)", lockfile)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError as err:
+        raise SnapmSystemError(
+            f"Failed to release exclusive lock on Manager lockfile {lockfile}: {err}"
+        ) from err
+    finally:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+
+
+# pylint: disable=protected-access
+def _with_manager_lock(func):
+    """
+    Decorator for Manager methods that either accept 'name' as their first
+    positional parameter, or that accept 'name', or 'uuid' as a keyword
+    argument.
+
+    If ``kwargs`` is not None and contains the key 'name' or 'uuid' it is
+    assumed that this is the 'name'/'uuid' argument for the locking function.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        # args[0] is self
+        lockdir = args[0]._lock_dir
+        fd = -1
+        tid = getattr(threading, "get_native_id", threading.get_ident)()
+        try:
+            fd = _lock_manager(lockdir)
+            _log_debug("Acquired Manager lock at %s (tid=%d)", lockdir, tid)
+            ret = func(*args, **kwargs)
+        finally:
+            if fd >= 0:
+                _unlock_manager(lockdir, fd)
+                _log_debug("Released Manager lock at %s (tid=%d)", lockdir, tid)
+        return ret
+    return wrapper
+
+
 class Scheduler:
     """
     A high-level interface for managing on-disk schedule configuration
@@ -580,10 +720,19 @@ class Manager:
 
     @suspend_signals
     def __init__(self):
+        # Verify existence of lock path before initialising Manager
+        try:
+            self._lock_dir = _check_lock_dir()
+        except (OSError, SnapmSystemError) as err:
+            raise SnapmSystemError(
+                f"Failed to create lock directory at {_SNAPSET_LOCK_DIR}: {err}"
+            ) from err
+
         self.plugins = []
         self.snapshot_sets = []
         self.by_name = {}
         self.by_uuid = {}
+
         snapm_config = SnapmConfig.from_file(_SNAPM_CFG_PATH)
         self.disable_plugins = snapm_config.disable_plugins
         check_boom_config()
@@ -698,7 +847,7 @@ class Manager:
                 )
             snapset = self.by_uuid[uuid]
         else:
-            raise SnapmNotFoundError("A snapshot set name or UUID is required")
+            raise SnapmInvalidIdentifierError("A snapshot set name or UUID is required")
 
         if name and uuid:
             if self.by_name[name] != self.by_uuid[uuid]:
@@ -728,6 +877,7 @@ class Manager:
                     f"{source} corresponds to snapshot device {device}"
                 )
 
+    @suspend_signals
     def discover_snapshot_sets(self):
         """
         Discover snapshot sets by calling into each plugin to find
@@ -872,6 +1022,7 @@ class Manager:
 
     # pylint: disable=too-many-branches,too-many-locals,too-many-statements
     @suspend_signals
+    @_with_manager_lock
     def create_snapshot_set(
         self,
         name,
@@ -897,7 +1048,6 @@ class Manager:
                  ``SnapmInvalidIdentifierError`` if the name fails validation.
         """
         self._validate_snapset_name(name)
-
         if autoindex:
             index = self._find_next_index(name)
             name = f"{name}.{index}"
@@ -952,9 +1102,7 @@ class Manager:
                 _log_error(
                     "Error creating %s snapshot: %s", provider_map[source].name, err
                 )
-                raise SnapmInvalidIdentifierError(
-                    f"Snapset name {name} too long"
-                ) from err
+                raise
             except SnapmNoSpaceError as err:
                 _log_error(
                     "Error creating %s snapshot: %s", provider_map[source].name, err
@@ -1029,6 +1177,7 @@ class Manager:
         return snapset
 
     @suspend_signals
+    @_with_manager_lock
     def rename_snapshot_set(self, old_name, new_name):
         """
         Rename snapshot set ``old_name`` as ``new_name``.
@@ -1065,6 +1214,26 @@ class Manager:
         return snapset
 
     @suspend_signals
+    @_with_manager_lock
+    def delete_snapshot_set(self, name=None, uuid=None):
+        """
+        Remove snapshot sets by name or UUID.
+
+        :param name: The name of the snapshot set to delete.
+        :type name: ``str``
+        :param uuid: The UUID of the snapshot set to delete.
+        :type uuid: ``UUID``
+        """
+        snapset = self._snapset_from_name_or_uuid(name=name, uuid=uuid)
+        delete_snapset_boot_entry(snapset)
+        delete_snapset_revert_entry(snapset)
+        snapset.delete()
+        self.snapshot_sets.remove(snapset)
+        self.by_name.pop(snapset.name)
+        self.by_uuid.pop(snapset.uuid)
+        self._boot_cache.refresh_cache()
+
+    @suspend_signals
     def delete_snapshot_sets(self, selection):
         """
         Remove snapshot sets matching selection criteria ``selection``.
@@ -1078,18 +1247,13 @@ class Manager:
                 f"Could not find snapshot sets matching {selection}"
             )
         for snapset in sets:
-            delete_snapset_boot_entry(snapset)
-            delete_snapset_revert_entry(snapset)
-            snapset.delete()
-            self.snapshot_sets.remove(snapset)
-            self.by_name.pop(snapset.name)
-            self.by_uuid.pop(snapset.uuid)
+            self.delete_snapshot_set(name=snapset.name)
             deleted += 1
-        self._boot_cache.refresh_cache()
         return deleted
 
     # pylint: disable=too-many-branches
     @suspend_signals
+    @_with_manager_lock
     def resize_snapshot_set(
         self, source_specs, name=None, uuid=None, default_size_policy=None
     ):
@@ -1121,6 +1285,7 @@ class Manager:
         snapset.resize(sources, size_policies)
 
     @suspend_signals
+    @_with_manager_lock
     def revert_snapshot_set(self, name=None, uuid=None):
         """
         Revert snapshot set named ``name`` or having UUID ``uuid``.
@@ -1164,6 +1329,7 @@ class Manager:
         return reverted
 
     @suspend_signals
+    @_with_manager_lock
     def activate_snapshot_set(self, name=None, uuid=None):
         """
         Activate snapshot set by name or uuid.
@@ -1194,6 +1360,7 @@ class Manager:
         return activated
 
     @suspend_signals
+    @_with_manager_lock
     def deactivate_snapshot_set(self, name=None, uuid=None):
         """
         Deactivate snapshot set by name or uuid.
@@ -1257,6 +1424,7 @@ class Manager:
         return changed
 
     @suspend_signals
+    @_with_manager_lock
     def split_snapshot_set(self, name, new_name, source_specs):
         """
         Split the snapshot set named `name` into two snapshot sets, with
@@ -1375,6 +1543,7 @@ class Manager:
         return new_set
 
     @suspend_signals
+    @_with_manager_lock
     def create_snapshot_set_boot_entry(self, name=None, uuid=None):
         """
         Create a snapshot boot entry for the specified snapshot set.
@@ -1402,6 +1571,7 @@ class Manager:
         self._boot_cache.refresh_cache()
 
     @suspend_signals
+    @_with_manager_lock
     def create_snapshot_set_revert_entry(self, name=None, uuid=None):
         """
         Create a revert boot entry for the specified snapshot set.

@@ -182,11 +182,11 @@ class BootTestsWithRoot(BootTestsBase):
     with_root = True
 
     def test_create_snapshot_boot_entry_no_id(self):
-        with self.assertRaises(snapm.SnapmNotFoundError) as cm:
+        with self.assertRaises(snapm.SnapmInvalidIdentifierError):
             self.manager.create_snapshot_set_boot_entry()
 
     def test_create_snapshot_revert_entry_no_id(self):
-        with self.assertRaises(snapm.SnapmNotFoundError) as cm:
+        with self.assertRaises(snapm.SnapmInvalidIdentifierError):
             self.manager.create_snapshot_set_revert_entry()
 
     def test_create_snapshot_boot_entry_bad_name(self):
