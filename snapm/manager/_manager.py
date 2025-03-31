@@ -600,7 +600,9 @@ def _check_snapset_status(snapset, operation):
             _log_error("Cannot operate on invalid snapshot set '%s'", snapset.name)
         if snapset.status == SnapStatus.REVERTING:
             _log_error("Cannot operate on reverting snapshot set '%s'", snapset.name)
-        raise SnapmStateError(f"Failed to {operation} snapset '{snapset.name}'")
+        raise SnapmStateError(
+            f"Failed to {operation} snapset '{snapset.name}': status is '{snapset.status}'"
+        )
 
 
 def _find_mount_point_for_devpath(devpath):
