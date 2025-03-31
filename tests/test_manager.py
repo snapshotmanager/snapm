@@ -763,6 +763,127 @@ class ManagerTests(unittest.TestCase):
             if snapshot.provider.name == "lvm2cow":
                 self.assertEqual(snapshot.size, 1024 ** 3)
 
+    def test_split_snapshot_set_split(self):
+        testset = "testset0"
+        splitset = "testset1"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        split_source = self.mount_points()[0]
+        nosplit_sources = self.mount_points()[1:]
+
+        # Split split_source from snapshot set
+        split = self.manager.split_snapshot_set(testset, splitset, [split_source])
+
+        # Get updated snapshot set
+        test = self.manager.find_snapshot_sets(selection=snapm.Selection(name=testset))[0]
+
+        self.assertEqual(split.name, splitset)
+        self.assertTrue(split_source in split.sources)
+        self.assertTrue(split_source not in test.sources)
+        for source in nosplit_sources:
+            self.assertTrue(source in test.sources)
+
+    def test_split_snapshot_set_split_bad_name(self):
+        testset = "testset0"
+        splitset = "testset1"
+        badset = "badset0"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        split_source = self.mount_points()[0]
+
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            # Attempt to split with bad snapset name
+            split = self.manager.split_snapshot_set(badset, splitset, [split_source])
+
+    def test_split_snapshot_set_split_empty_split(self):
+        testset = "testset0"
+        splitset = "testset1"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        split_sources = self.mount_points()
+
+        with self.assertRaises(snapm.SnapmArgumentError):
+            # Split split_source from snapshot set
+            split = self.manager.split_snapshot_set(testset, splitset, split_sources)
+
+    def test_split_snapshot_set_split_size_policy_raises(self):
+        testset = "testset0"
+        splitset = "testset1"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        split_sources = [f"{mp}:10%SIZE" for mp in self.mount_points()]
+
+        with self.assertRaises(snapm.SnapmArgumentError):
+            # Attempt to split with size policies in source_specs
+            split = self.manager.split_snapshot_set(testset, splitset, split_sources)
+
+    def test_split_snapshot_set_split_bad_source_raises(self):
+        testset = "testset0"
+        splitset = "testset1"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        split_source = "/quux"
+
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            # Split non-existent source from snapshot set
+            split = self.manager.split_snapshot_set(testset, splitset, [split_source])
+
+    def test_split_snapshot_set_prune(self):
+        testset = "testset0"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        prune_source = self.mount_points()[0]
+        noprune_sources = self.mount_points()[1:]
+
+        # Prune prune_source from snapshot set
+        prune = self.manager.split_snapshot_set(testset, None, [prune_source])
+
+        self.assertTrue(prune_source not in prune.sources)
+        for source in noprune_sources:
+            self.assertTrue(source in prune.sources)
+
+    def test_split_snapshot_set_prune_bad_name(self):
+        testset = "testset0"
+        badset = "badset0"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        split_source = self.mount_points()[0]
+
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            # Attempt to split with bad snapset name
+            split = self.manager.split_snapshot_set(badset, None, [split_source])
+
+    def test_split_snapshot_set_prune_empty_prune(self):
+        testset = "testset0"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        split_sources = self.mount_points()
+
+        with self.assertRaises(snapm.SnapmArgumentError):
+            # Split split_source from snapshot set
+            split = self.manager.split_snapshot_set(testset, None, split_sources)
+
+    def test_split_snapshot_set_prune_size_policy_raises(self):
+        testset = "testset0"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        split_sources = [f"{mp}:10%SIZE" for mp in self.mount_points()]
+
+        with self.assertRaises(snapm.SnapmArgumentError):
+            # Attempt to split with size policies in source_specs
+            split = self.manager.split_snapshot_set(testset, None, split_sources)
+
+    def test_split_snapshot_set_prune_bad_source_raises(self):
+        testset = "testset0"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        split_source = "/quux"
+
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            # Split non-existent source from snapshot set
+            split = self.manager.split_snapshot_set(testset, None, [split_source])
+
+
 @unittest.skipIf(not have_root(), "requires root privileges")
 class ManagerTestsThin(unittest.TestCase):
     """
