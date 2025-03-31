@@ -347,6 +347,23 @@ class CommandTests(unittest.TestCase):
             command.main(args)
         self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 
+    def test_main_snapset_split(self):
+        self.manager.create_snapshot_set("testset0", self.mount_points())
+        to_split = self.mount_points()[0]
+        args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "split"]
+        args.append("testset0")
+        args.append("testset1")
+        args.append(to_split)
+        command.main(args)
+
+        # Refresh manager context
+        self.manager.discover_snapshot_sets()
+
+        # Verify split
+        sets = self.manager.find_snapshot_sets(snapm.Selection(name="testset1"))
+        self.assertEqual(len(sets), 1)
+        self.assertTrue(to_split in sets[0].sources)
+
     def test_main_snapset_list(self):
         self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "list"]

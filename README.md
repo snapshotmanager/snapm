@@ -22,6 +22,7 @@ provisioned snapshots are supported.
                 * [rename](#rename)
                 * [revert](#revert)
                 * [resize](#resize)
+                * [split](#split)
                 * [activate](#activate)
                 * [deactivate](#deactivate)
                 * [autoactivate](#autoactivate)
@@ -239,6 +240,30 @@ policy:
 
 ```
 # snapm snapset resize backup --size-policy 200%USED
+```
+
+##### split
+Split snapshots from an existing snapshot set into a new snapshot set.
+
+Split the snapshot set named 'name' into a new snapshot set named
+'new\_name'. Each listed source from 'name' is split into the new
+snapshot set. Sources that are not listed on the command line remain part of
+the original snapshot set. It is an error to split all sources from a
+snapshot set: in this case use 'snapm snapset rename' instead.
+
+To split the source "/home" from the existing snapshot set "upgrade" into a
+new snapshot set named "noupgrade":
+
+```
+# snapm snapset split upgrade noupgrade /home
+SnapsetName:      noupgrade
+Sources:          /home
+NrSnapshots:      1
+Time:             2025-03-31 20:21:29
+UUID:             30e69b86-5c48-5e5d-be1a-bf3d63aef8f7
+Status:           Inactive
+Autoactivate:     no
+Bootable:         no
 ```
 
 ##### activate

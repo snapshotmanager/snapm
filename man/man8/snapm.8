@@ -9,7 +9,7 @@
 ..
 .
 .de ARG_SNAPSET_COMMANDS
-.  RI [ create | delete | rename | revert | resize | activate | deactivate | autoactivate | list | show ]
+.  RI [ create | delete | rename | revert | resize | split | activate | deactivate | autoactivate | list | show ]
 ..
 .
 .de ARG_SNAPSHOT_TYPE
@@ -144,6 +144,19 @@ Snapm \(em Linux snapshot manager
 .  ad b
 ..
 .CMD_SNAPSET_RESIZE
+.
+.HP
+.B snapm
+.de CMD_SNAPSET_SPLIT
+.  ad l
+.  BR snapset
+.  BR \fBsplit
+.  IR name
+.  IR new_name
+.  IR \fIsource\fP ...
+.  ad b
+..
+.CMD_SNAPSET_SPLIT
 .
 .HP
 .B snapm
@@ -672,6 +685,18 @@ Size policies may be specified on a per-source basis using the same syntax as
 the \fBsnapset create\fP command. A default size policy can be set using the
 \fB--size-policy\fP argument. If no source paths are specified the command
 applies the default size policy to each member of the snapshot set.
+.
+.HP
+.B snapm
+.CMD_SNAPSET_SPLIT
+.br
+Split snapshots from an existing snapshot set into a new snapshot set.
+
+Split the snapshot set named \fBname\fP into a new snapshot set named
+\&'\fBnew_name\fP'. Each listed source from '\fBname\fP' is split into the new
+snapshot set. Sources that are not listed on the command line remain part of
+the original snapshot set. It is an error to split \fIall\fP sources from a
+snapshot set: in this case use '\fBsnapm snapset rename\fP' instead.
 .
 .HP
 .B snapm

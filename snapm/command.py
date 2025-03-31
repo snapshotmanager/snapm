@@ -510,6 +510,23 @@ def revert_snapset(manager, name=None, uuid=None):
     return manager.revert_snapshot_set(name=name, uuid=uuid)
 
 
+def split_snapset(manager, name, new_name, sources):
+    """
+    Split an existing snapshot set.
+
+    Split the snapshot set named ``name`` into two snapshot sets, including
+    all sources listed in ``sources`` in the newly created snapshot set with
+    name ``new_name``.
+
+    :param name: The name of the snapshot set to split.
+    :param new_name: The name for the newly created snapshot set.
+    :param sources: The sources to split from ``name`` to ``new_name``.
+    :returns: A ``SnapshotSet`` object representing the snapshot set named
+              ``new_name``.
+    """
+    return manager.split_snapshot_set(name, new_name, sources)
+
+
 def show_snapshots(manager, selection=None, json=False):
     """
     Show snapshots matching selection criteria.
@@ -837,6 +854,29 @@ def _revert_cmd(cmd_args):
 
     snapset = revert_snapset(manager, name=name, uuid=uuid)
     _log_info("Started revert for snapset %s", snapset.name)
+    return 0
+
+
+def _split_cmd(cmd_args):
+    """
+    Split snapshot set command handler.
+
+    Attempt to split the specified sources from the first snapshot set
+    argument into the second.
+
+    :param cmd_args: Command line arguments for the command.
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+
+    snapset = split_snapset(manager, cmd_args.name, cmd_args.new_name, cmd_args.sources)
+    _log_info(
+        "Split snapset '%s' into '%s' (%s)",
+        cmd_args.name,
+        snapset.name,
+        ", ".join(snapset.sources),
+    )
+    print(snapset)
     return 0
 
 
@@ -1233,6 +1273,7 @@ DELETE_CMD = "delete"
 RENAME_CMD = "rename"
 RESIZE_CMD = "resize"
 REVERT_CMD = "revert"
+SPLIT_CMD = "split"
 ACTIVATE_CMD = "activate"
 DEACTIVATE_CMD = "deactivate"
 AUTOACTIVATE_CMD = "autoactivate"
@@ -1244,6 +1285,7 @@ SNAPSHOT_TYPE = "snapshot"
 PLUGIN_TYPE = "plugin"
 
 
+# pylint: disable=too-many-statements
 def _add_snapset_subparser(type_subparser):
     """
     Add subparser for 'snapset' commands.
@@ -1341,6 +1383,33 @@ def _add_snapset_subparser(type_subparser):
         type=str,
         action="store",
         help="A default size policy for fixed size snapshots",
+    )
+
+    # snapset split command
+    snapset_split_parser = snapset_subparser.add_parser(
+        SPLIT_CMD, help="Split snapshot sets"
+    )
+    snapset_split_parser.set_defaults(func=_split_cmd)
+    snapset_split_parser.add_argument(
+        "name",
+        metavar="NAME",
+        type=str,
+        action="store",
+        help="The name of the snapshot set to be split",
+    )
+    snapset_split_parser.add_argument(
+        "new_name",
+        metavar="NEW_NAME",
+        type=str,
+        action="store",
+        help="The new name of the new snapshot to split into",
+    )
+    snapset_split_parser.add_argument(
+        "sources",
+        metavar="SOURCE",
+        type=str,
+        nargs="+",
+        help="A device or mount point to be split from this snapshot set",
     )
 
     # snapset revert command

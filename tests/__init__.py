@@ -30,6 +30,7 @@ class MockArgs(object):
     identifier = None
     debug = None
     name = None
+    new_name = None
     name_prefixes = False
     no_headings = False
     options = ""
