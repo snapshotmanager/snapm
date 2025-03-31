@@ -44,6 +44,7 @@ from snapm import (
     SnapmPluginError,
     SnapmStateError,
     SnapmRecursionError,
+    SnapmArgumentError,
     Selection,
     bool_to_yes_no,
     is_size_policy,
@@ -1204,6 +1205,119 @@ class Manager:
             self._set_autoactivate(snapset, auto=auto)
             changed += 1
         return changed
+
+    @suspend_signals
+    def split_snapshot_set(self, name, new_name, source_specs):
+        """
+        Split the snapshot set named `name` into two snapshot sets, with
+        `new_name` containing the listed `sources` and `name` containing all
+        remaining snapshots.
+
+        If `new_name` is `None` the listed snapshot are removed from `name`
+        and permanently deleted. This operation cannot be undone.
+
+        :param name: The name of the snapshot set to split
+        :param new_name: The name of the newly split off snapshot set
+        :param sources: The list of sources to include in the new snapshot set
+        """
+        if name not in self.by_name:
+            raise SnapmNotFoundError(f"Cannot find snapshot set named {name}")
+
+        if new_name:
+            self._validate_snapset_name(new_name)
+
+        op = f"{'split' if new_name else 'prune'}"
+
+        _log_info("Attempting to %s snapshot set '%s'", op, name)
+
+        snapset = self.by_name[name]
+        _check_snapset_status(snapset, op)
+
+        # Parse size policies and normalise mount paths
+        (sources, size_policies) = _parse_source_specs(source_specs, None)
+
+        if any(size_policies[source] is not None for source in sources):
+            err_sources = ", ".join(
+                [source for source in source_specs if ":" in source]
+            )
+            raise SnapmArgumentError(
+                f"SnapshotSet {op} does not support size policies: {err_sources}"
+            )
+
+        missing_sources = [
+            source for source in sources if source not in snapset.sources
+        ]
+
+        if missing_sources:
+            raise SnapmNotFoundError(
+                f"SnapshotSet '{snapset.name}' does not contain {', '.join(missing_sources)}"
+            )
+
+        timestamp = snapset.timestamp
+
+        split_snapshots = [
+            snapshot for snapshot in snapset.snapshots if snapshot.source in sources
+        ]
+
+        keep_snapshots = [
+            snapshot for snapshot in snapset.snapshots if snapshot.source not in sources
+        ]
+
+        if not keep_snapshots:
+            op_str = "Splitting" if new_name else "Pruning"
+            raise SnapmArgumentError(
+                f"{op_str} {', '.join((snap.source for snap in split_snapshots))} "
+                f"from {snapset.name} would leave {snapset.name} empty"
+            )
+
+        _log_debug(
+            "Splitting snapshot%s %s from snapshot set '%s'",
+            "s" if len(split_snapshots) > 1 else "",
+            ", ".join((snap.source for snap in split_snapshots)),
+            snapset.name,
+        )
+
+        self.by_name.pop(snapset.name)
+        self.by_uuid.pop(snapset.uuid)
+        self.snapshot_sets.remove(snapset)
+
+        # Build new SnapshotSet with old name to start with, then use
+        # SnapshotSet.rename() to propagate new_name to members.
+        new_set = SnapshotSet(snapset.name, timestamp, split_snapshots)
+
+        # Update original snapshot set and re-add to lookup tables
+        orig_set = SnapshotSet(snapset.name, timestamp, keep_snapshots)
+        self.by_name[orig_set.name] = orig_set
+        self.by_uuid[orig_set.uuid] = orig_set
+        self.snapshot_sets.append(orig_set)
+
+        if new_name:
+            # Attempt to rename members to new_name
+            try:
+                new_set.rename(new_name)
+            except SnapmError as err:
+                self.by_name[snapset.name] = snapset
+                self.by_uuid[snapset.uuid] = snapset
+                self.snapshot_sets.append(snapset)
+                raise err
+        else:
+            try:
+                # Delete the pruned members
+                new_set.delete()
+            except SnapmError as err:
+                _log_error(
+                    "Failed to clean up pruned snapshot set members: %s (%s)",
+                    err,
+                    ", ".join(snapshot.name for snapshot in new_set.snapshots),
+                )
+            return orig_set
+
+        # Add new snapshot set to lookup tables
+        self.by_name[new_set.name] = new_set
+        self.by_uuid[new_set.uuid] = new_set
+        self.snapshot_sets.append(new_set)
+
+        return new_set
 
     @suspend_signals
     def create_snapshot_set_boot_entry(self, name=None, uuid=None):
