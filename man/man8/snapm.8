@@ -160,6 +160,18 @@ Snapm \(em Linux snapshot manager
 .
 .HP
 .B snapm
+.de CMD_SNAPSET_PRUNE
+.  ad l
+.  BR snapset
+.  BR \fBprune
+.  IR name
+.  IR \fIsource\fP ...
+.  ad b
+..
+.CMD_SNAPSET_PRUNE
+.
+.HP
+.B snapm
 .de CMD_SNAPSET_ACTIVATE
 .  ad l
 .  BR snapset
@@ -697,6 +709,18 @@ Split the snapshot set named \fBname\fP into a new snapshot set named
 snapshot set. Sources that are not listed on the command line remain part of
 the original snapshot set. It is an error to split \fIall\fP sources from a
 snapshot set: in this case use '\fBsnapm snapset rename\fP' instead.
+.
+.HP
+.B snapm
+.CMD_SNAPSET_PRUNE
+.br
+Prune snapshots from an existing snapshot set.
+
+Prune the listed sources from the snapshot set named \fBname\fP. The listed
+snapshot sources are pruned from the snapshot set and permanently deleted.
+Care should be taken since this operation cannot be reversed. It is an error
+to prune \fIall\fP sources from a snapshot set: in this case use
+\&'\fBsnapm snapset delete\fP' instead.
 .
 .HP
 .B snapm

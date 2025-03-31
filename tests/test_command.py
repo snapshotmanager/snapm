@@ -364,6 +364,21 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(len(sets), 1)
         self.assertTrue(to_split in sets[0].sources)
 
+    def test_main_snapset_prune(self):
+        self.manager.create_snapshot_set("testset0", self.mount_points())
+        to_prune = self.mount_points()[0]
+        args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "prune"]
+        args.append("testset0")
+        args.append(to_prune)
+        command.main(args)
+
+        # Refresh manager context
+        self.manager.discover_snapshot_sets()
+
+        # Verify prune
+        pruned = self.manager.find_snapshot_sets(snapm.Selection(name="testset0"))[0]
+        self.assertFalse(to_prune in pruned.sources)
+
     def test_main_snapset_list(self):
         self.manager.create_snapshot_set("testset0", self.mount_points())
         args = [os.path.join(os.getcwd(), "bin/snapm"), "snapset", "list"]

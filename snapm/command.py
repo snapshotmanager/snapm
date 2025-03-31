@@ -527,6 +527,21 @@ def split_snapset(manager, name, new_name, sources):
     return manager.split_snapshot_set(name, new_name, sources)
 
 
+def prune_snapset(manager, name, sources):
+    """
+    Prune snapshots from an existing snapshot set.
+
+    Remove snapshots from an existing snapshot set named ``name``. The
+    snapshot sources listed in ``sources`` are pruned (deleted) from the
+    named snapshot set.
+
+    :param name: The name of the snapshot set to prune.
+    :param sources: The sources to prune from ``name``.
+    :returns: A ``SnapshotSet`` object representing the pruned snapshot set
+    """
+    return manager.split_snapshot_set(name, None, sources)
+
+
 def show_snapshots(manager, selection=None, json=False):
     """
     Show snapshots matching selection criteria.
@@ -875,6 +890,27 @@ def _split_cmd(cmd_args):
         cmd_args.name,
         snapset.name,
         ", ".join(snapset.sources),
+    )
+    print(snapset)
+    return 0
+
+
+def _prune_cmd(cmd_args):
+    """
+    Prune snapshot set command handler.
+
+    Attempt to prune the specified sources from the given snapshot set.
+
+    :param cmd_args: Command line arguments for the command.
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+
+    snapset = prune_snapset(manager, cmd_args.name, cmd_args.sources)
+    _log_info(
+        "Pruned sources (%s) from snapset '%s'",
+        snapset.name,
+        ", ".join(cmd_args.sources),
     )
     print(snapset)
     return 0
@@ -1274,6 +1310,7 @@ RENAME_CMD = "rename"
 RESIZE_CMD = "resize"
 REVERT_CMD = "revert"
 SPLIT_CMD = "split"
+PRUNE_CMD = "prune"
 ACTIVATE_CMD = "activate"
 DEACTIVATE_CMD = "deactivate"
 AUTOACTIVATE_CMD = "autoactivate"
@@ -1410,6 +1447,26 @@ def _add_snapset_subparser(type_subparser):
         type=str,
         nargs="+",
         help="A device or mount point to be split from this snapshot set",
+    )
+
+    # snapset prune command
+    snapset_prune_parser = snapset_subparser.add_parser(
+        PRUNE_CMD, help="Prune snapshots from snapshot sets"
+    )
+    snapset_prune_parser.set_defaults(func=_prune_cmd)
+    snapset_prune_parser.add_argument(
+        "name",
+        metavar="NAME",
+        type=str,
+        action="store",
+        help="The name of the snapshot set to be split",
+    )
+    snapset_prune_parser.add_argument(
+        "sources",
+        metavar="SOURCE",
+        type=str,
+        nargs="+",
+        help="A device or mount point to be pruned from this snapshot set",
     )
 
     # snapset revert command
