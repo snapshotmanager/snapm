@@ -11,6 +11,8 @@ Snapshot manager plugin helpers.
 import os
 from os.path import sep as path_sep, ismount
 
+from snapm import SNAPM_VALID_NAME_CHARS
+
 _MOUNT_SEPARATOR = "-"
 _ESCAPED_MOUNT_SEPARATOR = "--"
 
@@ -33,31 +35,6 @@ DMSETUP_REPORT_SEP = ":"
 # Fields: origin_name-snapset_snapset-name_timestamp_mount-point
 SNAPSHOT_NAME_FORMAT = "%s-snapset_%s_%d_%s"
 
-_bad_chars = [
-    ":",
-    "?",
-    "@",
-    "[",
-    "]",
-    "#",
-    "<",
-    ">",
-    "{",
-    "}",
-    "~",
-    ";",
-    "%",
-    "$",
-    "£",
-    '"',
-    "!",
-    "*",
-    "&",
-    "^",
-    "`",
-    "'",
-]
-
 
 def _escape_bad_chars(path):
     """
@@ -68,7 +45,7 @@ def _escape_bad_chars(path):
     """
     escaped = ""
     for char in path:
-        if char in _bad_chars:
+        if char != path_sep and char not in SNAPM_VALID_NAME_CHARS:
             escaped = escaped + "." + char.encode("utf8").hex()
         else:
             if char == ".":

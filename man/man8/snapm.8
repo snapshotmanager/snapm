@@ -508,10 +508,17 @@ Display the version of \fBsnapm\fP and exit.
 Snapm manages named collections of snapshots taken at a common point in time as
 \fIsnapshot sets\fP. A snapshot set is created from a list of sources (mount
 point or block device paths) and allows the state of the system to be captured
-spanning over several volumes.  Valid characters for snapset names are A-Z,
-a-z, 0-9, -, ., and +. Snapshot sets and snapshots are also identified by a
-unique UUID value. The terms \fIsnapshot set\fP and \fIsnapset\fP are used
-interchangeably in this manual page.
+spanning over several volumes.
+
+Valid characters for snapset names are:
+.BR a \(en z
+.BR A \(en Z
+.BR 0 \(en 9
+.B + . -
+.P
+Snapshot sets and snapshots are also identified by a unique UUID value. The
+terms \fIsnapshot set\fP and \fIsnapset\fP are used interchangeably in this
+manual page.
 
 A plugin model is used to map mount points or devices onto possible snapshot
 \fIproviders\fP. A provider plugin must exist for each source path specified

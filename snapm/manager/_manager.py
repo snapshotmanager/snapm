@@ -32,6 +32,7 @@ from snapm.manager.boot import (
 
 from snapm import (
     SNAPM_DEBUG_MANAGER,
+    SNAPM_VALID_NAME_CHARS,
     SnapmError,
     SnapmCalloutError,
     SnapmNoSpaceError,
@@ -864,11 +865,11 @@ class Manager:
         :raises: ``SnapmExistsError`` if the name is already in use, or
                  ``SnapmInvalidIdentifierError`` if the name fails validation.
         """
-        invalid_chars = ["/", "\\", "_", " "]
         if name in self.by_name:
             raise SnapmExistsError(f"Snapshot set named '{name}' already exists")
-        for char in invalid_chars:
-            if char in name:
+        for char in name:
+            # Underscore is specifically disallowed in snapset names.
+            if char == "_" or char not in SNAPM_VALID_NAME_CHARS:
                 raise SnapmInvalidIdentifierError(
                     f"Snapshot set name cannot include '{char}'"
                 )
