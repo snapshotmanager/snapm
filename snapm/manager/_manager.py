@@ -1233,6 +1233,11 @@ class Manager:
         snapset = self.by_name[name]
         _check_snapset_status(snapset, op)
 
+        if not source_specs:
+            raise SnapmArgumentError(
+                f"SnapshotSet {op} requires at least one source argument"
+            )
+
         # Parse size policies and normalise mount paths
         (sources, size_policies) = _parse_source_specs(source_specs, None)
 

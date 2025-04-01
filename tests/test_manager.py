@@ -828,6 +828,15 @@ class ManagerTests(unittest.TestCase):
             # Split non-existent source from snapshot set
             split = self.manager.split_snapshot_set(testset, splitset, [split_source])
 
+    def test_split_snapshot_set_split_empty_sources(self):
+        testset = "testset0"
+        splitset = "testset1"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        with self.assertRaises(snapm.SnapmArgumentError):
+            # Split [] from snapshot set
+            split = self.manager.split_snapshot_set(testset, splitset, [])
+
     def test_split_snapshot_set_prune(self):
         testset = "testset0"
         self.manager.create_snapshot_set(testset, self.mount_points())
@@ -862,6 +871,14 @@ class ManagerTests(unittest.TestCase):
         with self.assertRaises(snapm.SnapmArgumentError):
             # Split split_source from snapshot set
             split = self.manager.split_snapshot_set(testset, None, split_sources)
+
+    def test_split_snapshot_set_prune_empty_sources(self):
+        testset = "testset0"
+        self.manager.create_snapshot_set(testset, self.mount_points())
+
+        with self.assertRaises(snapm.SnapmArgumentError):
+            # Split [] from snapshot set
+            split = self.manager.split_snapshot_set(testset, None, [])
 
     def test_split_snapshot_set_prune_size_policy_raises(self):
         testset = "testset0"
