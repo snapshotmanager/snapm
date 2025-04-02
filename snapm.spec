@@ -2,7 +2,7 @@
 %global sphinx_docs 1
 
 Name:		snapm
-Version:	0.4.0
+Version:	0.4.1
 Release:	1%{?dist}
 Summary:	%{summary}
 
@@ -136,6 +136,60 @@ pytest-3 --log-level=debug -v
 %endif
 
 %changelog
+* Wed Apr 02 2025 Bryn M. Reeves <bmr@redhat.com> - 0.4.1-1
+- snapm: fix Manager.split_snapshot_sets() with empty sources
+- command: add new 'snapm snapset prune' command
+- command: add new 'snapm snapset split' command
+- tests: add Manager.split_snapshot_set() tests
+- snapm: add Manager.split_snapshot_set()
+- snapm: include state string in exception raised from _check_snapset_status()
+- snapm: add snapm.SnapmArgumentError exception class
+- tests: add missing '[cache]' section to test boom.conf
+- snapm: refresh boot cache after creating entries in create_snapshot_set()
+- snapm: improve SnapshotSet action method logging
+- snapm: use Manager._set_autoactivate() in create_snapshot_set()
+- Manager: use common snapm.bool_to_yes_no() in Manager.set_autoactivate()
+- Manager: factor out common code from Manager.set_autoactivate()
+- snapm: move _bool_to_yes_no() from snapm.command to snapm
+- Plugins: add generic Plugin.autoactivate setter and drop set_autoactivate()
+- Manager: fix autoactivate setting during snapshot set creation
+- snapm: move snapshot -> snapset linkage into SnapshotSet()
+- dist: replace license classifier with SPDX expressions
+- snapm: raise SnapmNotFoundError if source path does not exist
+- tests: switch GitHub workflows over to Stratis 3.8.0
+- tests: install stratis-cli from git and pin version to 3.7.0
+- lvm2: filter out LVM2 environment variables when calling lvm commands
+- lvm2: make vg_lv_from_device_path a method of Lvm2Cow and Lvm2Thin
+- lvm2: ensure vg_lv_from_device_path() gets the expected report format
+- lvm2: determine LVM2 JSON format argument based on installed version
+- lvm2: refactor helper functions as Lvm2 plugin methods
+- tests: allow mock vgs/lvs to accept --reportformat json or json_std
+- dist: clean up copyright statements and convert to SPDX license headers
+- dist: update GPLv2 text in COPYING
+- snapm: factor out common code for snapshot origin and mount point links
+- snapm: move rename logic from Manager to SnapshotSet.rename()
+- snapm: move resize logic from Manager to SnapshotSet.resize()
+- snapm: move {de,}activate logic from Manager to SnapshotSet.{de,}activate()
+- snapm: move revert logic from Manager into SnapshotSet.revert()
+- snapm: move boot entry creation inside Manager.create_snapshot_set()
+- manager: replace open-coded snapset delete with snapset.delete()
+- snapm: implement SnapshotSet.delete()
+- snapm: catch KeyboardInterrupt in snapm.command.main()
+- snapm: decorate state-changing Manager methods with @suspend_signals
+- snapm: add @suspend_signals decorator to block SIGINT, SIGTERM
+- report: strip trailing whitespace from report output
+- tests: bracket test cases with log messages
+- tests: add explicit log formatter to file and console handlers
+- tests: capture tool output and log command execution
+- tests: add console handler to test suite logger
+- snapm: avoid duplicating log handlers when main() is called repeatedly
+- tests: fix duplicate log handlers in test suite
+- dist: use {name} instead of hardcoding snapm in URL and autosetup
+- jenkins: add file to list dependencies of python test suite
+- tests: enable workflow on pull_request
+- tests: temporarily exclude CentOS from test_boot.is_redhat() check
+- dist: move python3-boom dep to python3-snapm and require >= 1.6.4
+
 * Thu Dec 12 2024 Bryn M. Reeves <bmr@redhat.com> - 0.4.0
 - stratis: return False for non-DM devices from is_stratis_device()
 - command: accept zero or more source spec arguments to snapset resize
