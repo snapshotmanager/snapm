@@ -1,4 +1,4 @@
 pycodestyle>=2.4.0
 coverage>=4.0.3
 Sphinx>=1.3.5
-boom-boot>=1.6.4
+boom-boot>=1.6.1

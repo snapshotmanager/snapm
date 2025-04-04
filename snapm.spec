@@ -13,19 +13,6 @@ Source0:	%{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 BuildArch:	noarch
 
 BuildRequires:	make
-BuildRequires:	python3-setuptools
-BuildRequires:	python3-devel
-BuildRequires:	python3-pip
-BuildRequires:	python3-wheel
-BuildRequires:	python3-boom
-BuildRequires:	python3-dbus-client-gen
-BuildRequires:	python3-dbus-python-client-gen
-BuildRequires:	python3-justbytes
-BuildRequires:	python3-packaging
-BuildRequires:	python3-dateutil
-BuildRequires:	python3-wcwidth
-BuildRequires:	python3-psutil
-BuildRequires:	python3-pytest
 BuildRequires:	lvm2
 BuildRequires:	stratisd
 BuildRequires:	stratis-cli
@@ -36,9 +23,14 @@ BuildRequires:	boom-boot
 %if 0%{?fedora}
 BuildRequires: libfaketime
 %endif
+BuildRequires: python3-devel
+BuildRequires: python3-pytest
 
 Requires: python3-snapm = %{version}-%{release}
 Recommends: boom-boot
+
+%generate_buildrequires
+%pyproject_buildrequires
 
 %package -n python3-snapm
 Summary: %{summary}
