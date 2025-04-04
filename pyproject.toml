@@ -17,7 +17,7 @@ classifiers = [
     "Programming Language :: Python :: Implementation :: CPython",
 ]
 dependencies = [
-    "boom-boot >= 1.6.4",
+    "boom-boot >= 1.6.1",
     "dbus-client-gen >= 0.4",
     "dbus-python-client-gen >= 0.7",
     "justbytes >=0.14",
@@ -33,6 +33,6 @@ Issues = "https://github.com/snapshotmanager/snapm/issues"
 [build-system]
 requires = [
     "wheel",
-    "setuptools>=61.0",
+    "setuptools>=53.0",
 ]
 build-backend = "setuptools.build_meta"
