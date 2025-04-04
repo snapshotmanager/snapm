@@ -13,6 +13,7 @@ Source0:	%{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 BuildArch:	noarch
 
 BuildRequires:	make
+BuildRequires:  pyproject-rpm-macros
 BuildRequires:	python3-setuptools
 BuildRequires:	python3-devel
 BuildRequires:	python3-pip
@@ -81,18 +82,10 @@ rm -rf doc/_build
 rm -f doc/*.rst
 %endif
 
-%if 0%{?centos} || 0%{?rhel}
-%py3_build
-%else
 %pyproject_wheel
-%endif
 
 %install
-%if 0%{?centos} || 0%{?rhel}
-%py3_install
-%else
 %pyproject_install
-%endif
 
 mkdir -p ${RPM_BUILD_ROOT}/%{_mandir}/man8
 install -m 644 man/man8/snapm.8 ${RPM_BUILD_ROOT}/%{_mandir}/man8
@@ -115,11 +108,7 @@ pytest-3 --log-level=debug -v
 %license LICENSE
 %doc README.md
 %{python3_sitelib}/%{name}/
-%if 0%{?centos} || 0%{?rhel}
-%{python3_sitelib}/%{name}-*.egg-info/
-%else
 %{python3_sitelib}/%{name}*.dist-info/
-%endif
 
 %if 0%{?sphinx_docs}
 %files -n python3-snapm-doc
