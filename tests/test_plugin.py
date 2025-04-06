@@ -37,6 +37,103 @@ class PluginTests(unittest.TestCase):
     def tearDown(self):
         log.debug("Tearing down %s", self._testMethodName)
 
+    def test_plugin_info(self):
+        p = plugins.Plugin(log)
+        info = p.info()
+        self.assertEqual(info, {"name": "plugin", "version": "0.1.0"})
+
+    def _plugin_base_not_implemented_raises(self, method, args):
+        p = plugins.Plugin(log)
+        with self.assertRaises(NotImplementedError):
+            getattr(p, method)(*args)
+
+    def test_plugin_base_discover_snapshots_raises(self):
+        args = []
+        self._plugin_base_not_implemented_raises("discover_snapshots", args)
+
+    def test_plugin_base_can_snapshot_raises(self):
+        args = ["/mount"]
+        self._plugin_base_not_implemented_raises("can_snapshot", args)
+
+    def test_plugin_base_check_create_snapshot_raises(self):
+        args = [
+            "fedora/root",
+            "testset0",
+            1693921253,
+            "/",
+            None,
+        ]
+        self._plugin_base_not_implemented_raises("check_create_snapshot", args)
+
+    def test_plugin_base_create_snapshot_raises(self):
+        args = [
+            "fedora/root",
+            "testset0",
+            1693921253,
+            "/",
+            None,
+        ]
+        self._plugin_base_not_implemented_raises("create_snapshot", args)
+
+    def test_plugin_base_rename_snapshot_raises(self):
+        args = [
+            "old_name",
+            "fedora/root",
+            "testset0",
+            1693921253,
+            "/",
+        ]
+        self._plugin_base_not_implemented_raises("rename_snapshot", args)
+
+    def test_plugin_base_delete_snapshot_raises(self):
+        args = ["aname"]
+        self._plugin_base_not_implemented_raises("delete_snapshot", args)
+
+    def test_plugin_base_activate_snapshot_raises(self):
+        args = ["aname"]
+        self._plugin_base_not_implemented_raises("activate_snapshot", args)
+
+    def test_plugin_base_deactivate_snapshot_raises(self):
+        args = ["aname"]
+        self._plugin_base_not_implemented_raises("deactivate_snapshot", args)
+
+    def test_plugin_base_set_autoactivate_raises(self):
+        args = ["aname"]
+        self._plugin_base_not_implemented_raises("set_autoactivate", args)
+
+    def test_plugin_base_origin_from_mount_point_raises(self):
+        args = ["/mount"]
+        self._plugin_base_not_implemented_raises("origin_from_mount_point", args)
+
+    def test_plugin_base_check_resize_snapshot_raises(self):
+        args = [
+            "aname",
+            "/dev/fedora/aname-orig",
+            "/mount",
+            "1G",
+        ]
+        self._plugin_base_not_implemented_raises("check_resize_snapshot", args)
+
+    def test_plugin_base_resize_snapshot_raises(self):
+        args = [
+            "aname",
+            "/dev/fedora/aname-orig",
+            "/mount",
+            "1G",
+        ]
+        self._plugin_base_not_implemented_raises("resize_snapshot", args)
+
+    def test_plugin_base_check_revert_snapshot_raises(self):
+        args = [
+            "aname",
+            "/dev/fedora/aname-orig",
+        ]
+        self._plugin_base_not_implemented_raises("check_revert_snapshot", args)
+
+    def test_plugin_base_revert_snapshot_raises(self):
+        args = ["aname"]
+        self._plugin_base_not_implemented_raises("revert_snapshot", args)
+
     def test_parse_snapshot_name(self):
         snapshot_names = {
             "root-snapset_backup_1693921253_-": ("backup", 1693921253, "/"),

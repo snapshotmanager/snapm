@@ -11,7 +11,7 @@ Snapshot manager plugin helpers.
 import os
 from os.path import sep as path_sep, ismount
 
-from snapm import SNAPM_VALID_NAME_CHARS
+from snapm import SNAPM_VALID_NAME_CHARS, Snapshot
 
 _MOUNT_SEPARATOR = "-"
 _ESCAPED_MOUNT_SEPARATOR = "--"
@@ -34,6 +34,218 @@ DMSETUP_REPORT_SEP = ":"
 
 # Fields: origin_name-snapset_snapset-name_timestamp_mount-point
 SNAPSHOT_NAME_FORMAT = "%s-snapset_%s_%d_%s"
+
+
+class Plugin:
+    """
+    Abstract base class for snapshot manager plugins.
+    """
+
+    name = "plugin"
+    version = "0.1.0"
+    snapshot_class = Snapshot
+
+    def __init__(self, logger):
+        self.size_map = None
+        self.logger = logger
+
+    def _log_error(self, *args):
+        """
+        Log at error level.
+        """
+        self.logger.error(*args)
+
+    def _log_warn(self, *args):
+        """
+        Log at warning level.
+        """
+        self.logger.warning(*args)
+
+    def _log_info(self, *args):
+        """
+        Log at info level.
+        """
+        self.logger.info(*args)
+
+    def _log_debug(self, *args):
+        """
+        Log at debug level.
+        """
+        self.logger.debug(*args)
+
+    def info(self):
+        """
+        Return plugin name and version.
+        """
+        return {"name": self.name, "version": self.version}
+
+    def start_transaction(self):
+        """
+        Begin a snapshot set creation transaction in this plugin.
+        """
+        self.size_map = {}
+
+    def end_transaction(self):
+        """
+        End a snapshot set creation transaction in this plugin.
+        """
+        self.size_map = None
+
+    def discover_snapshots(self):
+        """
+        Discover snapshots managed by this plugin class.
+
+        Returns a list of objects that are a subclass of ``Snapshot``.
+        :returns: A list of snapshots discovered by this plugin class.
+        """
+        raise NotImplementedError
+
+    def can_snapshot(self, source):
+        """
+        Test whether this plugin can snapshot the specified mount point or
+        block device.
+
+        :param source: The block device or mount point path to test.
+        :returns: ``True`` if this plugin can snapshot the file system mounted
+                  at ``mount_point``, or ``False`` otherwise.
+        """
+        raise NotImplementedError
+
+    def check_create_snapshot(
+        self, origin, snapset_name, timestamp, mount_point, size_policy
+    ):
+        """
+        Perform pre-creation checks before creating a snapshot.
+
+        :param origin: The origin volume for the snapshot.
+        :param snapset_name: The name of the snapshot set to be created.
+        :param timestamp: The snapshot set timestamp.
+        :param mount_point: The mount point path for this snapshot.
+        :raises: ``SnapmNoSpaceError`` if there is insufficient free space to
+                 create the snapshot.
+        """
+        raise NotImplementedError
+
+    def create_snapshot(
+        self, origin, snapset_name, timestamp, mount_point, size_policy
+    ):
+        """
+        Create a snapshot of ``origin`` in the snapset named ``snapset_name``.
+
+        :param origin: The origin volume for the snapshot.
+        :param snapset_name: The name of the snapshot set to be created.
+        :param timestamp: The snapshot set timestamp.
+        :param mount_point: The mount point path for this snapshot.
+        :raises: ``SnapmNoSpaceError`` if there is insufficient free space to
+                 create the snapshot.
+        """
+        raise NotImplementedError
+
+    def rename_snapshot(self, old_name, origin, snapset_name, timestamp, mount_point):
+        """
+        Rename the snapshot named ``old_name`` according to the provided
+        snapshot field values.
+
+        :param old_name: The original name of the snapshot to be renamed.
+        :param origin: The origin volume for the snapshot.
+        :param snapset_name: The new name of the snapshot set.
+        :param timestamp: The snapshot set timestamp.
+        :param mount_point: The mount point of the snapshot.
+        """
+        raise NotImplementedError
+
+    def check_resize_snapshot(self, name, origin, mount_point, size_policy):
+        """
+        Chcek whether this snapshot can be resized to the requested
+        ``size_policy``. This method returns if the resize can be satisfied and
+        raises an exception if not.
+
+        :returns: None
+        :raises: ``SnapmNoSpaceError`` if insufficient space is available to
+        satisfy the requested size policy or ``SnapmPluginError`` if another
+        reason prevents the snapshot from being resized.
+        """
+        raise NotImplementedError
+
+    def resize_snapshot(self, name, origin, mount_point, size_policy):
+        """
+        Attempt to resize the snapshot ``name`` to the requested
+        ``size_policy``. This method returns if the resize can be satisfied and
+        raises an exception if not.
+
+        :returns: None
+        :raises: ``SnapmNoSpaceError`` if insufficient space is available to
+        satisfy the requested size policy or ``SnapmPluginError`` if another
+        reason prevents the snapshot from being resized.
+        """
+        raise NotImplementedError
+
+    def check_revert_snapshot(self, name, origin):
+        """
+        Check whether this snapshot can be reverted or not. This method returns
+        if the current snapshot can be reverted and raises an exception if not.
+
+        :returns: None
+        :raises: ``NotImplementedError`` if this plugin does not support the
+        revert operation, ``SnapmBusyError`` if the snapshot is already in the
+        process of being reverted to another snapshot state or
+        ``SnapmPluginError`` if another reason prevents the snapshot from being
+        merged.
+        """
+        raise NotImplementedError
+
+    def revert_snapshot(self, name):
+        """
+        Request to revert a snapshot and revert the content of the origin
+        volume to its state at the time of the snapshot.
+
+        This may be deferred until the next device activation or mount
+        operation for the respective volume.
+
+        :param name: The name of the snapshot to revert.
+        """
+        raise NotImplementedError
+
+    def delete_snapshot(self, name):
+        """
+        Delete the snapshot named ``name``
+
+        :param name: The name of the snapshot to be removed.
+        """
+        raise NotImplementedError
+
+    def activate_snapshot(self, name):
+        """
+        Activate the snapshot named ``name``
+
+        :param name: The name of the snapshot to be activated.
+        """
+        raise NotImplementedError
+
+    def deactivate_snapshot(self, name):
+        """
+        Deactivate the snapshot named ``name``
+
+        :param name: The name of the snapshot to be deactivated.
+        """
+        raise NotImplementedError
+
+    def set_autoactivate(self, name, auto=False):
+        """
+        Set the autoactivation state of the snapshot named ``name``.
+
+        :param name: The name of the snapshot to be modified.
+        :param auto: ``True`` to enable autoactivation or ``False`` otherwise.
+        """
+        raise NotImplementedError
+
+    def origin_from_mount_point(self, mount_point):
+        """
+        Return a string representing the origin from a given mount point path.
+
+        :param mount_point: The mount point path.
+        """
+        raise NotImplementedError
 
 
 def _escape_bad_chars(path):
@@ -224,6 +436,7 @@ __all__ = [
     "DMSETUP_FIELDS_VG_LV",
     "DMSETUP_FIELDS_UUID",
     "DMSETUP_REPORT_SEP",
+    "Plugin",
     "encode_mount_point",
     "decode_mount_point",
     "parse_snapshot_name",

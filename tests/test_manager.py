@@ -1,6 +1,6 @@
 # Copyright Red Hat
 #
-# tests/test_manager.py - Manager and plugin core unit tests
+# tests/test_manager.py - Manager core unit tests
 #
 # This file is part of the snapm project.
 #
@@ -106,115 +106,6 @@ class ManagerTestsSimple(unittest.TestCase):
         s = snapm.Selection(nr_snapshots=5)
         sets = m.find_snapshot_sets(selection=s)
         self.assertEqual(len(sets), 2)
-
-    def test_plugin_info(self):
-        p = manager.Plugin(log)
-        info = p.info()
-        self.assertEqual(info, {"name": "plugin", "version": "0.1.0"})
-
-    def _plugin_base_not_implemented_raises(self, method, args):
-        p = manager.Plugin(log)
-        with self.assertRaises(NotImplementedError):
-            getattr(p, method)(*args)
-
-    def test_plugin_base_discover_snapshots_raises(self):
-        args = []
-        self._plugin_base_not_implemented_raises("discover_snapshots", args)
-
-    def test_plugin_base_can_snapshot_raises(self):
-        args = ["/mount"]
-        self._plugin_base_not_implemented_raises("can_snapshot", args)
-
-    def test_plugin_base_check_create_snapshot_raises(self):
-        args = [
-            "fedora/root",
-            "testset0",
-            1693921253,
-            "/",
-            None,
-        ]
-        self._plugin_base_not_implemented_raises("check_create_snapshot", args)
-
-    def test_plugin_base_create_snapshot_raises(self):
-        args = [
-            "fedora/root",
-            "testset0",
-            1693921253,
-            "/",
-            None,
-        ]
-        self._plugin_base_not_implemented_raises("create_snapshot", args)
-
-    def test_plugin_base_rename_snapshot_raises(self):
-        args = [
-            "old_name",
-            "fedora/root",
-            "testset0",
-            1693921253,
-            "/",
-        ]
-        self._plugin_base_not_implemented_raises("rename_snapshot", args)
-
-    def test_plugin_base_delete_snapshot_raises(self):
-        args = ["aname"]
-        self._plugin_base_not_implemented_raises("delete_snapshot", args)
-
-    def test_plugin_base_activate_snapshot_raises(self):
-        args = ["aname"]
-        self._plugin_base_not_implemented_raises("activate_snapshot", args)
-
-    def test_plugin_base_deactivate_snapshot_raises(self):
-        args = ["aname"]
-        self._plugin_base_not_implemented_raises("deactivate_snapshot", args)
-
-    def test_plugin_base_set_autoactivate_raises(self):
-        args = ["aname"]
-        self._plugin_base_not_implemented_raises("set_autoactivate", args)
-
-    def test_plugin_base_origin_from_mount_point_raises(self):
-        args = ["/mount"]
-        self._plugin_base_not_implemented_raises("origin_from_mount_point", args)
-
-    def test_plugin_base_check_resize_snapshot_raises(self):
-        args = [
-            "aname",
-            "/dev/fedora/aname-orig",
-            "/mount",
-            "1G",
-        ]
-        self._plugin_base_not_implemented_raises("check_resize_snapshot", args)
-
-    def test_plugin_base_resize_snapshot_raises(self):
-        args = [
-            "aname",
-            "/dev/fedora/aname-orig",
-            "/mount",
-            "1G",
-        ]
-        self._plugin_base_not_implemented_raises("resize_snapshot", args)
-
-    def test_plugin_base_check_revert_snapshot_raises(self):
-        args = [
-            "aname",
-            "/dev/fedora/aname-orig",
-        ]
-        self._plugin_base_not_implemented_raises("check_revert_snapshot", args)
-
-    def test_plugin_base_revert_snapshot_raises(self):
-        args = ["aname"]
-        self._plugin_base_not_implemented_raises("revert_snapshot", args)
-
-    def test_plugins_find(self):
-        from snapm.manager._manager import find as plugin_find
-
-        xpaths = [
-            "tests/find/a.find",
-            "tests/find/b.find",
-            "tests/find/subdir/c.find",
-        ]
-        paths = plugin_find("*.find", "tests/find")
-        paths = [path for path in paths]
-        self.assertEqual(sorted(paths), sorted(xpaths))
 
 
 @unittest.skipIf(not have_root(), "requires root privileges")

@@ -28,7 +28,6 @@ from snapm import (
     SnapStatus,
     Snapshot,
 )
-from snapm.manager import Plugin
 from snapm.manager.plugins import (
     DEV_PREFIX,
     DEV_MAPPER_PREFIX,
@@ -37,6 +36,7 @@ from snapm.manager.plugins import (
     DMSETUP_NO_HEADINGS,
     DMSETUP_COLUMNS,
     DMSETUP_FIELDS_UUID,
+    Plugin,
     parse_snapshot_name,
     device_from_mount_point,
     mount_point_space_used,
