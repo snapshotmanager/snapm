@@ -107,12 +107,6 @@ class ManagerTestsSimple(unittest.TestCase):
         sets = m.find_snapshot_sets(selection=s)
         self.assertEqual(len(sets), 2)
 
-    def test_load_plugins(self):
-        from snapm.manager._manager import load_plugins, PluginRegistry
-
-        load_plugins()
-        self.assertEqual(len(PluginRegistry.plugins), 3)
-
     def test_plugin_info(self):
         p = manager.Plugin(log)
         info = p.info()

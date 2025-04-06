@@ -15,9 +15,6 @@ from math import floor
 from stat import S_ISBLK
 from os import stat
 from os.path import exists, ismount, normpath, samefile
-import fnmatch
-import inspect
-import os
 
 import snapm.manager.plugins
 from snapm.manager.signals import suspend_signals
@@ -53,6 +50,7 @@ from snapm import (
     SnapshotSet,
     Snapshot,
 )
+from ._loader import load_plugins
 
 
 _log = logging.getLogger(__name__)
@@ -293,156 +291,7 @@ class Plugin(metaclass=PluginRegistry):
         raise NotImplementedError
 
 
-def find(file_pattern, top_dir, max_depth=None, path_pattern=None):
-    """
-    Generator function to find files recursively.
-    Usage::
-
-        for filename in find("*.properties", "/var/log/foobar"):
-            print filename
-    """
-    if max_depth:
-        base_depth = os.path.dirname(top_dir).count(os.path.sep)
-        max_depth += base_depth
-
-    for path, dirlist, filelist in os.walk(top_dir):
-        if max_depth and path.count(os.path.sep) >= max_depth:
-            del dirlist[:]
-
-        if path_pattern and not fnmatch.fnmatch(path, path_pattern):
-            continue
-
-        for name in fnmatch.filter(filelist, file_pattern):
-            yield os.path.join(path, name)
-
-
-def _plugin_name(path):
-    """
-    Returns the plugin module name given the path.
-    """
-    base = os.path.basename(path)
-    name, _ = os.path.splitext(base)
-    return name
-
-
-def _get_plugins_from_list(pluglist):
-    """
-    Get list of plugin names from file list.
-
-    :param pluglist: list of candidate plugin files.
-    """
-    plugins = [
-        _plugin_name(plugin)
-        for plugin in pluglist
-        if "__init__" not in plugin and plugin.endswith(".py")
-    ]
-    plugins.sort()
-    return plugins
-
-
-def _find_plugins_in_dir(path):
-    """
-    Find possible plugin files in ``path``.
-
-    :param path: The search directory for plugin files.
-    """
-    _log_debug_manager("Finding plugins in %s", path)
-    if os.path.exists(path):
-        py_files = list(find("[a-zA-Z]*.py", path))
-        pnames = _get_plugins_from_list(py_files)
-        _log_debug_manager("Found plugin modules: %s", ", ".join(pnames))
-        if pnames:
-            return pnames
-    return []
-
-
-class ImporterHelper:
-    """
-    Provides a list of modules that can be imported in a package.
-
-    Importable modules are located along the module __path__ list and modules
-    are files that end in .py.
-    """
-
-    def __init__(self, package):
-        """
-        package is a package module
-
-        import my.package.module
-        helper = ImporterHelper(my.package.module)
-        """
-        self.package = package
-
-    def get_modules(self):
-        """
-        Get list of importable modules.
-
-        Returns the list of importable modules in the configured python
-        package.
-        """
-        plugins = []
-        for path in self.package.__path__:
-            if os.path.isdir(path):
-                plugins.extend(_find_plugins_in_dir(path))
-
-        return plugins
-
-
-def import_module(module_fqname, superclasses=None):
-    """
-    Import a single module.
-
-    Imports the module module_fqname and returns a list of defined classes
-    from that module. If superclasses is defined then the classes returned will
-    be subclasses of the specified superclass or superclasses. If superclasses
-    is plural it must be a tuple of classes.
-    """
-    module_name = module_fqname.rpartition(".")[-1]
-    try:
-        module = __import__(module_fqname, globals(), locals(), [module_name])
-    # pylint: disable=broad-except
-    except Exception as err:
-        _log_error("Error importing %s plugin module: %s", module_fqname, err)
-        return []
-    modules = [
-        class_
-        for cname, class_ in inspect.getmembers(module, inspect.isclass)
-        if class_.__module__ == module_fqname
-    ]
-    if superclasses:
-        modules = [m for m in modules if issubclass(m, superclasses)]
-
-    return modules
-
-
-def import_plugin(name, superclasses=None):
-    """
-    Import name as a module and return a list of all classes defined in that
-    module. superclasses should be a tuple of valid superclasses to import,
-    this defaults to (Plugin,).
-    """
-    plugin_fqname = f"snapm.manager.plugins.{name}"
-    if not superclasses:
-        superclasses = (Plugin,)
-    _log_debug("Importing plugin module %s", plugin_fqname)
-    return import_module(plugin_fqname, superclasses)
-
-
-def load_plugins():
-    """
-    Attempt to load plugin modules.
-    """
-    helper = ImporterHelper(snapm.manager.plugins)
-    plugins = helper.get_modules()
-    _log_debug(
-        "Importing %d modules from %s", len(plugins), snapm.manager.plugins.__name__
-    )
-    for plug in plugins:
-        plugbase, _ = os.path.splitext(plug)
-        if not plugbase.startswith("_"):
-            import_plugin(plugbase)
-
-
+# pylint: disable=too-many-return-statements
 def select_snapshot_set(select, snapshot_set):
     """
     Test SnapshotSet against Selection criteria.
@@ -639,8 +488,9 @@ class Manager:
         self.by_uuid = {}
         check_boom_config()
         self._boot_cache = BootCache()
-        load_plugins()
-        for plugin_class in PluginRegistry.plugins:
+        plugin_classes = load_plugins()
+        for plugin_class in plugin_classes:
+            _log_debug("Loading plugin class '%s'", plugin_class.__name__)
             try:
                 plugin = plugin_class(_log)
                 self.plugins.append(plugin)
