@@ -4,7 +4,7 @@
 #
 # This file is part of the snapm project.
 #
-# SPDX-License-Identifier: GPL-2.0-only
+# SPDX-License-Identifier: Apache-2.0
 """The ``snapm.command`` module provides both the snapm command line
 interface infrastructure, and a simple procedural interface to the
 ``snapm`` library modules.

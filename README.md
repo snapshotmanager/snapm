@@ -1035,10 +1035,11 @@ Installation and user documentation will be added in a future update.
 
 ## License
 
-The snapm project is licensed under the GNU General Public License version 2.
+The snapm project is licensed under the the Apache license, version 2.0
+(Apache-2.0):
 
-The stratislib package (used by the snapm Stratis plugin) is based on code
-from the [stratis-cli][6] project and is licensed under the Apache-2.0 license.
+  https://www.apache.org/licenses/LICENSE-2.0
+
 
  [1]: https://github.com/snapshotmanager/snapm/issues
  [2]: https://snapm.readthedocs.io/en/latest/

@@ -6,7 +6,7 @@ Version:	0.4.1
 Release:	1%{?dist}
 Summary:	%{summary}
 
-License:	GPL-2.0-only AND Apache-2.0
+License:	Apache-2.0
 URL:		https://github.com/snapshotmanager/%{name}
 Source0:	%{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 
@@ -104,19 +104,15 @@ rm doc/conf.py
 pytest-3 --log-level=debug -v
 
 %files
-# Main license for snapm (GPLv2)
-%license COPYING
-# License for snapm.manager.plugins.stratislib (Apache 2.0)
-%license COPYING.stratislib
+# Main license for snapm (Apache-2.0)
+%license LICENSE
 %doc README.md
 %{_bindir}/snapm
 %doc %{_mandir}/man*/snapm.*
 
 %files -n python3-snapm
-# Main license for snapm (GPLv2)
-%license COPYING
-# License for snapm.manager.plugins.stratislib (Apache 2.0)
-%license COPYING.stratislib
+# license for snapm (Apache-2.0)
+%license LICENSE
 %doc README.md
 %{python3_sitelib}/%{name}/
 %if 0%{?centos} || 0%{?rhel}
@@ -127,10 +123,8 @@ pytest-3 --log-level=debug -v
 
 %if 0%{?sphinx_docs}
 %files -n python3-snapm-doc
-# Main license for snapm (GPLv2)
-%license COPYING
-# License for snapm.manager.plugins.stratislib (Apache 2.0)
-%license COPYING.stratislib
+# license for snapm (Apache-2.0)
+%license LICENSE
 %doc README.md
 %doc doc
 %endif
