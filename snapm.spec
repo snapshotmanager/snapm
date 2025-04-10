@@ -2,7 +2,7 @@
 %global sphinx_docs 1
 
 Name:		snapm
-Version:	0.4.1
+Version:	0.4.2
 Release:	1%{?dist}
 Summary:	%{summary}
 
@@ -119,6 +119,28 @@ rm doc/conf.py
 %endif
 
 %changelog
+* Tue Apr 15 2025 Bryn M. Reeves <bmr@redhat.com> - 0.4.2-1
+- snapm: bump release to 0.4.2
+- dist: pass test suite directory as positional arg to pytest macro
+- dist: fix mixed tabs-and-spaces in snapm.spec
+- dist: make version dynamic in pyproject.toml
+- dist: consolidate dependencies in requirements.txt
+- dist: drop unnecessary snapm/manager/pliugins/stratislib/LICENSE
+- dist: add pytest to build requirements
+- tests: use pytest macro instead of directly calling pytest-3
+- dist: drop centos/rhel special casing for python build/install
+- dist: change snapm license from GPL-2.0-only AND Apache-2.0 to Apache-2.0
+- report: Row - stop misusing class vars
+- report: Report - stop misusing class vars
+- report: Field - stop misusing class vars
+- report: FieldType - stop misusing class vars
+- report: ReportOpts - stop misusing class vars
+- report: ReportObjType - stop misusing class vars
+- report: FieldProperties - stop misusing class vars and add initialiser
+- snapm: move Plugin into snapm.manager.plugins
+- snapm: drop PluginRegistry metaclass
+- snapm: refactor plugin loader and move to snapm.manager._loader
+
 * Wed Apr 02 2025 Bryn M. Reeves <bmr@redhat.com> - 0.4.1-1
 - snapm: fix Manager.split_snapshot_sets() with empty sources
 - command: add new 'snapm snapset prune' command
