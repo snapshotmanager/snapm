@@ -33,6 +33,7 @@ Issues = "https://github.com/snapshotmanager/snapm/issues"
 [build-system]
 requires = [
     "wheel",
+    "pytest",
     "setuptools>=61.0",
 ]
 build-backend = "setuptools.build_meta"
