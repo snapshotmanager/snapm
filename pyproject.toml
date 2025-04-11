@@ -7,7 +7,7 @@ authors = [
 description = "Snapshot Manager"
 readme = "README.md"
 requires-python = ">=3.9"
-dynamic = ["license"]
+dynamic = ["license", "dependencies"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
@@ -15,15 +15,6 @@ classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: Implementation :: CPython",
-]
-dependencies = [
-    "boom-boot >= 1.6.4",
-    "dbus-client-gen >= 0.4",
-    "dbus-python-client-gen >= 0.7",
-    "justbytes >=0.14",
-    "packaging",
-    "python-dateutil",
-    "wcwidth",
 ]
 
 [project.urls]
