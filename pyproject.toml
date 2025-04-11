@@ -1,13 +1,12 @@
 [project]
 name = "snapm"
-version = "0.4.1"
 authors = [
   { name="Bryn M. Reeves", email="bmr@redhat.com" },
 ]
 description = "Snapshot Manager"
 readme = "README.md"
 requires-python = ">=3.9"
-dynamic = ["license", "dependencies"]
+dynamic = ["license", "dependencies", "version" ]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
