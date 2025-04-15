@@ -13,7 +13,7 @@ Source0:	%{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 BuildArch:	noarch
 
 BuildRequires:	make
-BuildRequires:  pyproject-rpm-macros
+BuildRequires:	pyproject-rpm-macros
 BuildRequires:	python3-setuptools
 BuildRequires:	python3-devel
 BuildRequires:	python3-pip
