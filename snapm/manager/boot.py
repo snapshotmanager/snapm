@@ -15,7 +15,7 @@ import logging
 import boom
 import boom.cache
 import boom.command
-from boom.config import load_boom_config
+from boom.config import load_boom_config, BoomConfigError
 from boom.bootloader import (
     OPTIONAL_KEYS,
     optional_key_default,
@@ -310,11 +310,24 @@ def check_boom_config():
     """
     Check for boom configuration and create the default config if not found.
     """
+    not_found_err = SnapmCalloutError("No usable boom configuration found")
     try:
         load_boom_config()
     except ValueError:
-        _log_info("No boom configuration found: generating default config in /boot")
-        boom.command.create_config()
+        _log_warn(
+            "No boom configuration found: attempting to generate defaults in /boot"
+        )
+        try:
+            boom.command.create_config()
+        except AttributeError as err:
+            _log_error("Installed boom version does not support create_config()")
+            raise not_found_err from err
+        except (BoomConfigError, FileExistsError) as err:
+            _log_error("Missing or invalid boom configuration: %s", err)
+            raise not_found_err from err
+        except OSError as err:
+            _log_error("Error creating boom configuration: %s", err)
+            raise not_found_err from err
 
 
 class BootEntryCache(dict):
