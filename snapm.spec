@@ -11,26 +11,26 @@ Source0:	%{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 
 BuildArch:	noarch
 
-BuildRequires:	make
-BuildRequires:	pyproject-rpm-macros
-BuildRequires:	python3-setuptools
-BuildRequires:	python3-devel
-BuildRequires:	python3-pip
-BuildRequires:	python3-wheel
-BuildRequires:	python3-boom
-BuildRequires:	python3-dbus-client-gen
-BuildRequires:	python3-dbus-python-client-gen
-BuildRequires:	python3-justbytes
-BuildRequires:	python3-packaging
-BuildRequires:	python3-dateutil
-BuildRequires:	python3-wcwidth
-BuildRequires:	python3-psutil
-BuildRequires:	python3-pytest
-BuildRequires:	lvm2
-BuildRequires:	stratisd
-BuildRequires:	stratis-cli
-BuildRequires:	python3-sphinx
-BuildRequires:	boom-boot
+BuildRequires:  boom-boot
+BuildRequires:  lvm2
+BuildRequires:  make
+BuildRequires:  stratis-cli
+BuildRequires:  stratisd
+BuildRequires:  pyproject-rpm-macros
+BuildRequires:  python3-boom
+BuildRequires:  python3-dateutil
+BuildRequires:  python3-dbus-client-gen
+BuildRequires:  python3-dbus-python-client-gen
+BuildRequires:  python3-devel
+BuildRequires:  python3-justbytes
+BuildRequires:  python3-packaging
+BuildRequires:  python3-pip
+BuildRequires:  python3-psutil
+BuildRequires:  python3-pytest
+BuildRequires:  python3-setuptools
+BuildRequires:  python3-sphinx
+BuildRequires:  python3-wcwidth
+BuildRequires:  python3-wheel
 
 Requires: python3-snapm = %{version}-%{release}
 Recommends: boom-boot
