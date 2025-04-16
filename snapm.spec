@@ -88,7 +88,7 @@ rm -f doc/*.rst
 %pyproject_install
 
 mkdir -p ${RPM_BUILD_ROOT}/%{_mandir}/man8
-install -m 644 man/man8/snapm.8 ${RPM_BUILD_ROOT}/%{_mandir}/man8
+install -p -m 644 man/man8/snapm.8 ${RPM_BUILD_ROOT}/%{_mandir}/man8
 
 rm doc/Makefile
 rm doc/conf.py
