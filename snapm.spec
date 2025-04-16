@@ -1,5 +1,4 @@
 %global summary A set of tools for managing snapshots
-%global sphinx_docs 1
 
 Name:		snapm
 Version:	0.4.2
@@ -30,10 +29,8 @@ BuildRequires:	python3-pytest
 BuildRequires:	lvm2
 BuildRequires:	stratisd
 BuildRequires:	stratis-cli
-%if 0%{?sphinx_docs}
 BuildRequires:	python3-sphinx
 BuildRequires:	boom-boot
-%endif
 
 Requires: python3-snapm = %{version}-%{release}
 Recommends: boom-boot
@@ -43,10 +40,8 @@ Summary: %{summary}
 %{?python_provide:%python_provide python3-snapm}
 Requires: %{__python3}
 
-%if 0%{?sphinx_docs}
 %package -n python3-snapm-doc
 Summary: %{summary}
-%endif
 
 %description
 Snapshot manager (snapm) is a tool for managing sets of snapshots on Linux
@@ -60,38 +55,30 @@ the same time, representing the system state at the time the set was created.
 
 This package provides the python3 snapm module.
 
-%if 0%{?sphinx_docs}
 %description -n python3-snapm-doc
 Snapshot manager (snapm) is a tool for managing sets of snapshots on Linux
 systems.  The snapm tool allows snapshots of multiple volumes to be captured at
 the same time, representing the system state at the time the set was created.
 
 This package provides the python3 snapm module documentation in HTML format.
-%endif
 
 %prep
 %autosetup -p1 -n %{name}-%{version}
 
 %build
-%if 0%{?sphinx_docs}
-make %{?_smp_mflags} -C doc html
+%pyproject_wheel
+
+%{make_build} -C doc html
 rm doc/_build/html/.buildinfo
 mv doc/_build/html doc/html
-rm -rf doc/html/_sources
-rm -rf doc/_build
-rm -f doc/*.rst
-%endif
-
-%pyproject_wheel
+rm -rf doc/html/_sources doc/_build
+rm -f doc/*.rst doc/Makefile doc/conf.py
 
 %install
 %pyproject_install
 
 mkdir -p ${RPM_BUILD_ROOT}/%{_mandir}/man8
 install -p -m 644 man/man8/snapm.8 ${RPM_BUILD_ROOT}/%{_mandir}/man8
-
-rm doc/Makefile
-rm doc/conf.py
 
 %check
 %pytest --log-level=debug -v tests/
@@ -110,13 +97,11 @@ rm doc/conf.py
 %{python3_sitelib}/%{name}/
 %{python3_sitelib}/%{name}*.dist-info/
 
-%if 0%{?sphinx_docs}
 %files -n python3-snapm-doc
 # license for snapm (Apache-2.0)
 %license LICENSE
 %doc README.md
 %doc doc
-%endif
 
 %changelog
 * Tue Apr 15 2025 Bryn M. Reeves <bmr@redhat.com> - 0.4.2-1
