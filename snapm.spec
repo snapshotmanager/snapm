@@ -37,8 +37,6 @@ Recommends: boom-boot
 
 %package -n python3-snapm
 Summary: %{summary}
-%{?python_provide:%python_provide python3-snapm}
-Requires: %{__python3}
 
 %package -n python3-snapm-doc
 Summary: %{summary}
