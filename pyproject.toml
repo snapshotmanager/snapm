@@ -24,6 +24,6 @@ Issues = "https://github.com/snapshotmanager/snapm/issues"
 requires = [
     "wheel",
     "pytest",
-    "setuptools>=61.0",
+    "setuptools>=53",
 ]
 build-backend = "setuptools.build_meta"
