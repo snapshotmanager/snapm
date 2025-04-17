@@ -3,10 +3,10 @@ name: Snapshot Manager CI
 on:
   push:
     branches:
-      - snapm-0.4.0-rebase
+      - snapm-0.4-stable
   pull_request:
     branches:
-      - snapm-0.4.0-rebase
+      - snapm-0.4-stable
 jobs:
   python-basic-tests:
     runs-on: ubuntu-latest
