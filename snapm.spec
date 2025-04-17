@@ -1,7 +1,7 @@
 %global summary A set of tools for managing snapshots
 
 Name:		snapm
-Version:	0.4.2
+Version:	0.4.3
 Release:	1%{?dist}
 Summary:	%{summary}
 
@@ -102,6 +102,18 @@ install -p -m 644 man/man8/snapm.8 ${RPM_BUILD_ROOT}/%{_mandir}/man8
 %doc doc
 
 %changelog
+* Thu Apr 17 2025 Bryn M. Reeves <bmr@redhat.com> - 0.4.3-1
+- dist: sync classifiers between pyproject.toml and setup.cfg
+- dist: drop quotes around license value
+- dist: drop obsolete python macro use
+- dist: revise dependency versions
+- dist: drop requirements.txt
+- dist: restore install_requires
+- dist: re-order BuildRequires and separate python and non-python deps
+- dist: clean up Sphinx doc build and make unconditional
+- dist: use install -p/--preserve-timestamps
+- boot: tolerate missing boom.command.create_config()
+
 * Tue Apr 15 2025 Bryn M. Reeves <bmr@redhat.com> - 0.4.2-1
 - snapm: bump release to 0.4.2
 - dist: pass test suite directory as positional arg to pytest macro
