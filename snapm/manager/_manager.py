@@ -16,7 +16,7 @@ from stat import S_ISBLK
 from os import stat
 from os.path import exists, ismount, normpath, samefile
 
-from snapm.manager.signals import suspend_signals
+from ._signals import suspend_signals
 from ._boot import (
     BootCache,
     create_snapset_boot_entry,
