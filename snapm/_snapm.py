@@ -271,6 +271,12 @@ class SnapmArgumentError(SnapmError):
     """
 
 
+class SnapmTimerError(SnapmError):
+    """
+    An error manipulating systemd timers.
+    """
+
+
 #
 # Selection criteria class
 #
@@ -1628,6 +1634,7 @@ __all__ = [
     "SnapmStateError",
     "SnapmRecursionError",
     "SnapmArgumentError",
+    "SnapmTimerError",
     "Selection",
     "size_fmt",
     "is_size_policy",

@@ -1,0 +1,11 @@
+[Unit]
+Description=Run container tests
+After=network.target
+
+[Service]
+Type=oneshot
+StandardOutput=journal+console
+ExecStart=-/usr/bin/bash -c 'python3 -m venv /tmp/venv && source /tmp/venv/bin/activate && cd /tests && /usr/bin/pytest -v --log-level=debug'
+
+[Install]
+WantedBy=multi-user.target
