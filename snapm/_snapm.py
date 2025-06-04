@@ -789,9 +789,9 @@ class SnapshotSet:
             )
         return snapset_str
 
-    def as_dict(self, members=False):
+    def to_dict(self, members=False):
         """
-        Return a representation of this snapshot as a dictionary.
+        Return a representation of this ``SnapshotSet`` as a dictionary.
         """
         pmap = {}
         pmap[SNAPSET_NAME] = self.name
@@ -820,15 +820,18 @@ class SnapshotSet:
         if members:
             pmap[SNAPSET_SNAPSHOTS] = []
             for snapshot in self.snapshots:
-                pmap[SNAPSET_SNAPSHOTS].append(snapshot.as_dict())
+                pmap[SNAPSET_SNAPSHOTS].append(snapshot.to_dict())
 
         return pmap
+
+    #: Backwards compatibility
+    as_dict = to_dict
 
     def json(self, members=False, pretty=False):
         """
         Return a string representation of this ``SnapshotSet`` in JSON notation.
         """
-        return json.dumps(self.as_dict(members=members), indent=4 if pretty else None)
+        return json.dumps(self.to_dict(members=members), indent=4 if pretty else None)
 
     @property
     def name(self):
@@ -1283,9 +1286,9 @@ class Snapshot:
             f"{SNAPSHOT_DEV_PATH}:     {self.devpath}"
         )
 
-    def as_dict(self):
+    def to_dict(self):
         """
-        Return a representation of this snapshot as a dictionary.
+        Return a representation of this ``Snapshot`` as a dictionary.
         """
         pmap = {}
         pmap[SNAPSHOT_NAME] = self.name
@@ -1306,11 +1309,14 @@ class Snapshot:
         pmap[SNAPSHOT_DEV_PATH] = self.devpath
         return pmap
 
+    # Backwards compatibility
+    as_dict = to_dict
+
     def json(self, pretty=False):
         """
         Return a string representation of this ``Snapshot`` in JSON notation.
         """
-        return json.dumps(self.as_dict(), indent=4 if pretty else None)
+        return json.dumps(self.to_dict(), indent=4 if pretty else None)
 
     @property
     def name(self):

@@ -584,7 +584,7 @@ def show_snapshots(manager, selection=None, json=False):
 
     for snapshot in snapshots:
         if json:
-            snap_list.append(snapshot.as_dict())
+            snap_list.append(snapshot.to_dict())
             continue
         wspace = "" if first else "\n"
         print(f"{wspace}{snapshot}")
@@ -606,7 +606,7 @@ def show_snapsets(manager, selection=None, members=False, json=False):
 
     for snapset in snapsets:
         if json:
-            set_list.append(snapset.as_dict(members=members))
+            set_list.append(snapset.to_dict(members=members))
             continue
         wspace = "" if first else "\n"
         print(f"{wspace}{snapset}")
