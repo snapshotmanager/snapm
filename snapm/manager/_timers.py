@@ -13,6 +13,7 @@ import time
 import logging
 import tempfile
 from enum import Enum
+from typing import Union
 
 import dbus
 
@@ -457,7 +458,7 @@ class Timer:
     """
 
     def __init__(
-        self, timer_type: TimerType, name: str, calendarspec: str | CalendarSpec
+        self, timer_type: TimerType, name: str, calendarspec: Union[str, CalendarSpec]
     ):
         """
         Initialise a new ``Timer`` object from the provided arguments.
