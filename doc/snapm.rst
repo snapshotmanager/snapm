@@ -7,7 +7,7 @@ Module contents
 .. automodule:: snapm
     :members:
     :special-members:
-    :exclude-members: __dict__, __module__, __weakref__
+    :exclude-members: __dict__, __module__, __weakref__, __annotations__
     :undoc-members:
     :show-inheritance:
 
@@ -21,7 +21,7 @@ snapm.manager module
     :members:
     :special-members:
     :private-members:
-    :exclude-members: __dict__, __module__, __weakref__
+    :exclude-members: __dict__, __module__, __weakref__, __annotations__
     :undoc-members:
     :show-inheritance:
 
@@ -32,7 +32,7 @@ snapm.manager._boot module
     :members:
     :special-members:
     :private-members:
-    :exclude-members: __dict__, __module__, __weakref__
+    :exclude-members: __dict__, __module__, __weakref__, __annotations__
     :undoc-members:
     :show-inheritance:
 
@@ -43,7 +43,7 @@ snapm.manager._calendar module
     :members:
     :special-members:
     :private-members:
-    :exclude-members: __dict__, __module__, __weakref__
+    :exclude-members: __dict__, __module__, __weakref__, __annotations__
     :undoc-members:
     :show-inheritance:
 
@@ -54,7 +54,7 @@ snapm.manager._timers module
     :members:
     :special-members:
     :private-members:
-    :exclude-members: __dict__, __module__, __weakref__
+    :exclude-members: __dict__, __module__, __weakref__, __annotations__
     :undoc-members:
     :show-inheritance:
 
@@ -65,7 +65,7 @@ snapm.command module
     :members:
     :special-members:
     :private-members:
-    :exclude-members: __dict__, __module__, __weakref__
+    :exclude-members: __dict__, __module__, __weakref__, __annotations__
     :undoc-members:
     :show-inheritance:
 
@@ -76,7 +76,7 @@ snapm.report module
 .. automodule:: snapm.report
     :members:
     :special-members:
-    :exclude-members: __dict__, __module__, __weakref__
+    :exclude-members: __dict__, __module__, __weakref__, __annotations__
     :undoc-members:
     :show-inheritance:
 
@@ -88,7 +88,7 @@ snapm.manager.plugins module
     :members:
     :special-members:
     :private-members:
-    :exclude-members: __dict__, __module__, __weakref__
+    :exclude-members: __dict__, __module__, __weakref__, __annotations__
     :undoc-members:
     :show-inheritance:
 
