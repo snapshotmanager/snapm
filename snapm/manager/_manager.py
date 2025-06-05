@@ -547,6 +547,7 @@ class Manager:
                 )
             except SnapmPluginError as err:
                 _log_error("Disabling plugin %s: %s", plugin_class.__name__, err)
+        self.scheduler = Scheduler(self, _SCHEDULE_D_PATH)
         self.discover_snapshot_sets()
 
     def _load_plugin_config(self, plugin_name: str) -> ConfigParser:
