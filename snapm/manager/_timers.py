@@ -71,6 +71,14 @@ _10_ON_CALENDAR_CONF = "10-oncalendar.conf"
 _DROP_IN_FILE_MODE = 0o644
 _DROP_IN_DIR_FMT = f"{_ETC_SYSTEMD_SYSTEM}/%s.d"
 
+_DROP_IN_CONTENT_FMT = (
+    "[Timer]\n"
+    "# Reset the OnCalendar list\n"
+    "OnCalendar=\n"
+    "# Configure OnCalendar for this template instance.\n"
+    "OnCalendar=%s\n"
+)
+
 
 def _write_drop_in(drop_in_dir: str, drop_in_file: str, calendarspec: CalendarSpec):
     """
@@ -93,8 +101,8 @@ def _write_drop_in(drop_in_dir: str, drop_in_file: str, calendarspec: CalendarSp
         # Write the drop-in configuration file atomically
         fd, tmp_path = tempfile.mkstemp(dir=drop_in_dir, prefix=".tmp_", text=True)
         try:
-            with os.fdopen(fd, "w") as f:
-                f.write(f"[Timer]\nOnCalendar={calendarspec.original}\n")
+            with os.fdopen(fd, "w", encoding="utf8") as f:
+                f.write(_DROP_IN_CONTENT_FMT % calendarspec.original)
                 f.flush()
                 os.fdatasync(f.fileno())
             os.rename(tmp_path, drop_in_file)
