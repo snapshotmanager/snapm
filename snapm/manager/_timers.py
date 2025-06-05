@@ -16,7 +16,12 @@ from enum import Enum
 
 import dbus
 
-from snapm import SnapmArgumentError, SnapmTimerError, SnapmCalloutError
+from snapm import (
+    SnapmSystemError,
+    SnapmArgumentError,
+    SnapmTimerError,
+    SnapmCalloutError,
+)
 
 from ._calendar import CalendarSpec
 
@@ -118,11 +123,13 @@ def _write_drop_in(drop_in_dir: str, drop_in_file: str, calendarspec: CalendarSp
                 os.close(dir_fd)
         except OSError as err:  # pragma: no cover
             os.unlink(tmp_path)
-            raise SnapmTimerError(
-                f"Filesystem error while writing drop-in file: {err}"
+            raise SnapmSystemError(
+                f"Filesystem error writing drop-in file '{drop_in_file}': {err}"
             ) from err
     except OSError as err:  # pragma: no cover
-        raise SnapmTimerError(f"Filesystem error: {err}") from err
+        raise SnapmSystemError(
+            f"Filesystem error writing drop-in temporary file '{tmp_path}': {err}"
+        ) from err
 
 
 def _remove_drop_in(drop_in_dir: str, drop_in_file: str):
