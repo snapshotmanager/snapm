@@ -542,7 +542,7 @@ class Timer:
 
         :rtype: bool
         """
-        return self.status == TimerStatus.ENABLED
+        return self.status in (TimerStatus.ENABLED, TimerStatus.RUNNING)
 
     @property
     def running(self):
