@@ -92,7 +92,9 @@ def _write_drop_in(drop_in_dir: str, drop_in_file: str, calendarspec: CalendarSp
                          configuration.
     """
     _log_debug(
-        "Writing unit drop in file %s with CalendarSpec=%s", drop_in_file, calendarspec
+        "Writing unit drop in file %s with CalendarSpec='%s'",
+        drop_in_file,
+        calendarspec,
     )
     try:
         # Ensure the drop-in directory exists
@@ -327,7 +329,7 @@ def _status_timer(unit_fmt: str, instance: str):
 
         _log_debug(
             "timer(%s) unit state load: %s, active: %s, sub: %s",
-            instance,
+            unit_name,
             load_state,
             active_state,
             sub_state,
