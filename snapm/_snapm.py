@@ -184,6 +184,12 @@ class SnapmError(Exception):
     """
 
 
+class SnapmSystemError(SnapmError):
+    """
+    An error when calling the operating system.
+    """
+
+
 class SnapmCalloutError(SnapmError):
     """
     An error calling out to an external program.
@@ -1626,6 +1632,7 @@ __all__ = [
     "set_debug_mask",
     "get_debug_mask",
     "SnapmError",
+    "SnapmSystemError",
     "SnapmCalloutError",
     "SnapmNoSpaceError",
     "SnapmNoProviderError",
