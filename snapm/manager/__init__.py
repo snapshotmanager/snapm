@@ -9,5 +9,10 @@
 Top level interface to the snapshot manager.
 """
 
-from ._manager import *  # noqa: F401, F403
-from ._manager import __all__  # noqa: F401
+from ._manager import Manager  # noqa: F401, F403
+from ._schedule import Schedule
+
+__all__ = [
+    "Manager",
+    "Schedule",
+]
