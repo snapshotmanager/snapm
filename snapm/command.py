@@ -97,10 +97,11 @@ class ReportObj:
     Common report object for snapm reports
     """
 
-    def __init__(self, snapset=None, snapshot=None, plugin=None):
+    def __init__(self, snapset=None, snapshot=None, plugin=None, schedule=None):
         self.snapset = snapset
         self.snapshot = snapshot
         self.plugin = plugin
+        self.schedule = schedule
 
 
 #: Snapshot set report object type
@@ -109,12 +110,15 @@ PR_SNAPSET = 1
 PR_SNAPSHOT = 2
 #: Plugin report object type
 PR_PLUGIN = 4
+#: Schedule report object type
+PR_SCHEDULE = 8
 
 #: Report object types table for ``snapm.command`` reports
 _report_obj_types = [
     ReportObjType(PR_SNAPSET, "Snapshot set", "snapset_", lambda o: o.snapset),
     ReportObjType(PR_SNAPSHOT, "Snapshot", "snapshot_", lambda o: o.snapshot),
     ReportObjType(PR_PLUGIN, "Plugin", "plugin_", lambda o: o.plugin),
+    ReportObjType(PR_SCHEDULE, "Schedule", "schedule_", lambda o: o.schedule),
 ]
 
 
@@ -417,6 +421,92 @@ _plugin_fields = [
 ]
 
 _DEFAULT_PLUGIN_FIELDS = "name,version,type"
+
+_schedule_fields = [
+    FieldType(
+        PR_SCHEDULE,
+        "name",
+        "ScheduleName",
+        "Name of the schedule",
+        12,
+        REP_STR,
+        lambda f, d: f.report_str(d.name),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "sources",
+        "ScheduleSources",
+        "Schedule sources",
+        15,
+        REP_STR_LIST,
+        lambda f, d: f.report_str_list(d.source_specs),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "sizepolicy",
+        "SizePolicy",
+        "Schedule default size policy",
+        10,
+        REP_STR,
+        lambda f, d: f.report_str(d.default_size_policy),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "autoindex",
+        "Autoindex",
+        "Schedule autoindex",
+        9,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.autoindex)),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "gcpolicytype",
+        "GcPolicyType",
+        "Schedule garbage collection policy type",
+        12,
+        REP_STR,
+        lambda f, d: f.report_str(d.gc_policy.type.value),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "gcpolicyparams",
+        "GcPolicyParams",
+        "Schedule garbage collection policy parameters",
+        14,
+        REP_STR,
+        lambda f, d: f.report_str(str(d.gc_policy.params)),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "oncalendar",
+        "OnCalendar",
+        "Schedule OnCalendar trigger expression",
+        10,
+        REP_STR,
+        lambda f, d: f.report_str(d.calendarspec),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "enabled",
+        "Enabled",
+        "Schedule enabled",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.enabled)),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "running",
+        "Running",
+        "Schedule running",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.running)),
+    ),
+]
+
+_DEFAULT_SCHEDULE_FIELDS = "name,sources,sizepolicy,autoindex,oncalendar,enabled"
 
 
 def _str_indent(string, indent):
