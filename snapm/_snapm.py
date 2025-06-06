@@ -876,11 +876,18 @@ class SnapshotSet:
         return self._timestamp
 
     @property
+    def datetime(self):
+        """
+        The timestamp of this snapshot set as a ``datetime.datetime`` object.
+        """
+        return datetime.fromtimestamp(self.timestamp)
+
+    @property
     def time(self):
         """
         The human readable timestamp of this snapshot set.
         """
-        return str(datetime.fromtimestamp(self.timestamp))
+        return str(self.datetime)
 
     @property
     def snapshots(self):
