@@ -1493,6 +1493,7 @@ LIST_CMD = "list"
 SNAPSET_TYPE = "snapset"
 SNAPSHOT_TYPE = "snapshot"
 PLUGIN_TYPE = "plugin"
+SCHEDULE_TYPE = "schedule"
 
 
 # pylint: disable=too-many-statements
@@ -1765,6 +1766,28 @@ def _add_plugin_subparser(type_subparser):
     _add_report_args(plugin_list_parser)
 
 
+def _add_schedule_subparser(type_subparser):
+    """
+    Add subparser for 'schedule' commands.
+
+    :param type_subparser: Command type subparser
+    """
+    # Subparser for schedule commands
+    schedule_parser = type_subparser.add_parser(
+        SCHEDULE_TYPE,
+        help="Schedule commands",
+    )
+    schedule_subparser = schedule_parser.add_subparsers(dest="command")
+
+    # schedule list subcommand
+    schedule_list_parser = schedule_subparser.add_parser(
+        LIST_CMD,
+        help="List scheduled",
+    )
+    schedule_list_parser.set_defaults(func=_schedule_list_cmd)
+    _add_report_args(schedule_list_parser)
+
+
 def main(args):
     """
     Main entry point for snapm.
@@ -1795,6 +1818,8 @@ def main(args):
     _add_snapshot_subparser(type_subparser)
 
     _add_plugin_subparser(type_subparser)
+
+    _add_schedule_subparser(type_subparser)
 
     cmd_args = parser.parse_args(args[1:])
 
