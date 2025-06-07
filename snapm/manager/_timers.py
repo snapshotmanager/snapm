@@ -13,10 +13,16 @@ import time
 import logging
 import tempfile
 from enum import Enum
+from typing import Union
 
 import dbus
 
-from snapm import SnapmArgumentError, SnapmTimerError, SnapmCalloutError
+from snapm import (
+    SnapmSystemError,
+    SnapmArgumentError,
+    SnapmTimerError,
+    SnapmCalloutError,
+)
 
 from ._calendar import CalendarSpec
 
@@ -71,6 +77,14 @@ _10_ON_CALENDAR_CONF = "10-oncalendar.conf"
 _DROP_IN_FILE_MODE = 0o644
 _DROP_IN_DIR_FMT = f"{_ETC_SYSTEMD_SYSTEM}/%s.d"
 
+_DROP_IN_CONTENT_FMT = (
+    "[Timer]\n"
+    "# Reset the OnCalendar list\n"
+    "OnCalendar=\n"
+    "Configure OnCalendar for this template instance.\n"
+    "OnCalendar=%s\n"
+)
+
 
 def _write_drop_in(drop_in_dir: str, drop_in_file: str, calendarspec: CalendarSpec):
     """
@@ -84,7 +98,9 @@ def _write_drop_in(drop_in_dir: str, drop_in_file: str, calendarspec: CalendarSp
                          configuration.
     """
     _log_debug(
-        "Writing unit drop in file %s with CalendarSpec=%s", drop_in_file, calendarspec
+        "Writing unit drop in file %s with CalendarSpec='%s'",
+        drop_in_file,
+        calendarspec,
     )
     try:
         # Ensure the drop-in directory exists
@@ -93,8 +109,8 @@ def _write_drop_in(drop_in_dir: str, drop_in_file: str, calendarspec: CalendarSp
         # Write the drop-in configuration file atomically
         fd, tmp_path = tempfile.mkstemp(dir=drop_in_dir, prefix=".tmp_", text=True)
         try:
-            with os.fdopen(fd, "w") as f:
-                f.write(f"[Timer]\nOnCalendar={calendarspec.original}\n")
+            with os.fdopen(fd, "w", encoding="utf8") as f:
+                f.write(_DROP_IN_CONTENT_FMT % calendarspec.original)
                 f.flush()
                 os.fdatasync(f.fileno())
             os.rename(tmp_path, drop_in_file)
@@ -108,11 +124,13 @@ def _write_drop_in(drop_in_dir: str, drop_in_file: str, calendarspec: CalendarSp
                 os.close(dir_fd)
         except OSError as err:  # pragma: no cover
             os.unlink(tmp_path)
-            raise SnapmTimerError(
-                f"Filesystem error while writing drop-in file: {err}"
+            raise SnapmSystemError(
+                f"Filesystem error writing drop-in file '{drop_in_file}': {err}"
             ) from err
     except OSError as err:  # pragma: no cover
-        raise SnapmTimerError(f"Filesystem error: {err}") from err
+        raise SnapmSystemError(
+            f"Filesystem error writing drop-in temporary file '{tmp_path}': {err}"
+        ) from err
 
 
 def _remove_drop_in(drop_in_dir: str, drop_in_file: str):
@@ -319,7 +337,7 @@ def _status_timer(unit_fmt: str, instance: str):
 
         _log_debug(
             "timer(%s) unit state load: %s, active: %s, sub: %s",
-            instance,
+            unit_name,
             load_state,
             active_state,
             sub_state,
@@ -405,7 +423,7 @@ def _timer(op: str, unit: str, instance: str, calendarspec=None):
                 calendarspec = CalendarSpec(calendarspec)
             except ValueError as err:
                 raise SnapmArgumentError(
-                    "Timer {op}: invalid calendarspec string"
+                    f"Timer {op}: invalid calendarspec string"
                 ) from err
             except SnapmCalloutError as err:  # pragma: no cover
                 raise SnapmTimerError("Error creating CalendarSpec") from err
@@ -440,7 +458,7 @@ class Timer:
     """
 
     def __init__(
-        self, timer_type: TimerType, name: str, calendarspec: str | CalendarSpec
+        self, timer_type: TimerType, name: str, calendarspec: Union[str, CalendarSpec]
     ):
         """
         Initialise a new ``Timer`` object from the provided arguments.
@@ -525,7 +543,7 @@ class Timer:
 
         :rtype: bool
         """
-        return self.status == TimerStatus.ENABLED
+        return self.status in (TimerStatus.ENABLED, TimerStatus.RUNNING)
 
     @property
     def running(self):

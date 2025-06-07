@@ -16,6 +16,7 @@ in the snapm object API.
 """
 from argparse import ArgumentParser
 from os.path import basename
+from typing import Union
 from json import dumps
 from uuid import UUID
 import logging
@@ -97,10 +98,11 @@ class ReportObj:
     Common report object for snapm reports
     """
 
-    def __init__(self, snapset=None, snapshot=None, plugin=None):
+    def __init__(self, snapset=None, snapshot=None, plugin=None, schedule=None):
         self.snapset = snapset
         self.snapshot = snapshot
         self.plugin = plugin
+        self.schedule = schedule
 
 
 #: Snapshot set report object type
@@ -109,12 +111,15 @@ PR_SNAPSET = 1
 PR_SNAPSHOT = 2
 #: Plugin report object type
 PR_PLUGIN = 4
+#: Schedule report object type
+PR_SCHEDULE = 8
 
 #: Report object types table for ``snapm.command`` reports
 _report_obj_types = [
     ReportObjType(PR_SNAPSET, "Snapshot set", "snapset_", lambda o: o.snapset),
     ReportObjType(PR_SNAPSHOT, "Snapshot", "snapshot_", lambda o: o.snapshot),
     ReportObjType(PR_PLUGIN, "Plugin", "plugin_", lambda o: o.plugin),
+    ReportObjType(PR_SCHEDULE, "Schedule", "schedule_", lambda o: o.schedule),
 ]
 
 
@@ -418,6 +423,97 @@ _plugin_fields = [
 
 _DEFAULT_PLUGIN_FIELDS = "name,version,type"
 
+_schedule_fields = [
+    FieldType(
+        PR_SCHEDULE,
+        "name",
+        "ScheduleName",
+        "Name of the schedule",
+        12,
+        REP_STR,
+        lambda f, d: f.report_str(d.name),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "sources",
+        "ScheduleSources",
+        "Schedule sources",
+        15,
+        REP_STR_LIST,
+        lambda f, d: f.report_str_list(d.source_specs),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "sizepolicy",
+        "SizePolicy",
+        "Schedule default size policy",
+        10,
+        REP_STR,
+        lambda f, d: f.report_str(d.default_size_policy),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "autoindex",
+        "Autoindex",
+        "Schedule autoindex",
+        9,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.autoindex)),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "gcpolicytype",
+        "GcPolicyType",
+        "Schedule garbage collection policy type",
+        12,
+        REP_STR,
+        lambda f, d: f.report_str(d.gc_policy.type.value),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "gcpolicyparams",
+        "GcPolicyParams",
+        "Schedule garbage collection policy parameters",
+        14,
+        REP_STR,
+        # NOTE: Move this into GcPolicyParams ...
+        lambda f, d: f.report_str(
+            ", ".join(
+                f"{key}={val}" for key, val in d.gc_policy.params.__dict__.items() if val != 0
+            )
+        ),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "oncalendar",
+        "OnCalendar",
+        "Schedule OnCalendar trigger expression",
+        10,
+        REP_STR,
+        lambda f, d: f.report_str(d.calendarspec),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "enabled",
+        "Enabled",
+        "Schedule enabled",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.enabled)),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "running",
+        "Running",
+        "Schedule running",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.running)),
+    ),
+]
+
+_DEFAULT_SCHEDULE_FIELDS = "name,sources,sizepolicy,autoindex,oncalendar,enabled"
+
 
 def _str_indent(string, indent):
     """
@@ -584,7 +680,7 @@ def show_snapshots(manager, selection=None, json=False):
 
     for snapshot in snapshots:
         if json:
-            snap_list.append(snapshot.as_dict())
+            snap_list.append(snapshot.to_dict())
             continue
         wspace = "" if first else "\n"
         print(f"{wspace}{snapshot}")
@@ -606,7 +702,7 @@ def show_snapsets(manager, selection=None, members=False, json=False):
 
     for snapset in snapsets:
         if json:
-            set_list.append(snapset.as_dict(members=members))
+            set_list.append(snapset.to_dict(members=members))
             continue
         wspace = "" if first else "\n"
         print(f"{wspace}{snapset}")
@@ -633,6 +729,45 @@ def _expand_fields(default_fields, output_fields):
     elif output_fields.startswith("+"):
         output_fields = default_fields + "," + output_fields[1:]
     return output_fields
+
+
+def print_schedules(
+    manager,
+    selection: Union[None, Selection] = None,
+    output_fields: Union[None, str] = None,
+    opts: Union[None, ReportOpts] = None,
+    sort_keys: [None, str] = None,
+):
+    """
+    Print schedules matching selection criteria.
+
+    Format a set of ``snapm.manager.Schedule`` objects matching the given
+    criteria, and output them as a report to the file given in
+    ``opts.report_file``.
+
+    :param selection: A ``Selection`` object giving selection criteria for
+                      the operation.
+    :type selection: ``Selection``
+    :param output_fields: A comma-separateed list of output fields.
+    :type output_fields: ``str``
+    :param opts: Output formatting and control options.
+    :type opts: ``ReportOpts``
+    :param sort_keys: A comma-separated list of sort keys.
+    :type sort_keys: ``str``
+    """
+    output_fields = _expand_fields(_DEFAULT_SCHEDULE_FIELDS, output_fields)
+
+    schedules = manager.scheduler.find_schedules(selection=selection)
+    selected = [ReportObj(schedule=sched) for sched in schedules]
+
+    return _do_print_type(
+        _schedule_fields,
+        selected,
+        output_fields=output_fields,
+        opts=opts,
+        sort_keys=sort_keys,
+        title="Schedules",
+    )
 
 
 def print_plugins(
@@ -1150,6 +1285,18 @@ def _plugin_list_cmd(cmd_args):
     return _generic_list_cmd(cmd_args, None, opts, manager, print_plugins)
 
 
+def _schedule_list_cmd(cmd_args):
+    """
+    List configured schedules.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    opts = _report_opts_from_args(cmd_args)
+    return _generic_list_cmd(cmd_args, None, opts, manager, print_schedules)
+
+
 def _report_opts_from_args(cmd_args):
     opts = ReportOpts()
 
@@ -1351,6 +1498,7 @@ LIST_CMD = "list"
 SNAPSET_TYPE = "snapset"
 SNAPSHOT_TYPE = "snapshot"
 PLUGIN_TYPE = "plugin"
+SCHEDULE_TYPE = "schedule"
 
 
 # pylint: disable=too-many-statements
@@ -1623,6 +1771,28 @@ def _add_plugin_subparser(type_subparser):
     _add_report_args(plugin_list_parser)
 
 
+def _add_schedule_subparser(type_subparser):
+    """
+    Add subparser for 'schedule' commands.
+
+    :param type_subparser: Command type subparser
+    """
+    # Subparser for schedule commands
+    schedule_parser = type_subparser.add_parser(
+        SCHEDULE_TYPE,
+        help="Schedule commands",
+    )
+    schedule_subparser = schedule_parser.add_subparsers(dest="command")
+
+    # schedule list subcommand
+    schedule_list_parser = schedule_subparser.add_parser(
+        LIST_CMD,
+        help="List scheduled",
+    )
+    schedule_list_parser.set_defaults(func=_schedule_list_cmd)
+    _add_report_args(schedule_list_parser)
+
+
 def main(args):
     """
     Main entry point for snapm.
@@ -1653,6 +1823,8 @@ def main(args):
     _add_snapshot_subparser(type_subparser)
 
     _add_plugin_subparser(type_subparser)
+
+    _add_schedule_subparser(type_subparser)
 
     cmd_args = parser.parse_args(args[1:])
 

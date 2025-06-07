@@ -90,45 +90,47 @@ class TimerTests(unittest.TestCase):
     def test_timer_enable_empty_calendarspec_raises(self):
         with self.assertRaises(snapm.SnapmArgumentError) as cm:
             _timer(_TIMER_ENABLE, _UNIT_CREATE, "hourly", calendarspec="")
-            self.assertTrue("requires non-empty calendarspec" in cm.exception)
+        self.assertEqual(cm.exception.args, ("Timer ENABLE requires non-empty calendarspec",))
 
     def test_timer_enable_bad_calendarspec_raises(self):
         with self.assertRaises(snapm.SnapmArgumentError) as cm:
             _timer(_TIMER_ENABLE, _UNIT_CREATE, "hourly", calendarspec="quux:foo")
-            self.assertTrue("invalid calendarspec string" in cm.exception)
+        self.assertEqual(cm.exception.args, ("Timer ENABLE: invalid calendarspec string",))
 
     def test_timer_bad_op_raises(self):
         with self.assertRaises(snapm.SnapmArgumentError) as cm:
             _timer("QUUX", _UNIT_CREATE, "hourly", calendarspec="hourly")
-            self.assertTrue("Invalid timer operation: QUUX" in cm.exception)
+        self.assertEqual(cm.exception.args, ("Invalid timer operation: QUUX",))
 
     def test_timer_bad_unit_raises(self):
         with self.assertRaises(snapm.SnapmArgumentError) as cm:
             _timer(_TIMER_ENABLE, "quux", "hourly", calendarspec="hourly")
-            self.assertTrue("Invalid timer unit" in cm.exception)
+        self.assertEqual(cm.exception.args, ("Invalid timer unit: quux",))
 
     def test_timer_empty_instance_raises(self):
         with self.assertRaises(snapm.SnapmArgumentError) as cm:
             _timer(_TIMER_ENABLE, _UNIT_CREATE, "", calendarspec="hourly")
-            self.assertTrue("Timer instance cannot be empty" in cm.exception)
+        self.assertEqual(cm.exception.args, ("Timer instance cannot be empty",))
 
     def test_timer_none_instance_raises(self):
         with self.assertRaises(snapm.SnapmArgumentError) as cm:
             _timer(_TIMER_ENABLE, _UNIT_CREATE, None, calendarspec="hourly")
-            self.assertTrue("Timer instance cannot be empty" in cm.exception)
+        self.assertEqual(cm.exception.args, ("Timer instance cannot be empty",))
 
-    def test_timer_bad_op_with_calendarspec_raises(self):
+    def test_timer_START_with_calendarspec_raises(self):
         with self.assertRaises(snapm.SnapmArgumentError) as cm:
             _timer(_TIMER_START, _UNIT_CREATE, "hourly", calendarspec="hourly")
-            self.assertTrue("does not accept calendarspec" in cm.exception)
+        self.assertEqual(cm.exception.args, ("Timer START does not accept calendarspec=",))
 
+    def test_timer_STOP_with_calendarspec_raises(self):
         with self.assertRaises(snapm.SnapmArgumentError) as cm:
             _timer(_TIMER_STOP, _UNIT_CREATE, "hourly", calendarspec="hourly")
-            self.assertTrue("does not accept calendarspec" in cm.exception)
+        self.assertEqual(cm.exception.args, ("Timer STOP does not accept calendarspec=",))
 
+    def test_timer_DISABLE_with_calendarspec_raises(self):
         with self.assertRaises(snapm.SnapmArgumentError) as cm:
             _timer(_TIMER_DISABLE, _UNIT_CREATE, "hourly", calendarspec="hourly")
-            self.assertTrue("does not accept calendarspec" in cm.exception)
+        self.assertEqual(cm.exception.args, ("Timer DISABLE does not accept calendarspec=",))
 
     def test_Timer_valid_type_and_calendar_string(self):
         t = Timer(TimerType.CREATE, "hourly", "hourly")
