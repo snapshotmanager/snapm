@@ -16,6 +16,7 @@ in the snapm object API.
 """
 from argparse import ArgumentParser
 from os.path import basename
+from typing import Union
 from json import dumps
 from uuid import UUID
 import logging
@@ -723,6 +724,45 @@ def _expand_fields(default_fields, output_fields):
     elif output_fields.startswith("+"):
         output_fields = default_fields + "," + output_fields[1:]
     return output_fields
+
+
+def print_schedules(
+    manager,
+    selection: Union[None, Selection] = None,
+    output_fields: Union[None, str] = None,
+    opts: Union[None, ReportOpts] = None,
+    sort_keys: [None, str] = None,
+):
+    """
+    Print schedules matching selection criteria.
+
+    Format a set of ``snapm.manager.Schedule`` objects matching the given
+    criteria, and output them as a report to the file given in
+    ``opts.report_file``.
+
+    :param selection: A ``Selection`` object giving selection criteria for
+                      the operation.
+    :type selection: ``Selection``
+    :param output_fields: A comma-separateed list of output fields.
+    :type output_fields: ``str``
+    :param opts: Output formatting and control options.
+    :type opts: ``ReportOpts``
+    :param sort_keys: A comma-separated list of sort keys.
+    :type sort_keys: ``str``
+    """
+    output_fields = _expand_fields(_DEFAULT_SCHEDULE_FIELDS, output_fields)
+
+    schedules = manager.scheduler.find_schedules(selection=selection)
+    selected = [ReportObj(schedule=sched) for sched in schedules]
+
+    return _do_print_type(
+        _schedule_fields,
+        selected,
+        output_fields=output_fields,
+        opts=opts,
+        sort_keys=sort_keys,
+        title="Schedules",
+    )
 
 
 def print_plugins(
