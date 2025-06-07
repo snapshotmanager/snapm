@@ -10,6 +10,7 @@ Global definitions for the top-level snapm package.
 """
 from uuid import UUID, uuid5
 from datetime import datetime
+from typing import Union
 from enum import Enum
 import string
 import json
@@ -315,6 +316,17 @@ class Selection:
     snapshot_name = None
     snapshot_uuid = None
 
+    # Schedule fields
+    sched_name: Union[None, str] = None
+    sched_source_specs: Union[None, str] = None
+    sched_default_size_policy: Union[None, str] = None
+    sched_autoindex: Union[None, bool] = None
+    sched_gc_type: Union[None, str] = None
+    sched_gc_params: Union[None, str] = None
+    sched_enabled: Union[None, bool] = None
+    sched_running: Union[None, bool] = None
+    sched_calendarspec: Union[None, str] = None
+
     snapshot_set_attrs = [
         "name",
         "uuid",
@@ -332,7 +344,19 @@ class Selection:
         "snapshot_uuid",
     ]
 
-    all_attrs = snapshot_set_attrs + snapshot_attrs
+    schedule_attrs = [
+        "sched_name",
+        "sched_source_specs",
+        "sched_default_size_policy",
+        "sched_autoindex",
+        "sched_gc_type",
+        "sched_gc_params",
+        "sched_enabled",
+        "sched_running",
+        "sched_calendarspec",
+    ]
+
+    all_attrs = snapshot_set_attrs + snapshot_attrs + schedule_attrs
 
     def __str__(self):
         """
@@ -363,7 +387,7 @@ class Selection:
         """
         return "Selection(" + str(self) + ")"
 
-    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-arguments,too-many-locals
     def __init__(
         self,
         name=None,
@@ -377,6 +401,15 @@ class Selection:
         mount_point=None,
         snapshot_name=None,
         snapshot_uuid=None,
+        sched_name: Union[None, str] = None,
+        sched_source_specs: Union[None, str] = None,
+        sched_default_size_policy: Union[None, str] = None,
+        sched_autoindex: Union[None, bool] = None,
+        sched_gc_type: Union[None, str] = None,
+        sched_gc_params: Union[None, str] = None,
+        sched_enabled: Union[None, bool] = None,
+        sched_running: Union[None, bool] = None,
+        sched_calendarspec: Union[None, str] = None,
     ):
         self.name = name
         self.uuid = uuid
@@ -389,6 +422,15 @@ class Selection:
         self.mount_point = mount_point
         self.snapshot_name = snapshot_name
         self.snapshot_uuid = snapshot_uuid
+        self.sched_name = sched_name
+        self.sched_source_specs = sched_source_specs
+        self.sched_default_size_policy = sched_default_size_policy
+        self.sched_autoindex = sched_autoindex
+        self.sched_gc_type = sched_gc_type
+        self.sched_gc_params = sched_gc_params
+        self.sched_enabled = sched_enabled
+        self.sched_running = sched_running
+        self.sched_calendarspec = sched_calendarspec
 
     @classmethod
     def from_cmd_args(cls, cmd_args):
@@ -411,12 +453,14 @@ class Selection:
         uuid = None
         snapshot_name = None
         snapshot_uuid = None
-        if cmd_args.identifier:
+        sched_name = None
+
+        if hasattr(cmd_args, "identifier") and cmd_args.identifier:
             try:
                 uuid = UUID(cmd_args.identifier)
             except (TypeError, ValueError):
                 name = cmd_args.identifier
-        else:
+        elif hasattr(cmd_args, "name") and hasattr(cmd_args, "uuid"):
             if cmd_args.name:
                 name = cmd_args.name
             elif cmd_args.uuid:
@@ -427,11 +471,15 @@ class Selection:
         if hasattr(cmd_args, "snapshot_uuid"):
             snapshot_uuid = cmd_args.snapshot_uuid
 
+        if hasattr(cmd_args, "schedule_name"):
+            sched_name = cmd_args.schedule_name
+
         select = Selection(
             name=name,
             uuid=uuid,
             snapshot_name=snapshot_name,
             snapshot_uuid=snapshot_uuid,
+            sched_name=sched_name,
         )
 
         _log_debug("Initialised %s from arguments", repr(select))
@@ -450,7 +498,7 @@ class Selection:
         """
         return hasattr(self, attr) and getattr(self, attr) is not None
 
-    def check_valid_selection(self, snapshot_set=False, snapshot=False):
+    def check_valid_selection(self, snapshot_set=False, snapshot=False, schedule=False):
         """
         Check a Selection for valid criteria.
 
@@ -473,6 +521,8 @@ class Selection:
             valid_attrs += self.snapshot_set_attrs
         if snapshot:
             valid_attrs += self.snapshot_attrs
+        if schedule:
+            valid_attrs += self.schedule_attrs
 
         for attr in self.all_attrs:
             if self.__attr_has_value(attr) and attr not in valid_attrs:
