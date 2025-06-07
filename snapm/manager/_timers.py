@@ -423,7 +423,7 @@ def _timer(op: str, unit: str, instance: str, calendarspec=None):
                 calendarspec = CalendarSpec(calendarspec)
             except ValueError as err:
                 raise SnapmArgumentError(
-                    "Timer {op}: invalid calendarspec string"
+                    f"Timer {op}: invalid calendarspec string"
                 ) from err
             except SnapmCalloutError as err:  # pragma: no cover
                 raise SnapmTimerError("Error creating CalendarSpec") from err
