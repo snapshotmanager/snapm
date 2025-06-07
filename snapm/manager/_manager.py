@@ -180,6 +180,49 @@ def select_snapshot(select, snapshot):
     return True
 
 
+def select_schedule(select: Selection, schedule: Schedule):
+    """
+    Test Schedule against Selection criteria.
+
+    Test the supplied ``Schedule`` against the selection criteria
+    in ``select`` and return ``True`` if it passes, or ``False``
+    otherwise.
+
+    :param s: The selection criteria
+    :param be: The Schedule to test
+    :rtype: bool
+    :returns: True if Schedule passes selection or ``False``
+              otherwise.
+    """
+    if select.sched_name and select.sched_name != schedule.name:
+        return False
+    if select.sched_source_specs and select.sched_source_specs != schedule.source_specs:
+        return False
+    if (
+        select.sched_default_size_policy
+        and select.sched_default_size_policy != schedule.default_size_policy
+    ):
+        return False
+    if (
+        select.sched_autoindex is not None
+        and select.sched_autoindex != schedule.autoindex
+    ):
+        return False
+    if select.sched_gc_type and select.sched_gc_type != schedule.gc_policy.type.value:
+        return False
+    if select.sched_gc_params and select.sched_gc_params != str(
+        schedule.gc_policy.params
+    ):
+        return False
+    if select.sched_enabled is not None and select.sched_enabled != schedule.enabled:
+        return False
+    if select.sched_running is not None and select.sched_running != schedule.running:
+        return False
+    if select.sched_calendarspec and select.sched_calendarspec != schedule.calendarspec:
+        return False
+    return True
+
+
 def _suspend_journal():
     """
     Suspend journal writes to /var before creating snapshots.
