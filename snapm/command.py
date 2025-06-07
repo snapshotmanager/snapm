@@ -1280,6 +1280,18 @@ def _plugin_list_cmd(cmd_args):
     return _generic_list_cmd(cmd_args, None, opts, manager, print_plugins)
 
 
+def _schedule_list_cmd(cmd_args):
+    """
+    List configured schedules.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    opts = _report_opts_from_args(cmd_args)
+    return _generic_list_cmd(cmd_args, None, opts, manager, print_schedules)
+
+
 def _report_opts_from_args(cmd_args):
     opts = ReportOpts()
 
