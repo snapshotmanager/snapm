@@ -2,6 +2,8 @@ IMAGE = container-tests
 CONTAINER = container-tests
 TEST_DIR = $(CURDIR)/tests
 
+COVERAGE_INCLUDE = /src/snapm/manager/_schedule.py,/src/snapm/manager/_timers.py
+
 .PHONY: all prep build run install test clean shell
 
 all: prep build run install test
@@ -26,7 +28,8 @@ install:
 
 test:
 	podman exec --env PYTHONPATH=/src -it $(CONTAINER) \
-		/usr/bin/coverage run --include /src/snapm/manager/_timers.py \
+		/usr/bin/coverage run \
+		--include $(COVERAGE_INCLUDE) \
 		/usr/bin/pytest -v --log-level=debug /tests
 
 report:

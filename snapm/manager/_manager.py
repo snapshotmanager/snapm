@@ -15,9 +15,10 @@ import logging
 from time import time
 from math import floor
 from stat import S_ISBLK
-from os import stat
+from os import stat, listdir
 from os.path import exists, ismount, join, normpath, samefile
-from typing import List
+from json import JSONDecodeError
+from typing import List, Union
 
 from snapm import (
     SNAPM_DEBUG_MANAGER,
@@ -52,7 +53,7 @@ from ._boot import (
 )
 from ._loader import load_plugins
 from ._signals import suspend_signals
-
+from ._schedule import Schedule, GcPolicy
 
 _log = logging.getLogger(__name__)
 _log.set_debug_mask(SNAPM_DEBUG_MANAGER)
@@ -79,6 +80,9 @@ _SNAPM_CFG_DISABLE_PLUGINS = "DisablePlugins"
 
 #: Path to directory for plugin configuration files
 _PLUGINS_D_PATH = join(_SNAPM_CFG_DIR, "plugins.d")
+
+#: Path to directory for Schedule configuration files
+_SCHEDULE_D_PATH = "/etc/snapm/schedule.d"
 
 
 @dataclass
@@ -173,6 +177,49 @@ def select_snapshot(select, snapshot):
     if select.snapshot_name and select.snapshot_name != snapshot.name:
         return False
 
+    return True
+
+
+def select_schedule(select: Selection, schedule: Schedule):
+    """
+    Test Schedule against Selection criteria.
+
+    Test the supplied ``Schedule`` against the selection criteria
+    in ``select`` and return ``True`` if it passes, or ``False``
+    otherwise.
+
+    :param s: The selection criteria
+    :param be: The Schedule to test
+    :rtype: bool
+    :returns: True if Schedule passes selection or ``False``
+              otherwise.
+    """
+    if select.sched_name and select.sched_name != schedule.name:
+        return False
+    if select.sched_source_specs and select.sched_source_specs != schedule.source_specs:
+        return False
+    if (
+        select.sched_default_size_policy
+        and select.sched_default_size_policy != schedule.default_size_policy
+    ):
+        return False
+    if (
+        select.sched_autoindex is not None
+        and select.sched_autoindex != schedule.autoindex
+    ):
+        return False
+    if select.sched_gc_type and select.sched_gc_type != schedule.gc_policy.type.value:
+        return False
+    if select.sched_gc_params and select.sched_gc_params != str(
+        schedule.gc_policy.params
+    ):
+        return False
+    if select.sched_enabled is not None and select.sched_enabled != schedule.enabled:
+        return False
+    if select.sched_running is not None and select.sched_running != schedule.running:
+        return False
+    if select.sched_calendarspec and select.sched_calendarspec != schedule.calendarspec:
+        return False
     return True
 
 
@@ -299,6 +346,194 @@ def _find_mount_point_for_devpath(devpath):
     return ""
 
 
+class Scheduler:
+    """
+    A high-level interface for managing on-disk schedule configuration
+    and schedule timer integration.
+
+    Implements interface to create, delete, enumerate and modify schedules.
+    """
+
+    def __init__(self, manager: "Manager", schedpath: str):
+        """
+        Initialise a new ``Scheduler`` object.
+        """
+        self._manager = manager
+        self._schedpath = schedpath
+        self._schedules = []
+        self._schedules_by_name = {}
+        self._load_schedules()
+
+    def _load_schedules(self):
+        """
+        Load schedule definitions from disk.
+        """
+        if not exists(_SCHEDULE_D_PATH):
+            _log_warn(
+                "Schedule configuration directory '%s' not found.",
+                _SCHEDULE_D_PATH,
+            )
+            return
+
+        for sched_file in listdir(_SCHEDULE_D_PATH):
+            if not sched_file.endswith(".conf"):
+                continue
+            sched_path = join(_SCHEDULE_D_PATH, sched_file)
+            try:
+                schedule = Schedule.from_file(sched_path)
+            except (SnapmArgumentError, JSONDecodeError, KeyError) as err:
+                _log_warn(
+                    "Failed to load schedule configuration '%s': %s",
+                    sched_file,
+                    err,
+                )
+                continue
+            self._schedules.append(schedule)
+            self._schedules_by_name[schedule.name] = schedule
+
+    def _get_schedule_by_name(self, name: str) -> Schedule:
+        """
+        Look up an existing schedule by name.
+
+        :param name: The name of the schedule to find.
+        :type name: ``str``
+        :raises: ``SnapmNotFoundError`` if ``name`` does not exist.
+        """
+        if name not in self._schedules_by_name:
+            raise SnapmNotFoundError(f"No schedule named {name}")
+        return self._schedules_by_name[name]
+
+    def find_schedules(
+        self, selection: Union[None, Selection] = None
+    ) -> List[Schedule]:
+        """
+        Find schedules matching selection criteria.
+
+        :param selection: Selection criteria to apply.
+        :returns: A list of matching ``Schedule`` objects.
+        """
+        matches = []
+
+        # Use null selection criteria if unspecified
+        selection = selection if selection else Selection()
+
+        selection.check_valid_selection(schedule=True)
+
+        _log_debug("Finding schedules for %s", repr(selection))
+
+        for schedule in self._schedules:
+            if select_schedule(selection, schedule):
+                matches.append(schedule)
+
+        _log_debug("Found %d schedules", len(matches))
+        return matches
+
+    def create(
+        self,
+        name: str,
+        source_specs: List[str],
+        default_size_policy: str,
+        autoindex: bool,
+        calendarspec: str,
+        gc_policy: GcPolicy,
+    ) -> Schedule:
+        """
+        Create a new ``Schedule`` instance and write it to disk.
+
+        :param name: The name of the ``Schedule``.
+        :type name: ``str``
+        :param source_specs: The souce specs to include in this ``Schedule``.
+        :type source_specs: ``list[str]``
+        :param default_size_policy: The default size policy for this
+                                    ``Schedule``.
+        :type default_size_policy: ``str``
+        :param autoindex: Enable autoindex names for this ``Schedule``.
+        :type autoindex: ``bool``
+        :param calendarspec: The ``OnCalendar`` expression for this ``Schedule``.
+        :type calendarspec: ``str``
+        :param gc_policy: The garbage collection policy for this ``Schedule``.
+        :type gc_policy: ``GcPolicy``
+        :returns: The new ``Schedule`` instance.
+        :rtype: ``Schedule``
+        """
+        schedule = Schedule(
+            name, source_specs, default_size_policy, autoindex, calendarspec, gc_policy
+        )
+        schedule.write_config(self._schedpath)
+        self._schedules.append(schedule)
+        return schedule
+
+    def delete(self, name: str):
+        """
+        Delete schedule named ``name``.
+
+        :param name: The name of the schedule to delete.
+        :type name: ``str``
+        :raises: ``SnapmNotFoundError`` if ``name`` does not exist.
+        """
+        schedule = self._get_schedule_by_name(name)
+        schedule.stop()
+        schedule.disable()
+        schedule.delete()
+
+    def enable(self, name: str):
+        """
+        Enable schedule named ``name``.
+
+        :param name: The name of the schedule to enable.
+        :type name: ``str``
+        :raises: ``SnapmNotFoundError`` if ``name`` does not exist.
+        """
+        schedule = self._get_schedule_by_name(name)
+        schedule.enable()
+
+    def start(self, name: str):
+        """
+        Start schedule named ``name``.
+
+        :param name: The name of the schedule to start.
+        :type name: ``str``
+        :raises: ``SnapmNotFoundError`` if ``name`` does not exist.
+        """
+        schedule = self._get_schedule_by_name(name)
+        schedule.start()
+
+    def stop(self, name: str):
+        """
+        Stop schedule named ``name``.
+
+        :param name: The name of the schedule to stop.
+        :type name: ``str``
+        :raises: ``SnapmNotFoundError`` if ``name`` does not exist.
+        """
+        schedule = self._get_schedule_by_name(name)
+        schedule.stop()
+
+    def disable(self, name: str):
+        """
+        Disable schedule named ``name``.
+
+        :param name: The name of the schedule to disable.
+        :type name: ``str``
+        :raises: ``SnapmNotFoundError`` if ``name`` does not exist.
+        """
+        schedule = self._get_schedule_by_name(name)
+        schedule.enable()
+
+    def gc(self, name: str):
+        """
+        Apply garbage collection policy to schedule ``name``.
+
+        :param name: The name of the schedule to disable.
+        :type name: ``str``
+        :raises: ``SnapmNotFoundError`` if ``name`` does not exist.
+        """
+        schedule = self._get_schedule_by_name(name)
+        sets = self._manager.find_snapshot_sets(Selection(basename=name))
+        sets.sort(key=lambda x: x.timestamp)
+        schedule.gc(sets)
+
+
 class Manager:
     """
     Snapshot Manager high level interface.
@@ -341,6 +576,7 @@ class Manager:
                 )
             except SnapmPluginError as err:
                 _log_error("Disabling plugin %s: %s", plugin_class.__name__, err)
+        self.scheduler = Scheduler(self, _SCHEDULE_D_PATH)
         self.discover_snapshot_sets()
 
     def _load_plugin_config(self, plugin_name: str) -> ConfigParser:
