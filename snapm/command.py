@@ -15,8 +15,8 @@ Python shell by users who do not require all the features present
 in the snapm object API.
 """
 from argparse import ArgumentParser
+from typing import Union, List
 from os.path import basename
-from typing import Union
 from json import dumps
 from uuid import UUID
 import logging
@@ -60,7 +60,7 @@ from snapm import (
     Selection,
     __version__,
 )
-from snapm.manager import Manager
+from snapm.manager import Manager, CalendarSpec, GcPolicy
 from snapm.report import (
     REP_NUM,
     REP_SHA,
@@ -724,6 +724,34 @@ def _expand_fields(default_fields, output_fields):
     elif output_fields.startswith("+"):
         output_fields = default_fields + "," + output_fields[1:]
     return output_fields
+
+
+def create_schedule(
+    manager: Manager,
+    name: str,
+    sources: List[str],
+    default_size_policy: str,
+    autoindex: bool,
+    calendarspec: Union[str, CalendarSpec],
+    policy: GcPolicy,
+):
+    """
+    Create a new schedule from a list of mount point and block device
+    source paths.
+
+    :param manager: The manager context to use.
+    :param name: The name of the new schedule.
+    :param sources: A list of mount point or block devices to snapshot.
+    :param default_size_policy: The default size policy for this snapshot set.
+    :param autoinxed: Enable autoindex names for this schedule.
+    :param boot: Create a boot entry for this snapshot set.
+    :param revert: Create a revert boot entry for this snapshot set.
+    :param autoindex: Treat `name` as the basename of a recurring snapshot set
+                      and generate and append an appropriate index value.
+    """
+    return manager.scheduler.create(
+        name, sources, default_size_policy, autoindex, calendarspec, policy
+    )
 
 
 def print_schedules(
