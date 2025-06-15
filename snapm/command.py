@@ -1308,6 +1308,35 @@ def _plugin_list_cmd(cmd_args):
     return _generic_list_cmd(cmd_args, None, opts, manager, print_plugins)
 
 
+def _schedule_create_cmd(cmd_args):
+    """
+    Create schedule.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    # Note: validate policy arguments!
+    policy = GcPolicy.from_cmd_args(cmd_args)
+    schedule = create_schedule(
+        manager,
+        cmd_args.schedule_name,
+        cmd_args.sources,
+        cmd_args.size_policy,
+        cmd_args.autoindex,
+        cmd_args.calendarspec,
+        policy,
+    )
+    if not schedule:
+        return 1
+    _log_info(
+        "Created schedule %s",
+        schedule.name,
+    )
+    print(schedule)
+    return 0
+
+
 def _schedule_list_cmd(cmd_args):
     """
     List configured schedules.
@@ -1540,6 +1569,103 @@ def _add_json_arg(parser):
         "--json",
         action="store_true",
         help="Display output in JSON notation",
+    )
+
+
+def _add_policy_args(parser):
+    parser.add_argument(
+        "-p",
+        "--policy-type",
+        type=str,
+        help="Garbage collection policy type",
+    )
+
+    # ArgumentParser does not properly support nesting argument groupswithin a
+    # MutuallyExclusiveGroup: https://github.com/python/cpython/issues/66246
+    # Add the GcPolicyType arguments as groups within the schedule create
+    # subparser and validate the arguments after parsing.
+
+    gc_params_count_group = parser.add_argument_group(title="Count")
+    gc_params_count_group.add_argument(
+        "--keep-count",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT snapshot sets",
+    )
+
+    gc_params_age_group = parser.add_argument_group(title="Age")
+    gc_params_age_group.add_argument(
+        "--keep-years",
+        type=int,
+        default=0,
+        metavar="YEARS",
+        help="Keep YEARS snapshot sets",
+    )
+    gc_params_age_group.add_argument(
+        "--keep-months",
+        type=int,
+        default=0,
+        metavar="MONTHS",
+        help="Keep MONTHS snapshot sets",
+    )
+    gc_params_age_group.add_argument(
+        "--keep-weeks",
+        type=int,
+        default=0,
+        metavar="WEEKS",
+        help="Keep WEEKS snapshot sets",
+    )
+    gc_params_age_group.add_argument(
+        "--keep-days",
+        type=int,
+        default=0,
+        metavar="DAYS",
+        help="Keep DAYS snapshot sets",
+    )
+
+    gc_params_timeline_group = parser.add_argument_group(title="Timeline")
+    gc_params_timeline_group.add_argument(
+        "--keep-yearly",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT yearly snapshot sets",
+    )
+    gc_params_timeline_group.add_argument(
+        "--keep-quarterly",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT quarterly snapshot sets",
+    )
+    gc_params_timeline_group.add_argument(
+        "--keep-monthly",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT monthly snapshot sets",
+    )
+    gc_params_timeline_group.add_argument(
+        "--keep-weekly",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT weekly snapshot sets",
+    )
+    gc_params_timeline_group.add_argument(
+        "--keep-daily",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT daily snapshot sets",
+    )
+    gc_params_timeline_group.add_argument(
+        "--keep-hourly",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT hourly snapshot sets",
     )
 
 
@@ -1813,6 +1939,30 @@ def _add_schedule_subparser(type_subparser):
         help="Schedule commands",
     )
     schedule_subparser = schedule_parser.add_subparsers(dest="command")
+
+    # schedule create subcommand
+    schedule_create_parser = schedule_subparser.add_parser(
+        CREATE_CMD,
+        help="Create schedule",
+    )
+
+    schedule_create_parser.add_argument(
+        "schedule_name",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of the schedule to create",
+    )
+    schedule_create_parser.add_argument(
+        "-C",
+        "--calendarspec",
+        type=str,
+        metavar="CALENDARSPEC",
+        help="Calendar trigger expression",
+    )
+    _add_create_args(schedule_create_parser)
+    _add_policy_args(schedule_create_parser)
+    schedule_create_parser.set_defaults(func=_schedule_create_cmd)
 
     # schedule list subcommand
     schedule_list_parser = schedule_subparser.add_parser(
