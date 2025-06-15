@@ -765,6 +765,28 @@ def delete_schedule(manager: Manager, name: str):
     manager.scheduler.delete(name)
 
 
+def enable_schedule(manager: Manager, name: str):
+    """
+    Enable an existing schedule. This enables the systemd timer units
+    associated with this schedule.
+
+    :param manager: The manager context to use.
+    :param name: The name of the schedule to enable.
+    """
+    return manager.scheduler.enable(name)
+
+
+def disable_schedule(manager: Manager, name: str):
+    """
+    Enable an existing schedule. This disables the systemd timer units
+    associated with this schedule.
+
+    :param manager: The manager context to use.
+    :param name: The name of the schedule to disable.
+    """
+    return manager.scheduler.disable(name)
+
+
 def print_schedules(
     manager,
     selection: Union[None, Selection] = None,
