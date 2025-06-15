@@ -591,7 +591,7 @@ def parse_size_with_units(value):
     """
     match = _SIZE_RE.search(value)
     if match is None:
-        raise SnapmSizePolicyError(f"Malformed size expression: {value}")
+        raise SnapmSizePolicyError(f"Malformed size expression: '{value}'")
     (size, unit) = (match.group("size"), match.group("units").upper())
     size_bytes = int(size) * _SIZE_SUFFIXES[unit[0]]
     return size_bytes
