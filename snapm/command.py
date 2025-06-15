@@ -812,6 +812,17 @@ def disable_schedule(manager: Manager, name: str):
     return manager.scheduler.disable(name)
 
 
+def gc_schedule(manager: Manager, name: str):
+    """
+    Run garbage collection for an existing schedule. This executes the
+    configured garbage collection policy for the schedule named ``name``.
+
+    :param manager: The manager context to use.
+    :param name: The name of the schedule to run garbage collection for.
+    """
+    manager.scheduler.gc(name)
+
+
 def print_schedules(
     manager,
     selection: Union[None, Selection] = None,
