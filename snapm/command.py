@@ -1001,26 +1001,60 @@ def _generic_list_cmd(cmd_args, select, opts, manager, print_fn):
 
 def _create_cmd(cmd_args):
     """
-    Create snapshot set command handler.
-    Attempt to create the specified snapshot set.
+    create snapshot set command handler.
+    attempt to create the specified snapshot set.
 
-    :param cmd_args: Command line arguments for the command
+    :param cmd_args: command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
     manager = Manager()
+
+    if hasattr(cmd_args, "config") and cmd_args.config:
+        schedules = manager.scheduler.find_schedules(
+            Selection(sched_name=cmd_args.config)
+        )
+        if not schedules:
+            _log_error(
+                "No schedule configuration matching '%s' found.",
+                cmd_args.config
+            )
+            return 1
+        if len(schedules) > 1:
+            _log_error(
+                "Ambiguous schedule configuration '%s': %s",
+                cmd_args.config,
+                ", ".join(sched.name for sched in schedules)
+            )
+            return 1
+        schedule = schedules[0]
+
+        snapset_name = schedule.name
+        sources = schedule.source_specs
+        size_policy = schedule.default_size_policy
+        autoindex = schedule.autoindex
+        boot = schedule.boot
+        revert = schedule.revert
+    else:
+        snapset_name = cmd_args.snapset_name
+        sources = cmd_args.sources
+        size_policy = cmd_args.size_policy
+        boot = cmd_args.bootable
+        revert = cmd_args.revert
+        autoindex = cmd_args.autoindex
+
     snapset = create_snapset(
         manager,
-        cmd_args.snapset_name,
-        cmd_args.sources,
-        size_policy=cmd_args.size_policy,
-        boot=cmd_args.bootable,
-        revert=cmd_args.revert,
-        autoindex=cmd_args.autoindex,
+        snapset_name,
+        sources,
+        size_policy=size_policy,
+        boot=boot,
+        revert=revert,
+        autoindex=autoindex,
     )
     if snapset is None:
         return 1
     _log_info(
-        "Created snapset %s with %d snapshots", snapset.name, snapset.nr_snapshots
+        "created snapset %s with %d snapshots", snapset.name, snapset.nr_snapshots
     )
     print(snapset)
     return 0
@@ -1777,7 +1811,19 @@ def _add_policy_args(parser):
     )
 
 
+def _add_schedule_config_arg(parser):
+    parser.add_argument(
+        "-c",
+        "--config",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of a configured schedule to create snapshot sets for"
+    )
+
+
 CREATE_CMD = "create"
+CREATE_SCHEDULED_CMD = "create-scheduled"
 DELETE_CMD = "delete"
 RENAME_CMD = "rename"
 RESIZE_CMD = "resize"
@@ -1798,7 +1844,7 @@ PLUGIN_TYPE = "plugin"
 SCHEDULE_TYPE = "schedule"
 
 
-# pylint: disable=too-many-statements
+# pylint: disable=too-many-statements,too-many-locals
 def _add_snapset_subparser(type_subparser):
     """
     Add subparser for 'snapset' commands.
@@ -1824,6 +1870,13 @@ def _add_snapset_subparser(type_subparser):
         help="The name of the snapshot set to create",
     )
     _add_create_args(snapset_create_parser)
+
+    # snapset create-scheduled subcommand
+    snapset_create_scheduled_parser = snapset_subparser.add_parser(
+        CREATE_SCHEDULED_CMD, help="Create scheduled snapshot sets",
+    )
+    _add_schedule_config_arg(snapset_create_scheduled_parser)
+    snapset_create_scheduled_parser.set_defaults(func=_create_cmd)
 
     # snapset delete subcommand
     snapset_delete_parser = snapset_subparser.add_parser(

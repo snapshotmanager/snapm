@@ -5,4 +5,4 @@ After=local-fs.target
 
 [Service]
 Type=oneshot
-ExecStart=snapm snapset create -c %i.conf
+ExecStart=snapm snapset create-scheduled -c %i

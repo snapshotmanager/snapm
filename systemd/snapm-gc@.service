@@ -5,4 +5,4 @@ After=local-fs.target
 
 [Service]
 Type=oneshot
-ExecStart=snapm schedule gc -c %i.conf
+ExecStart=snapm schedule gc -c %i
