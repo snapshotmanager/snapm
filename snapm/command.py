@@ -1478,6 +1478,18 @@ def _schedule_disable_cmd(cmd_args):
     return 0
 
 
+def _schedule_gc_cmd(cmd_args):
+    """
+    Garbage collect schedule.
+
+    :param cmd_args: Command line arguments for the command.
+    :returns: integer status code returned from ``main()``.
+    """
+    manager = Manager()
+    gc_schedule(manager, cmd_args.config)
+    return 0
+
+
 def _schedule_list_cmd(cmd_args):
     """
     List configured schedules.
@@ -1848,6 +1860,7 @@ ENABLE_CMD = "enable"
 DISABLE_CMD = "disable"
 SHOW_CMD = "show"
 LIST_CMD = "list"
+GC_CMD = "gc"
 
 SNAPSET_TYPE = "snapset"
 SNAPSHOT_TYPE = "snapshot"
@@ -2205,6 +2218,13 @@ def _add_schedule_subparser(type_subparser):
     )
     _add_json_arg(schedule_show_parser)
     schedule_show_parser.set_defaults(func=_schedule_show_cmd)
+
+    schedule_gc_parser = schedule_subparser.add_parser(
+        GC_CMD,
+        help="Run garbage collection for schedule",
+    )
+    _add_schedule_config_arg(schedule_gc_parser)
+    schedule_gc_parser.set_defaults(func=_schedule_gc_cmd)
 
 
 def main(args):
