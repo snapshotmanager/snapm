@@ -754,6 +754,17 @@ def create_schedule(
     )
 
 
+def delete_schedule(manager: Manager, name: str):
+    """
+    Delete schedule by name. This disables the schedule and removes all on-disk
+    configuration data.
+
+    :param manager: The manager context to use.
+    :param name: The name of the schedule to delete.
+    """
+    manager.scheduler.delete(name)
+
+
 def print_schedules(
     manager,
     selection: Union[None, Selection] = None,
