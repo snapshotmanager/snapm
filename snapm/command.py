@@ -714,6 +714,31 @@ def show_snapsets(manager, selection=None, members=False, json=False):
         print(dumps(set_list, indent=4))
 
 
+def show_schedules(manager, selection=None, _members=False, json=False):
+    """
+    Show schedules matching selection criteria.
+    """
+    schedules = manager.scheduler.find_schedules(selection)
+    first = True
+
+    if json:
+        sched_list = []
+
+    for schedule in schedules:
+        if json:
+            sched_list.append(schedule.to_dict())
+            continue
+
+        wspace = "" if first else "\n"
+        print(f"{wspace}{schedule}")
+        first = False
+        # if members
+        # ...
+
+    if json:
+        print(dumps(sched_list, indent=4))
+
+
 def _expand_fields(default_fields, output_fields):
     """
     Expand output fields list from command line arguments.
