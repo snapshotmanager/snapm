@@ -10,6 +10,7 @@ Global definitions for the top-level snapm package.
 """
 from uuid import UUID, uuid5
 from datetime import datetime
+from typing import Union
 from enum import Enum
 import string
 import json
@@ -184,6 +185,12 @@ class SnapmError(Exception):
     """
 
 
+class SnapmSystemError(SnapmError):
+    """
+    An error when calling the operating system.
+    """
+
+
 class SnapmCalloutError(SnapmError):
     """
     An error calling out to an external program.
@@ -309,6 +316,17 @@ class Selection:
     snapshot_name = None
     snapshot_uuid = None
 
+    # Schedule fields
+    sched_name: Union[None, str] = None
+    sched_source_specs: Union[None, str] = None
+    sched_default_size_policy: Union[None, str] = None
+    sched_autoindex: Union[None, bool] = None
+    sched_gc_type: Union[None, str] = None
+    sched_gc_params: Union[None, str] = None
+    sched_enabled: Union[None, bool] = None
+    sched_running: Union[None, bool] = None
+    sched_calendarspec: Union[None, str] = None
+
     snapshot_set_attrs = [
         "name",
         "uuid",
@@ -326,7 +344,19 @@ class Selection:
         "snapshot_uuid",
     ]
 
-    all_attrs = snapshot_set_attrs + snapshot_attrs
+    schedule_attrs = [
+        "sched_name",
+        "sched_source_specs",
+        "sched_default_size_policy",
+        "sched_autoindex",
+        "sched_gc_type",
+        "sched_gc_params",
+        "sched_enabled",
+        "sched_running",
+        "sched_calendarspec",
+    ]
+
+    all_attrs = snapshot_set_attrs + snapshot_attrs + schedule_attrs
 
     def __str__(self):
         """
@@ -357,7 +387,7 @@ class Selection:
         """
         return "Selection(" + str(self) + ")"
 
-    # pylint: disable=too-many-arguments
+    # pylint: disable=too-many-arguments,too-many-locals
     def __init__(
         self,
         name=None,
@@ -371,6 +401,15 @@ class Selection:
         mount_point=None,
         snapshot_name=None,
         snapshot_uuid=None,
+        sched_name: Union[None, str] = None,
+        sched_source_specs: Union[None, str] = None,
+        sched_default_size_policy: Union[None, str] = None,
+        sched_autoindex: Union[None, bool] = None,
+        sched_gc_type: Union[None, str] = None,
+        sched_gc_params: Union[None, str] = None,
+        sched_enabled: Union[None, bool] = None,
+        sched_running: Union[None, bool] = None,
+        sched_calendarspec: Union[None, str] = None,
     ):
         self.name = name
         self.uuid = uuid
@@ -383,6 +422,15 @@ class Selection:
         self.mount_point = mount_point
         self.snapshot_name = snapshot_name
         self.snapshot_uuid = snapshot_uuid
+        self.sched_name = sched_name
+        self.sched_source_specs = sched_source_specs
+        self.sched_default_size_policy = sched_default_size_policy
+        self.sched_autoindex = sched_autoindex
+        self.sched_gc_type = sched_gc_type
+        self.sched_gc_params = sched_gc_params
+        self.sched_enabled = sched_enabled
+        self.sched_running = sched_running
+        self.sched_calendarspec = sched_calendarspec
 
     @classmethod
     def from_cmd_args(cls, cmd_args):
@@ -405,12 +453,14 @@ class Selection:
         uuid = None
         snapshot_name = None
         snapshot_uuid = None
-        if cmd_args.identifier:
+        sched_name = None
+
+        if hasattr(cmd_args, "identifier") and cmd_args.identifier:
             try:
                 uuid = UUID(cmd_args.identifier)
             except (TypeError, ValueError):
                 name = cmd_args.identifier
-        else:
+        elif hasattr(cmd_args, "name") and hasattr(cmd_args, "uuid"):
             if cmd_args.name:
                 name = cmd_args.name
             elif cmd_args.uuid:
@@ -421,11 +471,15 @@ class Selection:
         if hasattr(cmd_args, "snapshot_uuid"):
             snapshot_uuid = cmd_args.snapshot_uuid
 
+        if hasattr(cmd_args, "schedule_name"):
+            sched_name = cmd_args.schedule_name
+
         select = Selection(
             name=name,
             uuid=uuid,
             snapshot_name=snapshot_name,
             snapshot_uuid=snapshot_uuid,
+            sched_name=sched_name,
         )
 
         _log_debug("Initialised %s from arguments", repr(select))
@@ -444,7 +498,7 @@ class Selection:
         """
         return hasattr(self, attr) and getattr(self, attr) is not None
 
-    def check_valid_selection(self, snapshot_set=False, snapshot=False):
+    def check_valid_selection(self, snapshot_set=False, snapshot=False, schedule=False):
         """
         Check a Selection for valid criteria.
 
@@ -467,6 +521,8 @@ class Selection:
             valid_attrs += self.snapshot_set_attrs
         if snapshot:
             valid_attrs += self.snapshot_attrs
+        if schedule:
+            valid_attrs += self.schedule_attrs
 
         for attr in self.all_attrs:
             if self.__attr_has_value(attr) and attr not in valid_attrs:
@@ -535,7 +591,7 @@ def parse_size_with_units(value):
     """
     match = _SIZE_RE.search(value)
     if match is None:
-        raise SnapmSizePolicyError(f"Malformed size expression: {value}")
+        raise SnapmSizePolicyError(f"Malformed size expression: '{value}'")
     (size, unit) = (match.group("size"), match.group("units").upper())
     size_bytes = int(size) * _SIZE_SUFFIXES[unit[0]]
     return size_bytes
@@ -789,9 +845,9 @@ class SnapshotSet:
             )
         return snapset_str
 
-    def as_dict(self, members=False):
+    def to_dict(self, members=False):
         """
-        Return a representation of this snapshot as a dictionary.
+        Return a representation of this ``SnapshotSet`` as a dictionary.
         """
         pmap = {}
         pmap[SNAPSET_NAME] = self.name
@@ -820,15 +876,18 @@ class SnapshotSet:
         if members:
             pmap[SNAPSET_SNAPSHOTS] = []
             for snapshot in self.snapshots:
-                pmap[SNAPSET_SNAPSHOTS].append(snapshot.as_dict())
+                pmap[SNAPSET_SNAPSHOTS].append(snapshot.to_dict())
 
         return pmap
+
+    #: Backwards compatibility
+    as_dict = to_dict
 
     def json(self, members=False, pretty=False):
         """
         Return a string representation of this ``SnapshotSet`` in JSON notation.
         """
-        return json.dumps(self.as_dict(members=members), indent=4 if pretty else None)
+        return json.dumps(self.to_dict(members=members), indent=4 if pretty else None)
 
     @property
     def name(self):
@@ -867,11 +926,18 @@ class SnapshotSet:
         return self._timestamp
 
     @property
+    def datetime(self):
+        """
+        The timestamp of this snapshot set as a ``datetime.datetime`` object.
+        """
+        return datetime.fromtimestamp(self.timestamp)
+
+    @property
     def time(self):
         """
         The human readable timestamp of this snapshot set.
         """
-        return str(datetime.fromtimestamp(self.timestamp))
+        return str(self.datetime)
 
     @property
     def snapshots(self):
@@ -1283,9 +1349,9 @@ class Snapshot:
             f"{SNAPSHOT_DEV_PATH}:     {self.devpath}"
         )
 
-    def as_dict(self):
+    def to_dict(self):
         """
-        Return a representation of this snapshot as a dictionary.
+        Return a representation of this ``Snapshot`` as a dictionary.
         """
         pmap = {}
         pmap[SNAPSHOT_NAME] = self.name
@@ -1306,11 +1372,14 @@ class Snapshot:
         pmap[SNAPSHOT_DEV_PATH] = self.devpath
         return pmap
 
+    # Backwards compatibility
+    as_dict = to_dict
+
     def json(self, pretty=False):
         """
         Return a string representation of this ``Snapshot`` in JSON notation.
         """
-        return json.dumps(self.as_dict(), indent=4 if pretty else None)
+        return json.dumps(self.to_dict(), indent=4 if pretty else None)
 
     @property
     def name(self):
@@ -1626,6 +1695,7 @@ __all__ = [
     "set_debug_mask",
     "get_debug_mask",
     "SnapmError",
+    "SnapmSystemError",
     "SnapmCalloutError",
     "SnapmNoSpaceError",
     "SnapmNoProviderError",

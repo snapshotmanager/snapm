@@ -4,6 +4,8 @@ RUN dnf -y install systemd dbus python3 python3-pip python3-virtualenv python3-p
 RUN dnf -y builddep snapm
 RUN dnf clean all
 
+RUN mkdir -p /etc/snapm/schedule.d
+
 COPY snapm-create@.service snapm-create@.timer snapm-gc@.service snapm-gc@.timer /usr/lib/systemd/system/
 
 STOPSIGNAL SIGRTMIN+3

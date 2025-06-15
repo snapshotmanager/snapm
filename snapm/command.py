@@ -15,6 +15,7 @@ Python shell by users who do not require all the features present
 in the snapm object API.
 """
 from argparse import ArgumentParser
+from typing import Union, List
 from os.path import basename
 from json import dumps
 from uuid import UUID
@@ -59,7 +60,7 @@ from snapm import (
     Selection,
     __version__,
 )
-from snapm.manager import Manager
+from snapm.manager import Manager, CalendarSpec, GcPolicy
 from snapm.report import (
     REP_NUM,
     REP_SHA,
@@ -97,10 +98,11 @@ class ReportObj:
     Common report object for snapm reports
     """
 
-    def __init__(self, snapset=None, snapshot=None, plugin=None):
+    def __init__(self, snapset=None, snapshot=None, plugin=None, schedule=None):
         self.snapset = snapset
         self.snapshot = snapshot
         self.plugin = plugin
+        self.schedule = schedule
 
 
 #: Snapshot set report object type
@@ -109,12 +111,15 @@ PR_SNAPSET = 1
 PR_SNAPSHOT = 2
 #: Plugin report object type
 PR_PLUGIN = 4
+#: Schedule report object type
+PR_SCHEDULE = 8
 
 #: Report object types table for ``snapm.command`` reports
 _report_obj_types = [
     ReportObjType(PR_SNAPSET, "Snapshot set", "snapset_", lambda o: o.snapset),
     ReportObjType(PR_SNAPSHOT, "Snapshot", "snapshot_", lambda o: o.snapshot),
     ReportObjType(PR_PLUGIN, "Plugin", "plugin_", lambda o: o.plugin),
+    ReportObjType(PR_SCHEDULE, "Schedule", "schedule_", lambda o: o.schedule),
 ]
 
 
@@ -418,6 +423,92 @@ _plugin_fields = [
 
 _DEFAULT_PLUGIN_FIELDS = "name,version,type"
 
+_schedule_fields = [
+    FieldType(
+        PR_SCHEDULE,
+        "name",
+        "ScheduleName",
+        "Name of the schedule",
+        12,
+        REP_STR,
+        lambda f, d: f.report_str(d.name),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "sources",
+        "ScheduleSources",
+        "Schedule sources",
+        15,
+        REP_STR_LIST,
+        lambda f, d: f.report_str_list(d.source_specs),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "sizepolicy",
+        "SizePolicy",
+        "Schedule default size policy",
+        10,
+        REP_STR,
+        lambda f, d: f.report_str(d.default_size_policy),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "autoindex",
+        "Autoindex",
+        "Schedule autoindex",
+        9,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.autoindex)),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "gcpolicytype",
+        "GcPolicyType",
+        "Schedule garbage collection policy type",
+        12,
+        REP_STR,
+        lambda f, d: f.report_str(d.gc_policy.type.value),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "gcpolicyparams",
+        "GcPolicyParams",
+        "Schedule garbage collection policy parameters",
+        14,
+        REP_STR,
+        lambda f, d: f.report_str(str(d.gc_policy.params)),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "oncalendar",
+        "OnCalendar",
+        "Schedule OnCalendar trigger expression",
+        10,
+        REP_STR,
+        lambda f, d: f.report_str(d.calendarspec),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "enabled",
+        "Enabled",
+        "Schedule enabled",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.enabled)),
+    ),
+    FieldType(
+        PR_SCHEDULE,
+        "running",
+        "Running",
+        "Schedule running",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.running)),
+    ),
+]
+
+_DEFAULT_SCHEDULE_FIELDS = "name,sources,sizepolicy,autoindex,oncalendar,enabled"
+
 
 def _str_indent(string, indent):
     """
@@ -584,7 +675,7 @@ def show_snapshots(manager, selection=None, json=False):
 
     for snapshot in snapshots:
         if json:
-            snap_list.append(snapshot.as_dict())
+            snap_list.append(snapshot.to_dict())
             continue
         wspace = "" if first else "\n"
         print(f"{wspace}{snapshot}")
@@ -606,7 +697,7 @@ def show_snapsets(manager, selection=None, members=False, json=False):
 
     for snapset in snapsets:
         if json:
-            set_list.append(snapset.as_dict(members=members))
+            set_list.append(snapset.to_dict(members=members))
             continue
         wspace = "" if first else "\n"
         print(f"{wspace}{snapset}")
@@ -623,6 +714,31 @@ def show_snapsets(manager, selection=None, members=False, json=False):
         print(dumps(set_list, indent=4))
 
 
+def show_schedules(manager, selection=None, _members=False, json=False):
+    """
+    Show schedules matching selection criteria.
+    """
+    schedules = manager.scheduler.find_schedules(selection)
+    first = True
+
+    if json:
+        sched_list = []
+
+    for schedule in schedules:
+        if json:
+            sched_list.append(schedule.to_dict())
+            continue
+
+        wspace = "" if first else "\n"
+        print(f"{wspace}{schedule}")
+        first = False
+        # if members
+        # ...
+
+    if json:
+        print(dumps(sched_list, indent=4))
+
+
 def _expand_fields(default_fields, output_fields):
     """
     Expand output fields list from command line arguments.
@@ -633,6 +749,117 @@ def _expand_fields(default_fields, output_fields):
     elif output_fields.startswith("+"):
         output_fields = default_fields + "," + output_fields[1:]
     return output_fields
+
+
+def create_schedule(
+    manager: Manager,
+    name: str,
+    sources: List[str],
+    default_size_policy: str,
+    autoindex: bool,
+    calendarspec: Union[str, CalendarSpec],
+    policy: GcPolicy,
+):
+    """
+    Create a new schedule from a list of mount point and block device
+    source paths.
+
+    :param manager: The manager context to use.
+    :param name: The name of the new schedule.
+    :param sources: A list of mount point or block devices to snapshot.
+    :param default_size_policy: The default size policy for this snapshot set.
+    :param autoinxed: Enable autoindex names for this schedule.
+    :param boot: Create a boot entry for this snapshot set.
+    :param revert: Create a revert boot entry for this snapshot set.
+    :param autoindex: Treat `name` as the basename of a recurring snapshot set
+                      and generate and append an appropriate index value.
+    """
+    return manager.scheduler.create(
+        name, sources, default_size_policy, autoindex, calendarspec, policy
+    )
+
+
+def delete_schedule(manager: Manager, name: str):
+    """
+    Delete schedule by name. This disables the schedule and removes all on-disk
+    configuration data.
+
+    :param manager: The manager context to use.
+    :param name: The name of the schedule to delete.
+    """
+    manager.scheduler.delete(name)
+
+
+def enable_schedule(manager: Manager, name: str):
+    """
+    Enable an existing schedule. This enables the systemd timer units
+    associated with this schedule.
+
+    :param manager: The manager context to use.
+    :param name: The name of the schedule to enable.
+    """
+    return manager.scheduler.enable(name)
+
+
+def disable_schedule(manager: Manager, name: str):
+    """
+    Enable an existing schedule. This disables the systemd timer units
+    associated with this schedule.
+
+    :param manager: The manager context to use.
+    :param name: The name of the schedule to disable.
+    """
+    return manager.scheduler.disable(name)
+
+
+def gc_schedule(manager: Manager, name: str):
+    """
+    Run garbage collection for an existing schedule. This executes the
+    configured garbage collection policy for the schedule named ``name``.
+
+    :param manager: The manager context to use.
+    :param name: The name of the schedule to run garbage collection for.
+    """
+    manager.scheduler.gc(name)
+
+
+def print_schedules(
+    manager,
+    selection: Union[None, Selection] = None,
+    output_fields: Union[None, str] = None,
+    opts: Union[None, ReportOpts] = None,
+    sort_keys: [None, str] = None,
+):
+    """
+    Print schedules matching selection criteria.
+
+    Format a set of ``snapm.manager.Schedule`` objects matching the given
+    criteria, and output them as a report to the file given in
+    ``opts.report_file``.
+
+    :param selection: A ``Selection`` object giving selection criteria for
+                      the operation.
+    :type selection: ``Selection``
+    :param output_fields: A comma-separateed list of output fields.
+    :type output_fields: ``str``
+    :param opts: Output formatting and control options.
+    :type opts: ``ReportOpts``
+    :param sort_keys: A comma-separated list of sort keys.
+    :type sort_keys: ``str``
+    """
+    output_fields = _expand_fields(_DEFAULT_SCHEDULE_FIELDS, output_fields)
+
+    schedules = manager.scheduler.find_schedules(selection=selection)
+    selected = [ReportObj(schedule=sched) for sched in schedules]
+
+    return _do_print_type(
+        _schedule_fields,
+        selected,
+        output_fields=output_fields,
+        opts=opts,
+        sort_keys=sort_keys,
+        title="Schedules",
+    )
 
 
 def print_plugins(
@@ -785,26 +1012,60 @@ def _generic_list_cmd(cmd_args, select, opts, manager, print_fn):
 
 def _create_cmd(cmd_args):
     """
-    Create snapshot set command handler.
-    Attempt to create the specified snapshot set.
+    create snapshot set command handler.
+    attempt to create the specified snapshot set.
 
-    :param cmd_args: Command line arguments for the command
+    :param cmd_args: command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
     manager = Manager()
+
+    if hasattr(cmd_args, "config") and cmd_args.config:
+        schedules = manager.scheduler.find_schedules(
+            Selection(sched_name=cmd_args.config)
+        )
+        if not schedules:
+            _log_error(
+                "No schedule configuration matching '%s' found.",
+                cmd_args.config
+            )
+            return 1
+        if len(schedules) > 1:
+            _log_error(
+                "Ambiguous schedule configuration '%s': %s",
+                cmd_args.config,
+                ", ".join(sched.name for sched in schedules)
+            )
+            return 1
+        schedule = schedules[0]
+
+        snapset_name = schedule.name
+        sources = schedule.source_specs
+        size_policy = schedule.default_size_policy
+        autoindex = schedule.autoindex
+        boot = schedule.boot
+        revert = schedule.revert
+    else:
+        snapset_name = cmd_args.snapset_name
+        sources = cmd_args.sources
+        size_policy = cmd_args.size_policy
+        boot = cmd_args.bootable
+        revert = cmd_args.revert
+        autoindex = cmd_args.autoindex
+
     snapset = create_snapset(
         manager,
-        cmd_args.snapset_name,
-        cmd_args.sources,
-        size_policy=cmd_args.size_policy,
-        boot=cmd_args.bootable,
-        revert=cmd_args.revert,
-        autoindex=cmd_args.autoindex,
+        snapset_name,
+        sources,
+        size_policy=size_policy,
+        boot=boot,
+        revert=revert,
+        autoindex=autoindex,
     )
     if snapset is None:
         return 1
     _log_info(
-        "Created snapset %s with %d snapshots", snapset.name, snapset.nr_snapshots
+        "created snapset %s with %d snapshots", snapset.name, snapset.nr_snapshots
     )
     print(snapset)
     return 0
@@ -1150,6 +1411,109 @@ def _plugin_list_cmd(cmd_args):
     return _generic_list_cmd(cmd_args, None, opts, manager, print_plugins)
 
 
+def _schedule_create_cmd(cmd_args):
+    """
+    Create schedule.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    # Note: validate policy arguments!
+    policy = GcPolicy.from_cmd_args(cmd_args)
+    schedule = create_schedule(
+        manager,
+        cmd_args.schedule_name,
+        cmd_args.sources,
+        cmd_args.size_policy,
+        cmd_args.autoindex,
+        cmd_args.calendarspec,
+        policy,
+    )
+    if not schedule:
+        return 1
+    _log_info(
+        "Created schedule %s",
+        schedule.name,
+    )
+    print(schedule)
+    return 0
+
+
+def _schedule_delete_cmd(cmd_args):
+    """
+    Delete schedule.
+
+    :param cmd_args: Command line arguments for the command.
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    manager.scheduler.delete(cmd_args.schedule_name)
+    return 0
+
+
+def _schedule_enable_cmd(cmd_args):
+    """
+    Enable schedule.
+
+    :param cmd_args: Command line arguments for the command.
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    schedule = enable_schedule(manager, cmd_args.schedule_name)
+    print(schedule)
+    return 0
+
+
+def _schedule_disable_cmd(cmd_args):
+    """
+    Disable schedule.
+
+    :param cmd_args: Command line arguments for the command.
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    schedule = disable_schedule(manager, cmd_args.schedule_name)
+    print(schedule)
+    return 0
+
+
+def _schedule_gc_cmd(cmd_args):
+    """
+    Garbage collect schedule.
+
+    :param cmd_args: Command line arguments for the command.
+    :returns: integer status code returned from ``main()``.
+    """
+    manager = Manager()
+    gc_schedule(manager, cmd_args.config)
+    return 0
+
+
+def _schedule_list_cmd(cmd_args):
+    """
+    List configured schedules.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    opts = _report_opts_from_args(cmd_args)
+    return _generic_list_cmd(cmd_args, None, opts, manager, print_schedules)
+
+
+def _schedule_show_cmd(cmd_args):
+    """
+    List configured schedules.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    selection = Selection.from_cmd_args(cmd_args)
+    show_schedules(manager, selection, json=cmd_args.json)
+
+
 def _report_opts_from_args(cmd_args):
     opts = ReportOpts()
 
@@ -1224,6 +1588,44 @@ def set_debug(debug_arg):
             raise ValueError(f"Unknown debug option: {name}")
         mask |= mask_map[name]
     set_debug_mask(mask)
+
+
+def _add_create_args(parser):
+    """
+    Add create command arguments.
+    """
+    parser.add_argument(
+        "sources",
+        metavar="SOURCE",
+        type=str,
+        nargs="+",
+        help="A device or mount point path to include in this snapshot set",
+    )
+    parser.add_argument(
+        "-s",
+        "--size-policy",
+        type=str,
+        action="store",
+        help="A default size policy for fixed size snapshots",
+    )
+    parser.add_argument(
+        "-b",
+        "--bootable",
+        action="store_true",
+        help="Create a boot entry for this snapshot set",
+    )
+    parser.add_argument(
+        "-r",
+        "--revert",
+        action="store_true",
+        help="Create a revert boot entry for this snapshot set",
+    )
+    parser.add_argument(
+        "-a",
+        "--autoindex",
+        action="store_true",
+        help="Automatically create a unique index for recurring snapshot sets",
+    )
 
 
 def _add_identifier_args(parser, snapset=False, snapshot=False):
@@ -1335,7 +1737,116 @@ def _add_json_arg(parser):
     )
 
 
+def _add_policy_args(parser):
+    parser.add_argument(
+        "-p",
+        "--policy-type",
+        type=str,
+        help="Garbage collection policy type",
+    )
+
+    # ArgumentParser does not properly support nesting argument groupswithin a
+    # MutuallyExclusiveGroup: https://github.com/python/cpython/issues/66246
+    # Add the GcPolicyType arguments as groups within the schedule create
+    # subparser and validate the arguments after parsing.
+
+    gc_params_count_group = parser.add_argument_group(title="Count")
+    gc_params_count_group.add_argument(
+        "--keep-count",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT snapshot sets",
+    )
+
+    gc_params_age_group = parser.add_argument_group(title="Age")
+    gc_params_age_group.add_argument(
+        "--keep-years",
+        type=int,
+        default=0,
+        metavar="YEARS",
+        help="Keep YEARS snapshot sets",
+    )
+    gc_params_age_group.add_argument(
+        "--keep-months",
+        type=int,
+        default=0,
+        metavar="MONTHS",
+        help="Keep MONTHS snapshot sets",
+    )
+    gc_params_age_group.add_argument(
+        "--keep-weeks",
+        type=int,
+        default=0,
+        metavar="WEEKS",
+        help="Keep WEEKS snapshot sets",
+    )
+    gc_params_age_group.add_argument(
+        "--keep-days",
+        type=int,
+        default=0,
+        metavar="DAYS",
+        help="Keep DAYS snapshot sets",
+    )
+
+    gc_params_timeline_group = parser.add_argument_group(title="Timeline")
+    gc_params_timeline_group.add_argument(
+        "--keep-yearly",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT yearly snapshot sets",
+    )
+    gc_params_timeline_group.add_argument(
+        "--keep-quarterly",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT quarterly snapshot sets",
+    )
+    gc_params_timeline_group.add_argument(
+        "--keep-monthly",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT monthly snapshot sets",
+    )
+    gc_params_timeline_group.add_argument(
+        "--keep-weekly",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT weekly snapshot sets",
+    )
+    gc_params_timeline_group.add_argument(
+        "--keep-daily",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT daily snapshot sets",
+    )
+    gc_params_timeline_group.add_argument(
+        "--keep-hourly",
+        type=int,
+        default=0,
+        metavar="COUNT",
+        help="Keep COUNT hourly snapshot sets",
+    )
+
+
+def _add_schedule_config_arg(parser):
+    parser.add_argument(
+        "-c",
+        "--config",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of a configured schedule to create snapshot sets for"
+    )
+
+
 CREATE_CMD = "create"
+CREATE_SCHEDULED_CMD = "create-scheduled"
 DELETE_CMD = "delete"
 RENAME_CMD = "rename"
 RESIZE_CMD = "resize"
@@ -1345,15 +1856,19 @@ PRUNE_CMD = "prune"
 ACTIVATE_CMD = "activate"
 DEACTIVATE_CMD = "deactivate"
 AUTOACTIVATE_CMD = "autoactivate"
+ENABLE_CMD = "enable"
+DISABLE_CMD = "disable"
 SHOW_CMD = "show"
 LIST_CMD = "list"
+GC_CMD = "gc"
 
 SNAPSET_TYPE = "snapset"
 SNAPSHOT_TYPE = "snapshot"
 PLUGIN_TYPE = "plugin"
+SCHEDULE_TYPE = "schedule"
 
 
-# pylint: disable=too-many-statements
+# pylint: disable=too-many-statements,too-many-locals
 def _add_snapset_subparser(type_subparser):
     """
     Add subparser for 'snapset' commands.
@@ -1378,38 +1893,14 @@ def _add_snapset_subparser(type_subparser):
         action="store",
         help="The name of the snapshot set to create",
     )
-    snapset_create_parser.add_argument(
-        "sources",
-        metavar="SOURCE",
-        type=str,
-        nargs="+",
-        help="A device or mount point path to include in this snapshot set",
+    _add_create_args(snapset_create_parser)
+
+    # snapset create-scheduled subcommand
+    snapset_create_scheduled_parser = snapset_subparser.add_parser(
+        CREATE_SCHEDULED_CMD, help="Create scheduled snapshot sets",
     )
-    snapset_create_parser.add_argument(
-        "-s",
-        "--size-policy",
-        type=str,
-        action="store",
-        help="A default size policy for fixed size snapshots",
-    )
-    snapset_create_parser.add_argument(
-        "-b",
-        "--bootable",
-        action="store_true",
-        help="Create a boot entry for this snapshot set",
-    )
-    snapset_create_parser.add_argument(
-        "-r",
-        "--revert",
-        action="store_true",
-        help="Create a revert boot entry for this snapshot set",
-    )
-    snapset_create_parser.add_argument(
-        "-a",
-        "--autoindex",
-        action="store_true",
-        help="Automatically create a unique index for recurring snapshot sets",
-    )
+    _add_schedule_config_arg(snapset_create_scheduled_parser)
+    snapset_create_scheduled_parser.set_defaults(func=_create_cmd)
 
     # snapset delete subcommand
     snapset_delete_parser = snapset_subparser.add_parser(
@@ -1623,6 +2114,119 @@ def _add_plugin_subparser(type_subparser):
     _add_report_args(plugin_list_parser)
 
 
+def _add_schedule_subparser(type_subparser):
+    """
+    Add subparser for 'schedule' commands.
+
+    :param type_subparser: Command type subparser
+    """
+    # Subparser for schedule commands
+    schedule_parser = type_subparser.add_parser(
+        SCHEDULE_TYPE,
+        help="Schedule commands",
+    )
+    schedule_subparser = schedule_parser.add_subparsers(dest="command")
+
+    # schedule create subcommand
+    schedule_create_parser = schedule_subparser.add_parser(
+        CREATE_CMD,
+        help="Create schedule",
+    )
+
+    schedule_create_parser.add_argument(
+        "schedule_name",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of the schedule to create",
+    )
+    schedule_create_parser.add_argument(
+        "-C",
+        "--calendarspec",
+        type=str,
+        metavar="CALENDARSPEC",
+        help="Calendar trigger expression",
+    )
+    _add_create_args(schedule_create_parser)
+    _add_policy_args(schedule_create_parser)
+    schedule_create_parser.set_defaults(func=_schedule_create_cmd)
+
+    # schedule delete subcommand
+    schedule_delete_parser = schedule_subparser.add_parser(
+        DELETE_CMD,
+        help="Delete schedule by name",
+    )
+
+    schedule_delete_parser.add_argument(
+        "schedule_name",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of the schedule to delete",
+    )
+    schedule_delete_parser.set_defaults(func=_schedule_delete_cmd)
+
+    # schedule enable subcommand
+    schedule_enable_parser = schedule_subparser.add_parser(
+        ENABLE_CMD,
+        help="Enable schedule by name",
+    )
+
+    schedule_enable_parser.add_argument(
+        "schedule_name",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of the schedule to enable",
+    )
+    schedule_enable_parser.set_defaults(func=_schedule_enable_cmd)
+
+    # schedule disable subcommand
+    schedule_disable_parser = schedule_subparser.add_parser(
+        DISABLE_CMD,
+        help="Disable schedule by name",
+    )
+
+    schedule_disable_parser.add_argument(
+        "schedule_name",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of the schedule to disable",
+    )
+    schedule_disable_parser.set_defaults(func=_schedule_disable_cmd)
+
+    # schedule list subcommand
+    schedule_list_parser = schedule_subparser.add_parser(
+        LIST_CMD,
+        help="List schedules",
+    )
+    _add_report_args(schedule_list_parser)
+    schedule_list_parser.set_defaults(func=_schedule_list_cmd)
+
+    # schedule show subcommand
+    schedule_show_parser = schedule_subparser.add_parser(
+        SHOW_CMD,
+        help="Show schedules",
+    )
+    schedule_show_parser.add_argument(
+        "schedule_name",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of the schedule to show",
+    )
+    _add_json_arg(schedule_show_parser)
+    schedule_show_parser.set_defaults(func=_schedule_show_cmd)
+
+    schedule_gc_parser = schedule_subparser.add_parser(
+        GC_CMD,
+        help="Run garbage collection for schedule",
+    )
+    _add_schedule_config_arg(schedule_gc_parser)
+    schedule_gc_parser.set_defaults(func=_schedule_gc_cmd)
+
+
 def main(args):
     """
     Main entry point for snapm.
@@ -1653,6 +2257,8 @@ def main(args):
     _add_snapshot_subparser(type_subparser)
 
     _add_plugin_subparser(type_subparser)
+
+    _add_schedule_subparser(type_subparser)
 
     cmd_args = parser.parse_args(args[1:])
 
