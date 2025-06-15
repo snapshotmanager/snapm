@@ -1445,6 +1445,18 @@ def _schedule_list_cmd(cmd_args):
     return _generic_list_cmd(cmd_args, None, opts, manager, print_schedules)
 
 
+def _schedule_show_cmd(cmd_args):
+    """
+    List configured schedules.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    selection = Selection.from_cmd_args(cmd_args)
+    show_schedules(manager, selection, json=cmd_args.json)
+
+
 def _report_opts_from_args(cmd_args):
     opts = ReportOpts()
 
@@ -2114,6 +2126,21 @@ def _add_schedule_subparser(type_subparser):
     )
     _add_report_args(schedule_list_parser)
     schedule_list_parser.set_defaults(func=_schedule_list_cmd)
+
+    # schedule show subcommand
+    schedule_show_parser = schedule_subparser.add_parser(
+        SHOW_CMD,
+        help="Show schedules",
+    )
+    schedule_show_parser.add_argument(
+        "schedule_name",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of the schedule to show",
+    )
+    _add_json_arg(schedule_show_parser)
+    schedule_show_parser.set_defaults(func=_schedule_show_cmd)
 
 
 def main(args):
