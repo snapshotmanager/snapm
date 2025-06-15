@@ -1382,6 +1382,32 @@ def _schedule_delete_cmd(cmd_args):
     return 0
 
 
+def _schedule_enable_cmd(cmd_args):
+    """
+    Enable schedule.
+
+    :param cmd_args: Command line arguments for the command.
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    schedule = enable_schedule(manager, cmd_args.schedule_name)
+    print(schedule)
+    return 0
+
+
+def _schedule_disable_cmd(cmd_args):
+    """
+    Disable schedule.
+
+    :param cmd_args: Command line arguments for the command.
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    schedule = disable_schedule(manager, cmd_args.schedule_name)
+    print(schedule)
+    return 0
+
+
 def _schedule_list_cmd(cmd_args):
     """
     List configured schedules.
@@ -1724,6 +1750,8 @@ PRUNE_CMD = "prune"
 ACTIVATE_CMD = "activate"
 DEACTIVATE_CMD = "deactivate"
 AUTOACTIVATE_CMD = "autoactivate"
+ENABLE_CMD = "enable"
+DISABLE_CMD = "disable"
 SHOW_CMD = "show"
 LIST_CMD = "list"
 
@@ -2012,7 +2040,7 @@ def _add_schedule_subparser(type_subparser):
     # schedule delete subcommand
     schedule_delete_parser = schedule_subparser.add_parser(
         DELETE_CMD,
-        help="Delete schedule",
+        help="Delete schedule by name",
     )
 
     schedule_delete_parser.add_argument(
@@ -2023,6 +2051,36 @@ def _add_schedule_subparser(type_subparser):
         help="The name of the schedule to delete",
     )
     schedule_delete_parser.set_defaults(func=_schedule_delete_cmd)
+
+    # schedule enable subcommand
+    schedule_enable_parser = schedule_subparser.add_parser(
+        ENABLE_CMD,
+        help="Enable schedule by name",
+    )
+
+    schedule_enable_parser.add_argument(
+        "schedule_name",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of the schedule to enable",
+    )
+    schedule_enable_parser.set_defaults(func=_schedule_enable_cmd)
+
+    # schedule disable subcommand
+    schedule_disable_parser = schedule_subparser.add_parser(
+        DISABLE_CMD,
+        help="Disable schedule by name",
+    )
+
+    schedule_disable_parser.add_argument(
+        "schedule_name",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of the schedule to disable",
+    )
+    schedule_disable_parser.set_defaults(func=_schedule_disable_cmd)
 
     # schedule list subcommand
     schedule_list_parser = schedule_subparser.add_parser(
