@@ -1348,6 +1348,18 @@ def _schedule_create_cmd(cmd_args):
     return 0
 
 
+def _schedule_delete_cmd(cmd_args):
+    """
+    Delete schedule.
+
+    :param cmd_args: Command line arguments for the command.
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    manager.scheduler.delete(cmd_args.schedule_name)
+    return 0
+
+
 def _schedule_list_cmd(cmd_args):
     """
     List configured schedules.
@@ -1974,6 +1986,21 @@ def _add_schedule_subparser(type_subparser):
     _add_create_args(schedule_create_parser)
     _add_policy_args(schedule_create_parser)
     schedule_create_parser.set_defaults(func=_schedule_create_cmd)
+
+    # schedule delete subcommand
+    schedule_delete_parser = schedule_subparser.add_parser(
+        DELETE_CMD,
+        help="Delete schedule",
+    )
+
+    schedule_delete_parser.add_argument(
+        "schedule_name",
+        metavar="SCHEDULE_NAME",
+        type=str,
+        action="store",
+        help="The name of the schedule to delete",
+    )
+    schedule_delete_parser.set_defaults(func=_schedule_delete_cmd)
 
     # schedule list subcommand
     schedule_list_parser = schedule_subparser.add_parser(
