@@ -8,9 +8,13 @@
 """
 Boot integration for snapshot manager
 """
+import collections
 from os import uname
 from os.path import exists as path_exists
 import logging
+from typing import Optional
+import subprocess
+import re
 
 import boom
 import boom.cache
@@ -26,6 +30,7 @@ from boom.osprofile import match_os_profile_by_version
 from snapm import (
     SnapmNotFoundError,
     SnapmCalloutError,
+    SnapmSystemError,
     ETC_FSTAB,
 )
 
@@ -52,6 +57,123 @@ REVERT_ARG = "snapm.revert"
 #: /dev path prefix
 _DEV_PREFIX = "/dev/"
 
+
+class Fstab:
+    """
+    A class to read and query data from an fstab file.
+
+    This class reads an fstab-like file and provides methods to iterate
+    over its entries and look up specific entries based on their properties.
+
+    Attributes:
+        path (str): The path to the fstab file being read.
+        entries (list): A list of named tuples, where each tuple represents an entry.
+    """
+
+    # Define a named tuple to give structure to each fstab entry.
+    # This makes the code more readable than using a regular tuple.
+    FstabEntry = collections.namedtuple(
+        'FstabEntry',
+        ['what', 'where', 'fstype', 'options', 'freq', 'passno']
+    )
+
+    def __init__(self, path='/etc/fstab'):
+        """
+        Initializes the Fstab object by reading and parsing the file.
+
+        Args:
+            path (str, optional): The path to the fstab file.
+                                  Defaults to '/etc/fstab'.
+
+        Raises:
+            FileNotFoundError: If the specified path does not exist.
+            IOError: If there is an error reading the file.
+        """
+        self.path = path
+        self.entries = []
+        self._read_fstab()
+
+    def _read_fstab(self):
+        """
+        Private method to read and parse the fstab file.
+        It populates the self.entries list.
+        """
+        try:
+            with open(self.path, 'r', encoding="utf8") as f:
+                for line in f:
+                    # 1. Strip leading/trailing whitespace.
+                    line = line.strip()
+
+                    # 2. Ignore empty lines and comments.
+                    if not line or line.startswith('#'):
+                        continue
+
+                    # 3. Split the line into parts.
+                    parts = line.split()
+
+                    # 4. An fstab entry must have 6 fields.
+                    if len(parts) != 6:
+                        # You might want to log a warning here in a real application.
+                        continue
+
+                    # 5. Convert freq and passno to integers for proper typing.
+                    try:
+                        parts[4] = int(parts[4]) # freq
+                        parts[5] = int(parts[5]) # passno
+                    except KeyError:
+                        continue
+
+                    # 6. Create a named tuple and append it to our list.
+                    entry = self.FstabEntry(*parts)
+                    self.entries.append(entry)
+
+        except FileNotFoundError:
+            _log_error(f"Error: The file '{self.path}' was not found.")
+            raise SnapmNotFoundError(f"Fstab file not found: {self.path}")
+        except IOError as e:
+            _log_error(f"Error: Could not read the file '{self.path}': {e}")
+            raise SnapmSystemError(f"Error reading fstab file: {self.path}") from e
+
+    def __iter__(self):
+        """
+        Allows iteration over the fstab entries.
+
+        Yields:
+            A 6-tuple for each entry in the fstab file:
+            (what, where, fstype, options, freq, passno)
+        """
+        for entry in self.entries:
+            yield entry
+
+    def lookup(self, key, value):
+        """
+        Finds and generates all entries matching a specific key-value pair.
+
+        Args:
+            key (str): The field to search by. Must be one of 'what', 'where',
+                       'fstype', 'options', 'freq', or 'passno'.
+            value: The value to match for the given key.
+
+        Yields:
+            A 6-tuple for each matching fstab entry.
+
+        Raises:
+            ValueError: If the provided key is not a valid fstab field name.
+        """
+        if key not in self.FstabEntry._fields:
+            raise KeyError(
+                f"Invalid lookup key: '{key}'. "
+                f"Valid keys are: {self.FstabEntry._fields}"
+            )
+
+        for entry in self.entries:
+            # getattr() allows us to get an attribute by its string name.
+            if getattr(entry, key) == value:
+                yield entry
+
+    def __repr__(self):
+        """Provides a developer-friendly representation of the object."""
+        return f"Fstab(path='{self.path}', entries={len(self.entries)})"
 
 def _get_uts_release():
     """
@@ -88,6 +210,76 @@ def _get_machine_id():
     return machine_id
 
 
+def get_device_path(identifier: str, by_type: str) -> Optional[str]:
+    """
+    Translates a filesystem UUID or label to its corresponding device path
+    using the blkid command.
+
+    Args:
+        identifier: The UUID or label of the filesystem.
+        by_type: Specifies the type of identifier. Must be "uuid" or "label".
+
+    Returns:
+        The device path (e.g., '/dev/sda1') if found, otherwise None.
+
+    Raises:
+        ValueError: If 'identifier' is empty or 'by_type' is not 'uuid' or 'label'.
+        FileNotFoundError: If the 'blkid' command is not found on the system.
+        subprocess.CalledProcessError: If the 'blkid' command exits with a non-zero status
+                                       due to reasons other than the identifier not being found
+                                       (e.g., permission issues).
+        Exception: For any other unexpected errors during command execution or parsing.
+    """
+    if not identifier:
+        raise ValueError("Identifier cannot be an empty string.")
+    if by_type not in ["uuid", "label"]:
+        raise ValueError("Invalid 'by_type'. Must be 'uuid' or 'label'.")
+
+    try:
+        command = ["sudo", "blkid"]
+
+        if by_type == "uuid":
+            command.extend(["--uuid", identifier])
+        else:  # by_type == "label"
+            command.extend(["-L", identifier])
+
+        # Execute the command
+        result = subprocess.run(command, capture_output=True, text=True, check=True)
+
+        # The output of 'blkid --uuid <UUID>' or 'blkid -L <LABEL>' is simply the device path
+        # if found. If not found, it returns a non-zero exit code, which
+        # 'check=True' converts into a CalledProcessError.
+        device_path = result.stdout.strip()
+
+        if device_path:
+            return device_path
+        else:
+            # This case should ideally not be reached if check=True is working as expected
+            # for "not found" scenarios, but it's a safeguard.
+            return None
+
+    except FileNotFoundError:
+        _log_error(f"Error: 'blkid' command not found. Please ensure it is installed and in your PATH.")
+        raise SnapmNotFoundError("blkid command not found.")
+    except subprocess.CalledProcessError as e:
+        # blkid returns 1 if the specified UUID/label is not found.
+        # Other non-zero codes indicate different errors (e.g., permissions).
+        if e.returncode == 1:
+            # This is the expected behavior when the identifier is not found.
+            _log_error(f"Identifier '{identifier}' ({by_type}) not found by blkid. Stderr: {e.stderr.strip()}")
+            return None
+        else:
+            # Other errors (e.g., permission denied) should still be raised.
+            _log_error(f"Error executing blkid command (return code {e.returncode}): {e}")
+            _log_error(f"Stdout: {e.stdout.strip()}")
+            _log_error(f"Stderr: {e.stderr.strip()}")
+            raise SnapmSystemError(f"Error executing blkid command: {e}")
+    except Exception as e:
+        _log_error(f"An unexpected error occurred: {e}")
+        raise Exception(f"An unexpected error occurred while executing blkid: {e}") from e
+
+
+
 def _find_snapset_root(snapset, origin=False):
     """
     Find the device that backs the root filesystem for snapshot set ``snapset``.
@@ -99,14 +291,15 @@ def _find_snapset_root(snapset, origin=False):
     :param origin: Always return the origin device, even if a snapshot exists
                    for the root mount point.
     """
-    for snapshot in snapset.snapshots:
-        if snapshot.mount_point == "/":
-            if origin:
-                return snapshot.origin
-            return snapshot.devpath
-    # Note: add fstab lookup for non-root snapsets
-    # needs either root=UUID/LABEL support in boom or a lookup to resolve any
-    # UUID/LABEL found in the file.
+    dev_path = None
+    fstab_reader = Fstab()
+    for entry in fstab_reader.lookup('where', '/'):
+        if entry.what.startswith("UUID="):
+            dev_path = get_device_path(entry.what.split("=", maxsplit=1)[1], "uuid")
+        if entry.what.startswith("LABEL="):
+            dev_path = get_device_path(entry.what.split("=", maxsplit=1)[1], "label")
+    if dev_path:
+        return dev_path
     raise SnapmNotFoundError(f"Could not find root device for snapset {snapset.name}")
 
 
