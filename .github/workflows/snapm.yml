@@ -1,5 +1,7 @@
 ---
 name: Snapshot Manager CI
+permissions:
+  contents: read
 on:
   push:
     branches:
@@ -120,4 +122,38 @@ jobs:
       - name: Report coverage
         run: >
           python3-coverage report -m --include "./snapm/*"
-
+  virt_tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        firmware: [bios, uefi]
+        storage: [lvm, lvm-thin]
+        base_os: [fedora41, fedora42, centos-stream9, centos-stream10]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install virt dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-kvm seabios ovmf libvirt-daemon-system libosinfo-bin virtinst wget expect
+          sudo systemctl enable --now libvirtd
+          # fedora: add fedora 42
+          OSINFO_COMMIT="cd15af7d8746eba99267d5fa1ac99ed9532fcbc4"
+          sudo wget -O /usr/share/osinfo/os/fedoraproject.org/fedora-41.xml https://gitlab.com/libosinfo/osinfo-db/-/raw/${OSINFO_COMMIT}/data/os/fedoraproject.org/fedora-41.xml.in
+          sudo wget -O /usr/share/osinfo/os/fedoraproject.org/fedora-42.xml https://gitlab.com/libosinfo/osinfo-db/-/raw/${OSINFO_COMMIT}/data/os/fedoraproject.org/fedora-42.xml.in
+      - name: Run virt-tests for target
+        env:
+          FIRMWARE:    ${{ matrix.firmware }}
+          STORAGE:     ${{ matrix.storage }}
+          BASE_OS:     ${{ matrix.base_os }}
+          REPOSITORY:  ${{ github.repository }}
+          REF_NAME:    ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          sudo python3 -m virt_tests \
+            --"$FIRMWARE" \
+            --storage "$STORAGE" \
+            "$BASE_OS" \
+            "$REPOSITORY" \
+            "$REF_NAME"
