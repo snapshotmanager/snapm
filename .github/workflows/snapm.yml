@@ -142,6 +142,36 @@ jobs:
           OSINFO_COMMIT="cd15af7d8746eba99267d5fa1ac99ed9532fcbc4"
           sudo wget -O /usr/share/osinfo/os/fedoraproject.org/fedora-41.xml https://gitlab.com/libosinfo/osinfo-db/-/raw/${OSINFO_COMMIT}/data/os/fedoraproject.org/fedora-41.xml.in
           sudo wget -O /usr/share/osinfo/os/fedoraproject.org/fedora-42.xml https://gitlab.com/libosinfo/osinfo-db/-/raw/${OSINFO_COMMIT}/data/os/fedoraproject.org/fedora-42.xml.in
+      - name: Copy Seabios bios.bin into /usr/share/qemu
+        run: >
+          sudo cp /usr/share/seabios/bios.bin /usr/share/qemu
+      - name: Enable Ubuntu libvirt firmware="bios" workaround
+        run: |
+          cat > /tmp/20-seabios.json <<EOF
+          {
+              "description": "SeaBIOS",
+              "interface-types": [
+                  "bios"
+              ],
+              "mapping": {
+                  "device": "memory",
+                  "filename": "/usr/share/qemu/bios.bin",
+                  "format": "raw"
+              },
+              "targets": [
+                  {
+                      "architecture": "x86_64",
+                      "machines": [
+                          "pc-i440fx-*",
+                          "pc-q35-*"
+                      ]
+                  }
+              ],
+              "features": [],
+              "tags": []
+          }
+          EOF
+          sudo cp /tmp/20-seabios.json /usr/share/qemu/firmware/20-seabios.json
       - name: Run virt-tests for target
         env:
           FIRMWARE:    ${{ matrix.firmware }}
