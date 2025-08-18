@@ -26,6 +26,21 @@ SSH_KEY_PATH = "/root/.ssh/id_ed25519-snapm-test"
 VM_INSTALL_TIMEOUT = 3600  # 1 hour default
 
 
+def _need_force_bios() -> bool:
+    """
+    Does the platform require forced firmware=bios workaround?
+    """
+    with open("/etc/os-release", "r", encoding="utf8") as osr:
+        for line in osr.read().splitlines():
+            if 'NAME="Ubuntu"' in line:
+                log_print("🔧 Enabling firmware=bios workaround.")
+                return True
+    return False
+
+
+_QEMU_FORCE_BIOS = _need_force_bios()
+
+
 def ensure_ssh_key(key_path: str = SSH_KEY_PATH) -> str:
     """Generate SSH key if it doesn't exist"""
     ssh_dir = os.path.dirname(key_path)
@@ -245,11 +260,15 @@ EOF
         # Create disk image
         disk_path = f"{TEST_IMAGE_DIR}/{self.name}.qcow2"
 
+        boot_firmware = f"uefi={'on' if self.vm_uefi else 'off'}"
+        if _QEMU_FORCE_BIOS and not self.vm_uefi:
+            boot_firmware = "firmware=bios"
+
         virt_install_cmd = [
             "unbuffer",
             "virt-install",
             "--boot",
-            f"uefi={'on' if self.vm_uefi else 'off'}",
+            boot_firmware,
             "--name",
             self.name,
             "--memory",
@@ -278,6 +297,10 @@ EOF
             "-1",  # Wait for installation to complete
             "--noreboot",  # Don't reboot automatically
         ]
+
+        # Selectively override machine type
+        if _QEMU_FORCE_BIOS and not self.vm_uefi:
+            virt_install_cmd += ["--machine", "pc-q35-7.2"]
 
         log_print(f"🏁 Creating VM {self.name} with command:")
         log_print(" ".join(virt_install_cmd))
