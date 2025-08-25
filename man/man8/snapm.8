@@ -12,6 +12,20 @@
 .  fi
 ..
 .\}
+.
+.\\" URL macro fallbacks for man2html compatibility (and groff without man-ext)
+.\" Define UR and UE independently so we don't assume both exist.
+.if !d UR \{\
+.de UR
+\\$2 \(la\\$1\(ra
+..
+.\}
+.if !d UE \{\
+.de UE
+.  br
+..
+.\}
+.
 .de ARG_GLOBAL
 .  RI [global_args] " "\c
 ..
@@ -711,9 +725,8 @@ devices.
 .IP
 The newly created snapset is displayed on the terminal on success:
 .IP
-#
-.B snapm snapset create backup / /home /var /opt /srv
 .EX
+# snapm snapset create backup / /home /var /opt /srv
 SnapsetName:      backup
 Sources:          /, /home, /var, /opt, /srv
 NrSnapshots:      5
@@ -763,9 +776,8 @@ index will be generated and appended to the \fBname\fP to construct a new,
 unique instance name. This can be used to group a series of snapshot sets
 of the same set of sources that are taken on a recurring schedule.
 .IP
-#
-.B snapm snapset create hourly --autoindex /:5%SIZE /var:5%SIZE
 .EX
+# snapm snapset create hourly --autoindex /:5%SIZE /var:5%SIZE
 SnapsetName:      hourly.3
 Sources:          /, /var
 NrSnapshots:      2
@@ -1056,10 +1068,9 @@ Newly created schedules are automatically enabled and will begin
 creating snapshot sets at the first expiry of the configured calendar
 expression.
 .IP
-#
-.B snapm schedule create --policy-type count --keep-count 2 --bootable \
---revert --size-policy 25%SIZE --calendarspec hourly hourly / /var
 .EX
+# snapm schedule create --policy-type count --keep-count 2 --bootable \
+--revert --size-policy 25%SIZE --calendarspec hourly hourly / /var
 Name: hourly
 Sources: /, /var
 DefaultSizePolicy: 25%SIZE
@@ -1131,9 +1142,8 @@ option. The option expects a comma separated list of keys, with optional
 \fB+\fP and \fB-\fP prefixes indicating ascending and descending sort for
 that field respectively.
 .IP
-#
-.B snapm schedule list
 .EX
+# snapm schedule list
 ScheduleName ScheduleSources SizePolicy OnCalendar Enabled NextElapse
 daily        /, /var         10%SIZE    daily      yes     2025-08-25 00:00:00
 .EE
@@ -1243,9 +1253,8 @@ output can also be optionally sorted by one or more field values using the
 To display the available fields for a given report type use the special field
 name \fIhelp\fP:
 .br
-#
-.B snapm snapset list -o help
 .EX
+# snapm snapset list -o help
 Snapshot set Fields
 -------------------
   name         - Snapshot set name [str]
@@ -1405,7 +1414,7 @@ Schedule garbage collection policy parameters.
 Schedule OnCalendar trigger expression.
 .TP
 .B nextelapse
-Time of next elapse
+Time of next elapse.
 .TP
 .B enabled
 Schedule enabled.
@@ -1423,9 +1432,8 @@ The \fBcreate\fP, \fBcreate-scheduled\fP, and \fBshow\fP subcommands also
 support optional JSON notation using the \fB--json\fP argument. This includes
 the \fBsnapset\fP, \fBsnapshot\fP, and \fBschedule\fP \fBshow\fP subcommands:
 .PP
-#
-.B snapm snapset show --json before-upgrade
 .EX
+# snapm snapset show --json before-upgrade
 [
     {
         "SnapsetName": "before-upgrade",
@@ -1461,10 +1469,9 @@ include a \fIBootEntries\fP object giving the corresponding \fBboom\fP
 .SH EXAMPLES
 List the available snapshot sets
 .br
-#
-.B snapm snapset list
 .
 .EX
+# snapm snapset list
 SnapsetName  Time                 NrSnapshots Status   Sources
 backup       2024-12-05 17:53:10            4 Active   /, /opt, /srv, /var
 userdata     2024-12-05 17:53:22            2 Inactive /data, /home
@@ -1472,10 +1479,8 @@ userdata     2024-12-05 17:53:22            2 Inactive /data, /home
 .P
 List the available snapshots
 .br
-#
-.B snapm snapshot list
-.
 .EX
+# snapm snapshot list
 SnapsetName  Name                                          Origin              Source  Status   Size     Free     Autoactivate Provider
 backup       fedora/root-snapset_backup_1733421190_-       /dev/fedora/root    /       Active     8.8GiB   8.8GiB yes          lvm2-cow
 backup       fedora/var-snapset_backup_1733421190_-var     /dev/fedora/var     /var    Active     6.4GiB   6.4GiB yes          lvm2-cow
@@ -1485,10 +1490,9 @@ backup       p1/fs1-snapset_backup_1733421190_-opt         /dev/stratis/p1/fs1 /
 .P
 List the available snapshots, displaying the basename and index for each
 .br
-#
-.B snapm snapset list -o+basename,index
 .
 .EX
+# snapm snapset list -o+basename,index
 SnapsetName  Time                 NrSnapshots Status  Sources  Basename     Index
 backup       2025-03-25 18:12:54            2 Invalid /, /var  backup           -
 hourly.0     2025-03-26 14:00:00            2 Invalid /, /var  hourly           0
@@ -1499,10 +1503,9 @@ hourly.3     2025-03-26 17:00:00            2 Active  /, /var  hourly           
 .P
 Create a new snapshot set from the mount points /, /home, and /var
 .br
-#
-.B snapm snapset create backup / /home /var
 .
 .EX
+# snapm snapset create backup / /home /var
 SnapsetName:      backup
 Sources:          /, /home, /var
 NrSnapshots:      3
@@ -1515,10 +1518,9 @@ Bootable:         no
 .P
 Create a bootable snapshot set from the mount points /, /home, and /var
 .br
-#
-.B snapm snapset create -br before-upgrade / /home /var
 .
 .EX
+# snapm snapset create -br before-upgrade / /home /var
 SnapsetName:      before-upgrade
 Sources:          /, /home, /var
 NrSnapshots:      3
@@ -1535,9 +1537,8 @@ BootEntries:
 Create a bootable snapshot set from the mount points /, /home, and /var,
 with output formatted in JSON notation
 .br
-#
-.B snapm snapset create -br --json before-upgrade / /home /var
 .EX
+# snapm snapset create -br --json before-upgrade / /home /var
 {
     "SnapsetName": "before-upgrade",
     "Sources": [
@@ -1567,29 +1568,28 @@ with output formatted in JSON notation
 .P
 Delete the snapset named 'backup'
 .br
-#
-.B snapm snapset delete backup
-.P
+.EX
+# snapm snapset delete backup
+.EE
 Activate all snapshot sets with verbose output
 .br
-#
-.B snapm -v snapset activate
 .
 .EX
+# snapm -v snapset activate
 INFO - Activated 2 snapshot sets
 .EE
 .P
 Rename the snapset 'backup' to 'oldbackup'
 .br
-#
-.B snapm snapset rename backup oldbackup
+.EX
+# snapm snapset rename backup oldbackup
+.EE
 .P
 Display the snapset named 'before-upgrade'
 .br
-#
-.B snapm snapset show before-upgrade
 .
 .EX
+# snapm snapset show before-upgrade
 SnapsetName:      before-upgrade
 Sources:          /, /home, /var
 NrSnapshots:      3
@@ -1605,10 +1605,9 @@ BootEntries:
 .P
 Display the snapshot with UUID b201bdba-89b7-5014-a80d-f5d4b9a690ed
 .br
-#
-.B snapm snapshot show -U b201bdba-89b7-5014-a80d-f5d4b9a690ed
 .
 .EX
+# snapm snapshot show -U b201bdba-89b7-5014-a80d-f5d4b9a690ed
 Name:           fedora/home-snapset_before-upgrade_1755915019_-home
 SnapsetName:    before-upgrade
 Origin:         /dev/fedora/home
