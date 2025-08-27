@@ -48,8 +48,16 @@ jobs:
         run: >
           sudo cp -r etc/snapm /etc
       - name: Copy systemd units to /usr/lib/systemd/system
-        run: >
-          sudo cp systemd/* /usr/lib/systemd/system
+        run: |
+          set -euo pipefail
+          sudo cp systemd/*.service /usr/lib/systemd/system/
+          sudo cp systemd/*.timer /usr/lib/systemd/system/
+          sudo cp systemd/tmpfiles.d/snapm.conf /usr/lib/tmpfiles.d/
+      - name: Create tmpfiles.d paths
+        run: |
+          set -euo pipefail
+          sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/snapm.conf
+          sudo test -d /run/snapm/mounts
       - name: Reload systemd
         run: >
           sudo systemctl daemon-reload
