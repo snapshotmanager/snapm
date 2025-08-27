@@ -16,6 +16,7 @@ BuildRequires:	lvm2
 BuildRequires:	make
 BuildRequires:	stratis-cli
 BuildRequires:	stratisd
+BuildRequires:	systemd-rpm-macros
 BuildRequires:	pyproject-rpm-macros
 BuildRequires:	python3-boom
 BuildRequires:	python3-dateutil
@@ -98,6 +99,9 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_unitdir}
 %{__install} -p -m 644 systemd/snapm-gc@.service ${RPM_BUILD_ROOT}/%{_unitdir}
 %{__install} -p -m 644 systemd/snapm-gc@.timer ${RPM_BUILD_ROOT}/%{_unitdir}
 
+mkdir -p ${RPM_BUILD_ROOT}/%{_tmpfilesdir}
+%{__install} -p -m 644 systemd/tmpfiles.d/snapm.conf ${RPM_BUILD_ROOT}/%{_tmpfilesdir}/
+
 %check
 %pytest --log-level=debug -v tests/
 
@@ -114,6 +118,7 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_unitdir}
 %attr(644, -, -) %{_unitdir}/snapm-create@.timer
 %attr(644, -, -) %{_unitdir}/snapm-gc@.service
 %attr(644, -, -) %{_unitdir}/snapm-gc@.timer
+%attr(644, -, -) %{_tmpfilesdir}/snapm.conf
 
 %files -n python3-snapm
 # license for snapm (Apache-2.0)
@@ -127,6 +132,12 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_unitdir}
 %license LICENSE
 %doc README.md
 %doc doc
+
+%post
+%tmpfiles_create %{_tmpfilesdir}/snapm.conf
+
+%postun
+%tmpfiles_delete %{_tmpfilesdir}/snapm.conf
 
 %changelog
 * Thu Dec 12 2024 Bryn M. Reeves <bmr@redhat.com> - 0.4.0
