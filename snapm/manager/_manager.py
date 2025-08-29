@@ -85,6 +85,12 @@ _PLUGINS_D_PATH = join(_SNAPM_CFG_DIR, "plugins.d")
 #: Path to directory for Schedule configuration files
 _SCHEDULE_D_PATH = join(_SNAPM_CFG_DIR, "schedule.d")
 
+#: Path to snapm runtime directory
+_SNAPM_RUNTIME_DIR = "/run/snapm"
+
+#: Path to snapm snapshot set mount directory
+_SNAPM_MOUNTS_DIR = join(_SNAPM_RUNTIME_DIR, "mounts")
+
 
 @dataclass
 class SnapmConfig:

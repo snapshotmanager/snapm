@@ -93,11 +93,13 @@ of the source directory.
   * A full test run takes approximately **25-30 minutes**, depending on
     system performance.
   * You'll need to copy the `snapm` configuration files and systemd
-    units into the system and notify systemd. From the project root
-    directory, run:
+    units/tmpfiles.d configuration into the system and notify systemd.
+    From the project root directory, run:
     ```bash
     # cp -r etc/snapm /etc
-    # cp systemd/* /usr/lib/systemd/system
+    # cp systemd/*.timer systemd/*.service /usr/lib/systemd/system
+    # cp systemd/tmpfiles.d/snapm.conf /usr/lib/tmpfiles.d
+    # systemd-tmpfiles --create /usr/lib/tmpfiles.d/snapm.conf
     # systemctl daemon-reload
     ```
 

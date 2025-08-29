@@ -529,7 +529,11 @@ restorecon -R /root/.ssh || true
             # Install snapm
             f"git clone --depth=1 https://github.com/{safe_repo}.git -b {safe_ref} /tmp/snapm",
             "cd /tmp/snapm && pip install -v . ",
-            "cd /tmp/snapm && cp -r etc/snapm /etc && cp systemd/* /usr/lib/systemd/system",
+            "cd /tmp/snapm && cp -r etc/snapm /etc",
+            "cd /tmp/snapm && cp systemd/*.service systemd/*.timer /usr/lib/systemd/system",
+            "cd /tmp/snapm && cp systemd/tmpfiles.d/snapm.conf /usr/lib/tmpfiles.d",
+            # Apply tmpfiles change
+            "systemd-tmpfiles --create /usr/lib/tmpfiles.d/snapm.conf",
             # Notify systemd
             "systemctl daemon-reload",
             # Verify installation

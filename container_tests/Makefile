@@ -11,6 +11,7 @@ all: prep build run install test
 prep:
 	cp $(CURDIR)/../systemd/*.service $(CURDIR)
 	cp $(CURDIR)/../systemd/*.timer $(CURDIR)
+	cp $(CURDIR)/../systemd/tmpfiles.d/snapm.conf $(CURDIR)
 
 build:
 	podman build -t $(IMAGE) .
@@ -40,6 +41,7 @@ clean:
 	podman rm -f $(CONTAINER) 2>/dev/null || true
 	rm -f $(CURDIR)/*.service
 	rm -f $(CURDIR)/*.timer
+	rm -f $(CURDIR)/snapm.conf
 
 shell:
 	podman exec -it $(CONTAINER) /usr/bin/bash
