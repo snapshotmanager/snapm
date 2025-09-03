@@ -1164,6 +1164,18 @@ class Manager:
         return reverted
 
     @suspend_signals
+    def activate_snapshot_set(self, name=None, uuid=None):
+        """
+        Activate snapshot set by name or uuid.
+
+        :param name: The name of the snapshot set to activate.
+        :param uuid: The UUID of the snapshot set to activate.
+        """
+        snapset = self._snapset_from_name_or_uuid(name=name, uuid=uuid)
+        _check_snapset_status(snapset, "activate")
+        snapset.activate()
+
+    @suspend_signals
     def activate_snapshot_sets(self, selection):
         """
         Activate snapshot sets matching selection criteria ``selection``.
@@ -1177,10 +1189,21 @@ class Manager:
                 f"Could not find snapshot sets matching {selection}"
             )
         for snapset in sets:
-            _check_snapset_status(snapset, "activate")
-            snapset.activate()
+            self.activate_snapshot_set(name=snapset.name)
             activated += 1
         return activated
+
+    @suspend_signals
+    def deactivate_snapshot_set(self, name=None, uuid=None):
+        """
+        Deactivate snapshot set by name or uuid.
+
+        :param name: The name of the snapshot set to deactivate.
+        :param uuid: The UUID of the snapshot set to deactivate.
+        """
+        snapset = self._snapset_from_name_or_uuid(name=name, uuid=uuid)
+        _check_snapset_status(snapset, "deactivate")
+        snapset.deactivate()
 
     @suspend_signals
     def deactivate_snapshot_sets(self, selection):
@@ -1196,8 +1219,7 @@ class Manager:
                 f"Could not find snapshot sets matching {selection}"
             )
         for snapset in sets:
-            _check_snapset_status(snapset, "deactivate")
-            snapset.deactivate()
+            self.deactivate_snapshot_set(name=snapset.name)
             deactivated += 1
         return deactivated
 
