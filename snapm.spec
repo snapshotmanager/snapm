@@ -1,7 +1,7 @@
 %global summary A set of tools for managing snapshots
 
 Name:		snapm
-Version:	0.4.0
+Version:	0.5.0
 Release:	1%{?dist}
 Summary:	%{summary}
 
@@ -129,6 +129,300 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_unitdir}
 %doc doc
 
 %changelog
+Fri Sep 12 2025 Bryn M. Reeves <bmr@redhat.com> - 0.5.0-1
+- snapm: bump release to 0.5.0
+- doc: tighten up examples and fix command synopsis
+- doc: drop leading # from commands in *.md *.rst
+- doc: clarify list, create and show JSON report structure and keys
+- doc: use "snapshot set" vs. "snapset" consistently in snapm.8
+- doc: document JSON key names for list vs. show output
+- Update README.md and move detailed guide to doc/user_guide.rst
+- snapm: require -p/--policy-type for 'snapm schedule create'
+- snapm: make --yes/--no required and mutually exclusive for autoactivate
+- tests: parallelize pylint and flake8 runs via --jobs
+- tests: configure pycodestyle in setup.cfg
+- tests: re-order python-basic-tests to run cheap tests first
+- snapm: fix report field definition for snapshot_origin
+- snapm: fix swapped _log_info() args in 'snapm snapset prune' output
+- dist: add missing timer and service units to snapm.spec
+- tests: set timeout-minutes=60 on python-basic-tests
+- tests: add Ubuntu libvirt/BIOS workaround to virt_tests workflow
+- virt_tests: add workaround to enable BIOS on Ubuntu libvirt
+- tests: add virt_tests workflow to snapm.yml
+- dist: exclude test paths from setup.cfg builds
+- virt_tests: add end-to-end testing framework
+- doc: add DeepWiki badge to README.md
+- doc: fix remaining markup nits in snapm.8
+- doc: improve example formatting for man2html in snapm.8
+- doc: improve man2html compatibility (.UR/.UE) in snapm.8
+- doc: fix --start option documentation in snapm.8
+- doc: add missing -p|--policy-type option to OPTIONS in snapm.8
+- doc: add missing -C|--calendarspec option in snapm.8
+- doc: fix .P vs .IP errors in snapm.8
+- doc: add missng "REPORT FIELDS: Schedules" subsection to snapm.8
+- doc: add missng "REPORT FIELDS: Plugins" subsection to snapm.8
+- doc: convert remaining examples to .EX/.EE in smapm.8
+- doc: update 'snapm schedule list' example
+- doc: make OPTIONS metavars consistent with SYNOPSIS in snapm.8
+- doc: use macros for common argument groups in snapm.8
+- doc: use schedule_name consistently as schedule name metavar
+- doc: clarify that snapm schedule create does not accept --autoindex
+- command: fix --rows help doc typo 'columnes'
+- doc: fix additional consistency issues in command examples
+- doc: fix 'schedule gc' -c/--config argument description
+- doc: more man page markup improvements
+- doc: mark sources as optional in CMD_SNAPSET_RESIZE in snapm.8
+- snapm: enforce [ID] vs --*name/--*uuid exclusion via ArgumentParser
+- snapm: make --uuid/--name higher precedence in Selection.from_cmd_args()
+- snapm: make --uuid/--name and --snapshot-uuid/--snapshot-name mutually exclusive
+- doc: add 'snapm snapset create --json' exmaple
+- doc: use macros for common argument groups in snapm.8
+- doc: use .UR/.UE for URIs in SEE ALSO of snapm.8
+- doc: update man page date
+- doc: document snapshot set/snapshot status once and crossref
+- doc: use .BR instead of .MR for now (groff-1.23.0+ only)
+- doc: fix 'scheduled' typo in snapm.8
+- doc: avoid mixing manual font escapes inside .BR/.IR in snapm.8
+- doc: add EXIT STATUS, FILES, and BUGS sections to snapm.8
+- doc: fix font markup glitches in snapm.8
+- doc: fix --boot option name in snapm.8 schedule create example
+- doc: fix s/snapset/schedule/ for 'snapm schedule list' in snapm.8
+- doc: add missing enable --start description to snapm.8
+- doc: document additional uses of --json in snapm.8
+- doc: document create-scheduled in snapm.8
+- doc: snapm.8 s/rolling back/reverting/g
+- doc: update snapm.8 for non-root boot changes
+- doc: improve prose style in snapm.8
+- doc: use .EX/.EE example markup in snapm.8
+- doc: use .TP (tagged paragraph) with consistent indents in snapm.8
+- doc: fix typos & consistency issues in `snapm.8`
+- tests: make cleanup.sh more robust for Stratis pools
+- snapm: support --json with {snapset,schedule} create commands
+- doc: add CONTRIBUTING.md
+- tests: add cleanup script to tests/bin
+- tests: Add BootTestsBase and derive BootTestsNonRoot and BootTestsWithRoot
+- boot: allow bootable snapsets without the root device
+- Do not require wheel for building
+- boot: drop explicit setting of `lvm_root_lv` when calling boom
+- boot: add origin argument to _find_snapset_root()
+- boot: always return path from _find_snapset_root()
+- tests: improve manager module coverage
+- manager: reject duplicate sources in Manager.create_snapshot_set()
+- plugins: fix device detection for non-existent device paths
+- loader: mark error branches as no cover
+- tests: improve boot module coverage
+- tests: improve calendar module coverage
+- tests: improve command module coverage
+- Schedule: clean up boot entries when garbage collecting snapshot sets
+- tests: improve snapm module coverage
+- tests: add SchedulerTests
+- timer: only unlink drop-in files if present
+- doc: add schedule commands to README.md
+- doc: add man page command overview
+- doc: add snapm-schedule.d.5
+- doc: add 'snapm schedule' commands and arguments to snapm.8
+- doc: fix some man page markup
+- manager: make config loading a bit more efficient
+- command: add `snapm schedule gc` command
+- command: add gc_schedule() procedural wrapper
+- command: add 'snapm snapset create-scheduled' command
+- snapm: quote string when reporting malformed SizePolicy string
+- command: add 'snapm schedule show' command
+- command: add show_schedules() procedural wrapper
+- command: add 'snapm schedule {enable,disable}' commands
+- command: add {enable,disable}_schedule() procedural wrappers
+- command: add `snapm schedule delete` command
+- command: add delete_schedule() procedural wrapper
+- command: add `snapm schedule create` command
+- command: add schedule_create() procedural wrapper
+- manager: export GcPolicy and CalendarSpec in snapm.manager
+- command: factor out common create command arguments
+- container_tests: add schedule module to coverage --include
+- timers: fix missing f-string annotation in _timers._timer()
+- container_tests: fix timer_tests exception args assertions
+- command: add 'schedule' type subparer and 'schedule list' command
+- command: add _schedule_list_cmd() handler
+- command: add print_schedules reporting wrapper
+- container_tests: create /etc/snapm/schedule.d in Containerfile
+- snapm: add Selection support for Schedule objects
+- command: add Schedule ReportObjType and FieldType list
+- manager: export Schedule from snapm.manager
+- timers: fix build on epel-9/cs9 due to py3.10 union notation
+- manager: expose manager.scheduler interface for snapset scheduling
+- manager: add snapm.manager.Scheduler interface for managing schedules
+- schedule: add new module snapm.manager._schedule
+- snapm: add datetime property to SnapshotSet
+- timers: treat TimerStatus.RUNNING as enabled=True
+- timers: convert to using snapm.SnapmSystemError for OsError derived errors
+- snapm: add SnapmSystemError exception class
+- timers: improve debug logging
+- timers: ensure drop-in configuration overrides template unit
+- doc: exclude __annotation__ from members documentation
+- snapm: rename Snapshot and Snapshotset as_dict() methods as to_dict()
+- doc: add snapm-plugins.d(5)
+- doc: add snapm.conf(5)
+- dist: add /etc/snapm to snapm.spec
+- stratis: enforce configurable limits
+- lvm2: enforce configurable limits
+- plugin: add plugin limits infrastructure
+- plugins: support optional configuration file
+- manager: make plugin loading and snapshot discovery more robust
+- manager: add configuration file support
+- lvm2: use JSON lvs report format in vg_lv_from_device_path()
+- lvm2: run callouts with LC_ALL=C
+- lvm2: convert remaining calls to run() to use self._run()
+- lvm2: make lvm2._avtivate() a method of _Lvm2
+- lvm2: make lvm2.is_lvm_device() a method of _Lvm2
+- lvm2: make lvm2._get_lvm_version() a method of lvm2._Lvm2
+- lvm2: add _Lvm2._run() wrapper to enforce environment sanitization
+- docs: apply workaround for sphinx-doc/sphinx#11000
+- docs: disable unused html_static_path Sphinx config
+- doc: fix doc/snapm.rst underline formatting
+- snapm: fix snapm.manager._boot._create_default_os_profile() docstring
+- docs: fix "mqnqger" typo in doc/snapm.rst
+- docs: fix broken :param ...: docstring tag in Selection.check_valid_selection()
+- docs: fix "tiemrs" typo in doc/snapm.rst
+- dist: fix readthedocs.org builds (restore requirements.txt)
+- doc: add snapm.manager private modules to docs
+- timers: fix consstants in docstring description
+- container_tests: add tests for high-level Timer interface
+- timers: add high-level Timer interface
+- timers: add timer status reporting
+- timers: move _diable_timer() _remove_drop_in() into finally branch
+- timers: add pragma: no cover to unreached DBus timeout branch
+- timers: log debug-level message when writing drop-in file
+- container_tests: update test_timers for private low-level interface
+- timers: make the low-level interface private to _timers
+- timers: add constant for drop-in directory path format
+- calendar: make occurs, next_elapse, in_utc, from_now values dynamic
+- timers: add 'pragma: no cover' annotations to exception branches
+- tests: add initial timer tests
+- tests: exclude container_tests/tests from regular snapm workflow
+- tests: add container testing infrastructure
+- manager: add systemd timer unit management interface
+- dist: update systemd timer templates to always include OnCalendar
+- snapm: add SnapmTimerError exception class
+- manager: add debug logging to create_snapshot_set()
+- tests: assert result of CommandTests.test_main_* tests
+- tests: enable verbose logging for CommandTests*.test_main_* tests
+- tests: add CommandTests*.get_debug_main_args() helper
+- tests: fix test_main_snapset_create_autoindex
+- calendar: add explicit CalendarSpec.original property
+- calendar: prefer calendarspec original form
+- calendar: fix docstring formatting
+- dist: fix mixed-tabs-and-spaces in snapm.spec
+- manager: move snapm imports ahead of .{_boot,_loader,_signals}
+- manager: move snapm.manager.signals to snapm.manager._signals
+- manager: move snapm.manager.calendar to snapm.manager._calendar
+- manager: move snapm.manager.boot to snapm.manager._boot
+- dist: use __install macro instead of directly invoking command
+- Plugin: fix method docstring formatting
+- dist: sync classifiers between pyproject.toml and setup.cfg
+- dist: drop quotes around license value
+- dist: drop obsolete python macro use
+- dist: revise dependency versions
+- dist: drop requirements.txt
+- dist: restore install_requires
+- dist: re-order BuildRequires and separate python and non-python deps
+- dist: clean up Sphinx doc build and make unconditional
+- dist: use install -p/--preserve-timestamps
+- boot: tolerate missing boom.command.create_config()
+- dist: pass test suite directory as positional arg to pytest macro
+- dist: fix mixed tabs-and-spaces in snapm.spec
+- dist: make version dynamic in pyproject.toml
+- dist: consolidate dependencies in requirements.txt
+- dist: drop unnecessary snapm/manager/pliugins/stratislib/LICENSE
+- dist: add pytest to build requirements
+- tests: use pytest instead of directly calling pytest-3
+- dist: drop centos/rhel special casing for python build/install
+- dist: change snapm license from GPL-2.0-only AND Apache-2.0 to Apache-2.0
+- report: Row - stop misusing class vars
+- report: Report - stop misusing class vars
+- report: Field - stop misusing class vars
+- report: FieldType - stop misusing class vars
+- report: ReportOpts - stop misusing class vars
+- report: ReportObjType - stop misusing class vars
+- report: FieldProperties - stop misusing class vars and add initialiser
+- snapm: move Plugin into snapm.manager.plugins
+- snapm: drop PluginRegistry metaclass
+- snapm: refactor plugin loader and move to snapm.manager._loader
+- dist: avoid Python packaging warnings
+- snapm: unify filtering for valid characters in names
+- snapm: fix Manager.split_snapshot_sets() with empty sources
+- command: add new 'snapm snapset prune' command
+- command: add new 'snapm snapset split' command
+- tests: add Manager.split_snapshot_set() tests
+- snapm: add Manager.split_snapshot_set()
+- snapm: include state string in exception raised from _check_snapset_status()
+- snapm: add snapm.SnapmArgumentError exception class
+- doc: add --autoindex and basename, index fields to README.md
+- doc: add --autoindex and index, basename fields to snapm(8)
+- snapm: add snapm snapset create --autoindex
+- snapm: add report field types for basename and index to snapm.command
+- report: add new REP_IDX field data type for index values
+- snapm: add constants for basename and index property names
+- snapm: add 'autoindex' kwarg to snapm.command.create_snapset()
+- snapm: add autoindex support to Manager.create_snapshot_set()
+- snapm: add missing param docstrings to Manager.create_snapshot_set()
+- snapm: Allow finding snapshot sets by basename and index
+- snapm: support SnapshotSet names with basename and index
+- tests: add missing '[cache]' section to test boom.conf
+- snapm: refresh boot cache after creating entries in create_snapshot_set()
+- snapm: improve SnapshotSet action method logging
+- snapm: use Manager._set_autoactivate() in create_snapshot_set()
+- Manager: use common snapm.bool_to_yes_no() in Manager.set_autoactivate()
+- Manager: factor out common code from Manager.set_autoactivate()
+- snapm: move _bool_to_yes_no() from snapm.command to snapm
+- Plugins: add generic Plugin.autoactivate setter and drop set_autoactivate()
+- Manager: fix autoactivate setting during snapshot set creation
+- snapm: move snapshot -> snapset linkage into SnapshotSet()
+- dist: replace license classifier with SPDX expressions
+- tests: add python3-pytest-subtests to Ubuntu dependencies
+- dist: add template systemd units for scheduler
+- tests: also install faketime binary on Ubuntu
+- tests: skip test_calendar_spec_next if faketime is missing
+- dist: add BuildRequires: libfaketime for Fedora builds
+- tests: refactor CalendarSpec tests to use unittest.subTest()
+- tests: remove debug statements from test_calendar.py
+- tests: add CalendarSpec unit tests
+- tests: add 'libfaketime' package to Ubuntu workflow dependencies
+- tests: disable pylint too-many-positional-arguments check
+- snapm: add snapm.manager.calendar and CalendarSpec class
+- snapm: raise SnapmNotFoundError if source path does not exist
+- tests: switch GitHub workflows over to Stratis 3.8.0
+- tests: install stratis-cli from git and pin version to 3.7.0
+- lvm2: filter out LVM2 environment variables when calling lvm commands
+- lvm2: make vg_lv_from_device_path a method of Lvm2Cow and Lvm2Thin
+- lvm2: ensure vg_lv_from_device_path() gets the expected report format
+- lvm2: determine LVM2 JSON format argument based on installed version
+- lvm2: refactor helper functions as Lvm2 plugin methods
+- tests: allow mock vgs/lvs to accept --reportformat json or json_std
+- dist: clean up copyright statements and convert to SPDX license headers
+- dist: update GPLv2 text in COPYING
+- snapm: factor out common code for snapshot origin and mount point links
+- snapm: move rename logic from Manager to SnapshotSet.rename()
+- snapm: move resize logic from Manager to SnapshotSet.resize()
+- snapm: move {de,}activate logic from Manager to SnapshotSet.{de,}activate()
+- snapm: move revert logic from Manager into SnapshotSet.revert()
+- snapm: move boot entry creation inside Manager.create_snapshot_set()
+- manager: replace open-coded snapset delete with snapset.delete()
+- snapm: implement SnapshotSet.delete()
+- snapm: catch KeyboardInterrupt in snapm.command.main()
+- snapm: decorate state-changing Manager methods with @suspend_signals
+- snapm: add @suspend_signals decorator to block SIGINT, SIGTERM
+- report: strip trailing whitespace from report output
+- tests: bracket test cases with log messages
+- tests: add explicit log formatter to file and console handlers
+- tests: capture tool output and log command execution
+- tests: add console handler to test suite logger
+- snapm: avoid duplicating log handlers when main() is called repeatedly
+- tests: fix duplicate log handlers in test suite
+- dist: use {name} instead of hardcoding snapm in URL and autosetup
+- jenkins: add file to list dependencies of python test suite
+- tests: enable workflow on pull_request
+- tests: temporarily exclude CentOS from test_boot.is_redhat() check
+- dist: move python3-boom dep to python3-snapm and require >= 1.6.4
+
 * Thu Dec 12 2024 Bryn M. Reeves <bmr@redhat.com> - 0.4.0
 - stratis: return False for non-DM devices from is_stratis_device()
 - command: accept zero or more source spec arguments to snapset resize
