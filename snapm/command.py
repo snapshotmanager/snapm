@@ -20,6 +20,7 @@ from os.path import basename
 from json import dumps
 from uuid import UUID
 import logging
+import os
 
 from snapm import (
     SnapmInvalidIdentifierError,
@@ -2313,6 +2314,10 @@ def main(args):
     cmd_args = parser.parse_args(args[1:])
 
     status = 1
+
+    if os.geteuid() != 0 or os.getegid() != 0:
+        _log_error("snapm must be run as the root user")
+        return status
 
     try:
         set_debug(cmd_args.debug)
