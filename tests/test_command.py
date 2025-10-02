@@ -120,58 +120,70 @@ class CommandTestsSimple(CommandTestsBase):
 
         self.assertEqual(opts, xopts)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__list_cmd_simple(self):
         args = MockArgs()
         command._list_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__list_cmd_simple_bad_field(self):
         args = MockArgs()
         args.options = "nosuchfield"
         command._list_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__list_cmd_simple_debug(self):
         args = MockArgs()
         args.debug = "all"
         command._list_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__list_cmd_simple_debug_bad_field(self):
         args = MockArgs()
         args.debug = "all"
         args.options = "nosuchfield"
-        with self.assertRaises(ValueError) as cm:
+        with self.assertRaises(ValueError):
             command._list_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__list_cmd_simple_verbose(self):
         args = MockArgs()
         args.verbose = 1
         command._list_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__list_cmd_simple_fields(self):
         args = MockArgs()
         args.options = "name,uuid"
         command._list_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__list_snapshot_cmd_simple(self):
         args = MockArgs()
         command._snapshot_list_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__show_cmd_simple(self):
         args = MockArgs()
         command._show_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__show_cmd_simple_verbose(self):
         args = MockArgs()
         args.verbose = 1
         command._show_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__show_snapshot_cmd_simple(self):
         args = MockArgs()
         command._snapshot_show_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test__plugin_list_cmd_simple(self):
         args = MockArgs()
         command._plugin_list_cmd(args)
 
+    @unittest.skipIf(not have_root(), "requires root privileges")
     def test_main_plugin_list(self):
         args = self.get_debug_main_args()
         args += ["plugin", "list"]
