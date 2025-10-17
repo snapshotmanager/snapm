@@ -12,6 +12,7 @@ from uuid import UUID, uuid5
 from datetime import datetime
 from typing import Union
 from enum import Enum
+import collections
 import string
 import json
 import math
@@ -30,17 +31,22 @@ _log_error = _log.error
 SNAPM_DEBUG_MANAGER = 1
 SNAPM_DEBUG_COMMAND = 2
 SNAPM_DEBUG_REPORT = 4
-SNAPM_DEBUG_ALL = SNAPM_DEBUG_MANAGER | SNAPM_DEBUG_COMMAND | SNAPM_DEBUG_REPORT
+SNAPM_DEBUG_MOUNTS = 8
+SNAPM_DEBUG_ALL = (
+    SNAPM_DEBUG_MANAGER | SNAPM_DEBUG_COMMAND | SNAPM_DEBUG_REPORT | SNAPM_DEBUG_MOUNTS
+)
 
 # Snapm debugging subsystem names
 SNAPM_SUBSYSTEM_MANAGER = "snapm.manager"
 SNAPM_SUBSYSTEM_COMMAND = "snapm.command"
 SNAPM_SUBSYSTEM_REPORT = "snapm.report"
+SNAPM_SUBSYSTEM_MOUNTS = "snapm.mounts"
 
 _DEBUG_MASK_TO_SUBSYSTEM = {
     SNAPM_DEBUG_MANAGER: SNAPM_SUBSYSTEM_MANAGER,
     SNAPM_DEBUG_COMMAND: SNAPM_SUBSYSTEM_COMMAND,
     SNAPM_DEBUG_REPORT: SNAPM_SUBSYSTEM_REPORT,
+    SNAPM_DEBUG_MOUNTS: SNAPM_SUBSYSTEM_MOUNTS,
 }
 
 _debug_subsystems = set()
@@ -311,6 +317,38 @@ class SnapmLimitError(SnapmError):
     """
     A configured resource limit would be exceeded.
     """
+
+
+class SnapmMountError(SnapmError):
+    """
+    An error performing a mount operation.
+    """
+
+    def __init__(self, what: str, where: str, status: int, stderr: str):
+        """
+        Initialise a new `SnapmMountError` exception.
+
+        :param what: The source for the failed mount operation.
+        :param where: The intended mount point of the operation.
+        :param status: The exit status of the mount(8) program.
+        :param stderr: The error message from mount(8).
+        """
+        msg = f"Failed to mount {what} to {where} (status={status}): {stderr}"
+        super().__init__(msg)
+
+
+class SnapmUmountError(SnapmError):
+    """
+    An error performing an unmount operation.
+
+    :param where: The mount point for the failed umount operation.
+    :param status: The exit status of the umount(8) program.
+    :param stderr: The error message from umount(8).
+    """
+
+    def __init__(self, where: str, status: int, stderr: str):
+        msg = f"Failed to unmount {where} (status={status}): {stderr}"
+        super().__init__(msg)
 
 
 #
@@ -1677,6 +1715,108 @@ class Snapshot:
         self.invalidate_cache()
 
 
+class FsTab:
+    """
+    A class to read and query data from an fstab file.
+
+    This class reads an fstab-like file and provides methods to iterate
+    over its entries and look up specific entries based on their properties.
+
+    """
+
+    # Define a named tuple to give structure to each fstab entry.
+    # This makes the code more readable than using a regular tuple.
+    FsTabEntry = collections.namedtuple(
+        "FsTabEntry", ["what", "where", "fstype", "options", "freq", "passno"]
+    )
+
+    def __init__(self, path=ETC_FSTAB):
+        """
+        Initializes the FsTab object by reading and parsing the file.
+
+        :param path: The path to the fstab file. Defaults to '/etc/fstab'.
+        :type path: str
+        :raises SnapmNotFoundError: If the specified fstab file does not exist.
+        :raises SnapmSystemError: If there is an error reading the fstab file.
+
+        """
+        self.path = path
+        self.entries = []
+        self._read_fstab()
+
+    def _read_fstab(self):
+        """
+        Private method to read and parse the fstab file.
+        It populates the self.entries list.
+        """
+        try:
+            with open(self.path, "r", encoding="utf8") as f:
+                for line in f:
+                    # 1. Ignore empty lines and comments.
+                    if not line or line.startswith("#"):
+                        continue
+
+                    # 2. Remove comments and strip leading/trailing whitespace.
+                    line = line.split("#", 1)[0].strip()
+
+                    # 3. Split the line into parts.
+                    parts = line.split()
+
+                    # 4. An fstab entry must have 6 fields.
+                    if len(parts) != 6:
+                        # You might want to log a warning here in a real application.
+                        continue
+
+                    # 5. Create a named tuple and append it to our list.
+                    entry = self.FsTabEntry(*parts)
+                    self.entries.append(entry)
+
+        except FileNotFoundError as exc:
+            _log_error("Error: The file '%s' was not found.", self.path)
+            raise SnapmNotFoundError(f"FsTab file not found: {self.path}") from exc
+        except IOError as e:
+            _log_error("Error: Could not read the file '%s': %s", self.path, e)
+            raise SnapmSystemError(f"Error reading fstab file: {self.path}") from e
+
+    def __iter__(self):
+        """
+        Allows iteration over the fstab entries.
+
+        :yields:
+            A 6-tuple for each entry in the fstab file:
+            (what, where, fstype, options, freq, passno)
+        """
+        yield from self.entries
+
+    def lookup(self, key, value):
+        """
+        Finds and generates all entries matching a specific key-value pair.
+
+        :param key: The field to search by. Must be one of 'what', 'where',
+                    'fstype', 'options', 'freq', or 'passno'.
+        :type key: str
+        :param value: The value to match for the given key.
+        :type value: str|int
+        :yields: A 6-tuple for each matching fstab entry.
+
+        :raises KeyError: If the provided key is not a valid fstab field name.
+        """
+        if key not in self.FsTabEntry._fields:
+            raise KeyError(
+                f"Invalid lookup key: '{key}'. "
+                f"Valid keys are: {self.FsTabEntry._fields}"
+            )
+
+        for entry in self.entries:
+            # getattr() allows us to get an attribute by its string name.
+            if getattr(entry, key) == value:
+                yield entry
+
+    def __repr__(self):
+        """Return a machine readable string representation of this FsTab."""
+        return f"FsTab(path='{self.path}')"
+
+
 __all__ = [
     "ETC_FSTAB",
     "SNAPSET_NAME",
@@ -1717,6 +1857,7 @@ __all__ = [
     "SNAPM_DEBUG_MANAGER",
     "SNAPM_DEBUG_COMMAND",
     "SNAPM_DEBUG_REPORT",
+    "SNAPM_DEBUG_MOUNTS",
     "SNAPM_DEBUG_ALL",
     # Path to runtime directory
     "SNAPM_RUNTIME_DIR",
@@ -1725,6 +1866,7 @@ __all__ = [
     "SNAPM_SUBSYSTEM_MANAGER",
     "SNAPM_SUBSYSTEM_COMMAND",
     "SNAPM_SUBSYSTEM_REPORT",
+    "SNAPM_SUBSYSTEM_MOUNTS",
     # Debug logging - legacy interface
     "set_debug_mask",
     "get_debug_mask",
@@ -1746,6 +1888,8 @@ __all__ = [
     "SnapmArgumentError",
     "SnapmTimerError",
     "SnapmLimitError",
+    "SnapmMountError",
+    "SnapmUmountError",
     "Selection",
     "size_fmt",
     "is_size_policy",
@@ -1756,4 +1900,5 @@ __all__ = [
     "SnapStatus",
     "SnapshotSet",
     "Snapshot",
+    "FsTab",
 ]
