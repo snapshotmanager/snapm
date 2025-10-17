@@ -61,6 +61,7 @@ from ._calendar import CalendarSpec
 from ._loader import load_plugins
 from ._signals import suspend_signals
 from ._schedule import Schedule, GcPolicy
+from ._mounts import Mounts
 
 _log = logging.getLogger(__name__)
 
@@ -770,6 +771,7 @@ class Manager:
             except SnapmPluginError as err:
                 _log_error("Disabling plugin %s: %s", plugin_class.__name__, err)
         self.scheduler = Scheduler(self, _SCHEDULE_D_PATH)
+        self.mounts = Mounts(self, _SNAPM_MOUNTS_DIR)
         self.discover_snapshot_sets()
 
     def _load_plugin_config(self, plugin_name: str) -> ConfigParser:
