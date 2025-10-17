@@ -33,17 +33,22 @@ _log_error = _log.error
 SNAPM_DEBUG_MANAGER = 1
 SNAPM_DEBUG_COMMAND = 2
 SNAPM_DEBUG_REPORT = 4
-SNAPM_DEBUG_ALL = SNAPM_DEBUG_MANAGER | SNAPM_DEBUG_COMMAND | SNAPM_DEBUG_REPORT
+SNAPM_DEBUG_MOUNTS = 8
+SNAPM_DEBUG_ALL = (
+    SNAPM_DEBUG_MANAGER | SNAPM_DEBUG_COMMAND | SNAPM_DEBUG_REPORT | SNAPM_DEBUG_MOUNTS
+)
 
 # Snapm debugging subsystem names
 SNAPM_SUBSYSTEM_MANAGER = "snapm.manager"
 SNAPM_SUBSYSTEM_COMMAND = "snapm.command"
 SNAPM_SUBSYSTEM_REPORT = "snapm.report"
+SNAPM_SUBSYSTEM_MOUNTS = "snapm.mounts"
 
 _DEBUG_MASK_TO_SUBSYSTEM = {
     SNAPM_DEBUG_MANAGER: SNAPM_SUBSYSTEM_MANAGER,
     SNAPM_DEBUG_COMMAND: SNAPM_SUBSYSTEM_COMMAND,
     SNAPM_DEBUG_REPORT: SNAPM_SUBSYSTEM_REPORT,
+    SNAPM_DEBUG_MOUNTS: SNAPM_SUBSYSTEM_MOUNTS,
 }
 
 _debug_subsystems = set()
@@ -314,6 +319,43 @@ class SnapmLimitError(SnapmError):
     """
     A configured resource limit would be exceeded.
     """
+
+
+class SnapmMountError(SnapmError):
+    """
+    An error performing a mount operation.
+    """
+
+    def __init__(self, what: str, where: str, status: int, stderr: str):
+        """
+        Initialise a new `SnapmMountError` exception.
+
+        :param what: The source for the failed mount operation.
+        :param where: The intended mount point of the operation.
+        :param status: The exit status of the mount(8) program.
+        :param stderr: The error message from mount(8).
+        """
+        self.what, self.where, self.status, self.stderr = what, where, status, stderr
+        msg = f"Failed to mount {what} to {where} (status={status}): {stderr}"
+        super().__init__(msg)
+
+
+class SnapmUmountError(SnapmError):
+    """
+    An error performing an unmount operation.
+    """
+
+    def __init__(self, where: str, status: int, stderr: str):
+        """
+        Initialise a new `SnapmUmountError` exception.
+
+        :param where: The mount point for the failed umount operation.
+        :param status: The exit status of the umount(8) program.
+        :param stderr: The error message from umount(8).
+        """
+        self.where, self.status, self.stderr = where, status, stderr
+        msg = f"Failed to unmount {where} (status={status}): {stderr}"
+        super().__init__(msg)
 
 
 #
@@ -2089,6 +2131,7 @@ __all__ = [
     "SNAPM_DEBUG_MANAGER",
     "SNAPM_DEBUG_COMMAND",
     "SNAPM_DEBUG_REPORT",
+    "SNAPM_DEBUG_MOUNTS",
     "SNAPM_DEBUG_ALL",
     # Path to runtime directory
     "SNAPM_RUNTIME_DIR",
@@ -2097,6 +2140,7 @@ __all__ = [
     "SNAPM_SUBSYSTEM_MANAGER",
     "SNAPM_SUBSYSTEM_COMMAND",
     "SNAPM_SUBSYSTEM_REPORT",
+    "SNAPM_SUBSYSTEM_MOUNTS",
     # Debug logging - legacy interface
     "set_debug_mask",
     "get_debug_mask",
@@ -2118,6 +2162,8 @@ __all__ = [
     "SnapmArgumentError",
     "SnapmTimerError",
     "SnapmLimitError",
+    "SnapmMountError",
+    "SnapmUmountError",
     "Selection",
     "size_fmt",
     "is_size_policy",
