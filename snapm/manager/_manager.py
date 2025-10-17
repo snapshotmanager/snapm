@@ -14,8 +14,7 @@ from configparser import ConfigParser
 import logging
 from time import time
 from math import floor
-from stat import S_ISBLK
-from os import stat, listdir, makedirs
+from stat import S_ISBLK, S_ISDIR, S_ISLNK
 from os.path import exists, ismount, join, normpath, samefile
 from json import JSONDecodeError
 from typing import List, Union
@@ -61,6 +60,7 @@ from ._calendar import CalendarSpec
 from ._loader import load_plugins
 from ._signals import suspend_signals
 from ._schedule import Schedule, GcPolicy
+from ._mounts import Mounts
 
 _log = logging.getLogger(__name__)
 
@@ -97,6 +97,9 @@ _SCHEDULE_D_PATH = join(_SNAPM_CFG_DIR, "schedule.d")
 
 #: Path to snapm snapshot set mount directory
 _SNAPM_MOUNTS_DIR = join(SNAPM_RUNTIME_DIR, "mounts")
+
+#: Permissions for mounts directory
+_SNAPM_MOUNTS_DIR_MODE = 0o700
 
 #: Directory for snapshot set lock files
 _SNAPM_LOCK_DIR = join(SNAPM_RUNTIME_DIR, "lock")
@@ -370,28 +373,98 @@ def _find_mount_point_for_devpath(devpath):
     return ""
 
 
+def _check_snapm_runtime_dir():
+    """
+    Verify that /run/snapm exists with secure ownership and permissions.
+    """
+    runtime_root = SNAPM_RUNTIME_DIR  # /run/snapm
+    if not exists(runtime_root):
+        raise SnapmSystemError(
+            f"Runtime directory {runtime_root} does not exist "
+            "(run: 'systemd-tmpfiles --create /usr/lib/tmpfiles.d/snapm.conf')"
+        )
+    try:
+        st = os.lstat(runtime_root)
+        if not S_ISDIR(st.st_mode) or S_ISLNK(st.st_mode):
+            raise SnapmSystemError(
+                f"Runtime directory {runtime_root} is not a secure directory"
+            )
+        if st.st_uid != 0 or st.st_gid != 0:
+            raise SnapmSystemError(
+                f"Runtime directory {runtime_root} is not owned by root:root"
+            )
+        if (st.st_mode & 0o777) != 0o700:
+            raise SnapmSystemError(
+                f"Runtime directory {runtime_root} has insecure permissions "
+                f"(expected 0700, got {st.st_mode & 0o777:04o})"
+            )
+    except OSError as err:
+        raise SnapmSystemError(
+            f"Failed to verify runtime directory {runtime_root}: {err}"
+        ) from err
+
+
+def _check_snapm_dir(dirpath: str, mode: int, name: str) -> str:
+    """
+    Check for the presence of a snapm runtime directory and create
+    it if necessary.
+
+    :param dirpath: Path to the directory
+    :param mode: Permissions mode for the directory
+    :param name: Human-readable name for error messages
+    :returns: The directory path
+    """
+    # Check if path exists and validate it's a proper directory
+    existed = os.path.exists(dirpath)
+    if existed:
+        try:
+            st = os.lstat(dirpath)
+            if S_ISLNK(st.st_mode):
+                raise SnapmSystemError(f"{name} {dirpath} is a symlink (not secure)")
+            if not S_ISDIR(st.st_mode):
+                raise SnapmSystemError(
+                    f"{name} {dirpath} exists but is not a directory"
+                )
+        except OSError as err:
+            raise SnapmSystemError(f"Failed to stat {name} {dirpath}: {err}") from err
+
+    # Create directory if it doesn't exist
+    try:
+        os.makedirs(dirpath, mode=mode, exist_ok=True)
+    except OSError as err:
+        raise SnapmSystemError(f"Failed to create {name} {dirpath}: {err}") from err
+
+    # Ensure correct permissions (only if directory already existed and differs)
+    if existed:
+        try:
+            st = os.stat(dirpath)
+            if (st.st_mode & 0o777) != mode:
+                os.chmod(dirpath, mode)
+        except OSError as err:
+            raise SnapmSystemError(
+                f"Failed to set permissions on {name} {dirpath}: {err}"
+            ) from err
+
+    # Validate final permissions
+    try:
+        st = os.stat(dirpath)
+        if (st.st_mode & 0o777) != mode:
+            raise SnapmSystemError(
+                f"{name} {dirpath} has incorrect permissions: "
+                f"{st.st_mode & 0o777:04o} (expected {mode:04o})"
+            )
+    except OSError as err:
+        raise SnapmSystemError(f"Failed to verify {name} {dirpath}: {err}") from err
+
+    return dirpath
+
+
 def _check_lock_dir() -> str:
     """
     Check for the presence of the snapm runtime lock directory and create
     it if necessary.
     """
-    lockdir = _SNAPM_LOCK_DIR
-    makedirs(lockdir, mode=_SNAPM_LOCK_DIR_MODE, exist_ok=True)
-    try:
-        os.chmod(lockdir, _SNAPM_LOCK_DIR_MODE)
-    except OSError as err:
-        st = os.stat(lockdir)
-        if (st.st_mode & 0o777) != _SNAPM_LOCK_DIR_MODE:
-            raise SnapmSystemError(
-                f"Lock directory {lockdir} has insecure permissions"
-            ) from err
-        _log_error(
-            "Failed to set permissions on lock directory (current mode: %o) %s: %s",
-            st.st_mode & 0o777,
-            lockdir,
-            err,
-        )
-    return lockdir
+    return _check_snapm_dir(_SNAPM_LOCK_DIR, _SNAPM_LOCK_DIR_MODE, "Lock directory")
 
 
 def _lock_manager(lockdir: str) -> int:
@@ -499,6 +572,16 @@ def _with_manager_lock(func):
     return wrapper
 
 
+def _check_mounts_dir() -> str:
+    """
+    Check for the presence of the snapm runtime mount directory and create
+    it if necessary.
+    """
+    return _check_snapm_dir(
+        _SNAPM_MOUNTS_DIR, _SNAPM_MOUNTS_DIR_MODE, "Mounts directory"
+    )
+
+
 class Scheduler:
     """
     A high-level interface for managing on-disk schedule configuration
@@ -528,7 +611,7 @@ class Scheduler:
             )
             return
 
-        for sched_file in listdir(_SCHEDULE_D_PATH):
+        for sched_file in os.listdir(_SCHEDULE_D_PATH):
             if not sched_file.endswith(".json"):
                 continue
             sched_path = join(_SCHEDULE_D_PATH, sched_file)
@@ -723,13 +806,16 @@ class Manager:
     Snapshot Manager high level interface.
     """
 
-    plugins = []
-    snapshot_sets = []
-    by_name = {}
-    by_uuid = {}
-
     @suspend_signals
     def __init__(self):
+        self.plugins = []
+        self.snapshot_sets = []
+        self.by_name = {}
+        self.by_uuid = {}
+
+        # Verify presence and permissions for SNAPM_RUNTIME_DIR
+        _check_snapm_runtime_dir()
+
         # Verify existence of lock path before initialising Manager
         try:
             self._lock_dir = _check_lock_dir()
@@ -738,15 +824,20 @@ class Manager:
                 f"Failed to create lock directory at {_SNAPM_LOCK_DIR}: {err}"
             ) from err
 
-        self.plugins = []
-        self.snapshot_sets = []
-        self.by_name = {}
-        self.by_uuid = {}
+        # Verify existence of mounts path before initialising Manager
+        try:
+            self._mounts_dir = _check_mounts_dir()
+        except (OSError, SnapmSystemError) as err:
+            raise SnapmSystemError(
+                f"Failed to create mounts directory at {_SNAPM_MOUNTS_DIR}: {err}"
+            ) from err
 
         snapm_config = SnapmConfig.from_file(_SNAPM_CFG_PATH)
         self.disable_plugins = snapm_config.disable_plugins
+
         check_boom_config()
         self._boot_cache = BootCache()
+
         plugin_classes = load_plugins()
         for plugin_class in plugin_classes:
             if plugin_class.name in self.disable_plugins:  # pragma: no cover
@@ -769,8 +860,10 @@ class Manager:
                 )
             except SnapmPluginError as err:
                 _log_error("Disabling plugin %s: %s", plugin_class.__name__, err)
-        self.scheduler = Scheduler(self, _SCHEDULE_D_PATH)
+
         self.discover_snapshot_sets()
+        self.scheduler = Scheduler(self, _SCHEDULE_D_PATH)
+        self.mounts = Mounts(self, self._mounts_dir)
 
     def _load_plugin_config(self, plugin_name: str) -> ConfigParser:
         """
@@ -816,7 +909,7 @@ class Manager:
                 size_policies[source],
             )
 
-            if not ismount(source) and not S_ISBLK(stat(source).st_mode):
+            if not ismount(source) and not S_ISBLK(os.stat(source).st_mode):
                 raise SnapmPathError(
                     f"Path '{source}' is not a block device or mount point"
                 )
@@ -897,9 +990,9 @@ class Manager:
         Initialises the ``snapshot_sets``, ``by_name`` and ``by_uuid`` members
         with the discovered snapshot sets.
         """
-        self.snapshot_sets = []
-        self.by_name = {}
-        self.by_uuid = {}
+        self.snapshot_sets.clear()
+        self.by_name.clear()
+        self.by_uuid.clear()
         snapshots = []
         snapset_names = set()
         self._boot_cache.refresh_cache()
@@ -1092,7 +1185,7 @@ class Manager:
         mounts = {}
 
         for source in provider_map:
-            if S_ISBLK(stat(source).st_mode):
+            if S_ISBLK(os.stat(source).st_mode):
                 mounts[source] = _find_mount_point_for_devpath(source)
                 origins[source] = source
                 mount = mounts[source]
@@ -1130,7 +1223,7 @@ class Manager:
 
         snapshots = []
         for source in provider_map:
-            if S_ISBLK(stat(source).st_mode):
+            if S_ISBLK(os.stat(source).st_mode):
                 mount = mounts[source]
             else:
                 mount = source
