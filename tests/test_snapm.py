@@ -10,6 +10,7 @@ import logging
 from uuid import UUID
 
 import snapm
+import snapm._snapm
 
 from tests import MockArgs
 
@@ -194,3 +195,21 @@ class SnapmTests(unittest.TestCase):
 
     def test_size_fmt_yib(self):
         self.assertEqual(snapm.size_fmt(1000000000000000000000000000), "827.2YiB")
+
+    def test__unescape_mounts(self):
+        unesc_strings = {
+            "/foo/bar\\040baz": "/foo/bar baz",
+            "/path/with/tab\\011chars": "/path/with/tab\tchars",
+            "embedded\\012newline": "embedded\nnewline",
+            "back\\134slash": "back\\slash",
+        }
+        for to_unesc in unesc_strings:
+            self.assertEqual(snapm._snapm._unescape_mounts(to_unesc), unesc_strings[to_unesc])
+
+    def test__unescape_mounts_None(self):
+        with self.assertRaises(AttributeError):
+            snapm._snapm._unescape_mounts(None)
+
+    def test__unescape_mounts_not_a_string(self):
+        with self.assertRaises(AttributeError):
+            snapm._snapm._unescape_mounts(1)

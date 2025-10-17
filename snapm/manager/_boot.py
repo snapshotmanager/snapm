@@ -8,7 +8,6 @@
 """
 Boot integration for snapshot manager
 """
-import collections
 from os import uname
 from os.path import exists as path_exists
 import logging
@@ -31,6 +30,7 @@ from snapm import (
     SnapmCalloutError,
     SnapmSystemError,
     ETC_FSTAB,
+    FsTabReader,
 )
 
 _log = logging.getLogger(__name__)
@@ -55,115 +55,6 @@ REVERT_ARG = "snapm.revert"
 
 #: /dev path prefix
 _DEV_PREFIX = "/dev/"
-
-
-class Fstab:
-    """
-    A class to read and query data from an fstab file.
-
-    This class reads an fstab-like file and provides methods to iterate
-    over its entries and look up specific entries based on their properties.
-
-    """
-
-    # Define a named tuple to give structure to each fstab entry.
-    # This makes the code more readable than using a regular tuple.
-    FstabEntry = collections.namedtuple(
-        "FstabEntry", ["what", "where", "fstype", "options", "freq", "passno"]
-    )
-
-    def __init__(self, path="/etc/fstab"):
-        """
-        Initializes the Fstab object by reading and parsing the file.
-
-        :param path: The path to the fstab file. Defaults to '/etc/fstab'.
-        :type path: str
-        :raises SnapmNotFoundError: If the specified fstab file does not exist.
-        :raises SnapmSystemError: If there is an error reading the fstab file.
-
-        """
-        self.path = path
-        self.entries = []
-        self._read_fstab()
-
-    def _read_fstab(self):
-        """
-        Private method to read and parse the fstab file.
-        It populates the self.entries list.
-        """
-        try:
-            with open(self.path, "r", encoding="utf8") as f:
-                for line in f:
-                    # 1. Strip leading/trailing whitespace.
-                    line = line.strip()
-
-                    # 2. Ignore empty lines and comments.
-                    if not line or line.startswith("#"):
-                        continue
-
-                    # 3. Split the line into parts.
-                    parts = line.split()
-
-                    # 4. An fstab entry must have 6 fields.
-                    if len(parts) != 6:
-                        # You might want to log a warning here in a real application.
-                        continue
-
-                    # 5. Convert freq and passno to integers for proper typing.
-                    try:
-                        parts[4] = int(parts[4])
-                        parts[5] = int(parts[5])
-                    except KeyError:
-                        continue
-
-                    # 6. Create a named tuple and append it to our list.
-                    entry = self.FstabEntry(*parts)
-                    self.entries.append(entry)
-
-        except FileNotFoundError as exc:
-            _log_error("Error: The file '%s' was not found.", self.path)
-            raise SnapmNotFoundError(f"Fstab file not found: {self.path}") from exc
-        except IOError as e:
-            _log_error("Error: Could not read the file '%s': %s", self.path, e)
-            raise SnapmSystemError(f"Error reading fstab file: {self.path}") from e
-
-    def __iter__(self):
-        """
-        Allows iteration over the fstab entries.
-
-        :yields:
-            A 6-tuple for each entry in the fstab file:
-            (what, where, fstype, options, freq, passno)
-        """
-        yield from self.entries
-
-    def lookup(self, key, value):
-        """
-        Finds and generates all entries matching a specific key-value pair.
-
-        :params key: The field to search by. Must be one of 'what', 'where',
-                    'fstype', 'options', 'freq', or 'passno'.
-        :type key: str
-        :params value: The value to match for the given key.
-        :type value: str|int
-        :yields: A 6-tuple for each matching fstab entry.
-
-        :raises KeyError: If the provided key is not a valid fstab field name.
-        """
-        if key not in self.FstabEntry._fields:
-            raise KeyError(
-                f"Invalid lookup key: '{key}'. "
-                f"Valid keys are: {self.FstabEntry._fields}"
-            )
-
-        for entry in self.entries:
-            # getattr() allows us to get an attribute by its string name.
-            if getattr(entry, key) == value:
-                yield entry
-
-    def __repr__(self):
-        """Return a machine readable string representation of this Fstab."""
-        return f"Fstab(path='{self.path}')"
 
 
 def _get_uts_release():
@@ -297,8 +188,8 @@ def _find_snapset_root(snapset, origin=False):
                 return snapshot.origin
             return snapshot.devpath
     dev_path = None
-    fstab_reader = Fstab()
-    for entry in fstab_reader.lookup("where", "/"):
+    fstab = FsTabReader()
+    for entry in fstab.lookup("where", "/"):
         if entry.what.startswith("UUID="):
             dev_path = get_device_path(entry.what.split("=", maxsplit=1)[1], "uuid")
         if entry.what.startswith("LABEL="):

@@ -12,6 +12,7 @@ from uuid import UUID, uuid5
 from datetime import datetime
 from typing import Union
 from enum import Enum
+import collections
 import string
 import json
 import math
@@ -765,6 +766,24 @@ class SnapStatus(Enum):
         if self == SnapStatus.REVERTING:
             return "Reverting"
         return "Invalid"
+
+
+def _unescape_mounts(escaped: str) -> str:
+    """
+    Unescape octal escapes in values read from /proc/*mounts
+
+    :param escaped: The string to unescape.
+    :type escaped: str
+    :returns: The unescaped string with octal values replaced by literal
+              character values.
+    :rtype: str
+    """
+    return (
+        escaped.replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
+    )
 
 
 def _split_name(name):
@@ -1677,6 +1696,119 @@ class Snapshot:
         self.invalidate_cache()
 
 
+class FsTabReader:
+    """
+    A class to read and query data from an fstab file.
+
+    This class reads an fstab-like file and provides methods to iterate
+    over its entries and look up specific entries based on their properties.
+
+    """
+
+    # Define a named tuple to give structure to each fstab entry.
+    FsTabEntry = collections.namedtuple(
+        "FsTabEntry", ["what", "where", "fstype", "options", "freq", "passno"]
+    )
+
+    def __init__(self, path=ETC_FSTAB):
+        """
+        Initializes the FsTabReader object by reading and parsing the file.
+
+        :param path: The path to the fstab file. Defaults to '/etc/fstab'.
+        :type path: str
+        :raises SnapmNotFoundError: If the specified fstab file does not exist.
+        :raises SnapmSystemError: If there is an error reading the fstab file.
+
+        """
+        self.path = path
+        self.entries = []
+        self._read_fstab()
+
+    def _read_fstab(self):
+        """
+        Private method to read and parse the fstab file.
+        It populates the self.entries list.
+        """
+        try:
+            with open(self.path, "r", encoding="utf8") as f:
+                for line in f:
+                    # 1. Remove end-of-line comments and trim; ignore empties.
+                    line = line.split("#", 1)[0].strip()
+                    if not line:
+                        continue
+
+                    # 2. Split the line into parts.
+                    parts = line.split()
+
+                    # 3. An fstab entry must have 6 fields.
+                    if len(parts) != 6:
+                        _log_warn("Skipping malformed %s entry: %s", self.path, line)
+                        continue
+
+                    # 4. Create a named tuple and append it to our list.
+                    what, where, fstype, options, freq, passno = parts
+                    try:
+                        entry = self.FsTabEntry(
+                            _unescape_mounts(what),
+                            _unescape_mounts(where),
+                            fstype,
+                            _unescape_mounts(options),
+                            int(freq),
+                            int(passno),
+                        )
+                    except ValueError:
+                        # Keep as strings if non-numeric (defensive)
+                        entry = self.FsTabEntry(*parts)
+                    self.entries.append(entry)
+
+        except FileNotFoundError as exc:
+            _log_error("Error: The file '%s' was not found.", self.path)
+            raise SnapmNotFoundError(f"FsTab file not found: {self.path}") from exc
+        except IOError as e:
+            _log_error("Error: Could not read the file '%s': %s", self.path, e)
+            raise SnapmSystemError(f"Error reading fstab file: {self.path}") from e
+
+    def __iter__(self):
+        """
+        Allows iteration over the fstab entries.
+
+        :yields:
+            A 6-tuple for each entry in the fstab file:
+            (what, where, fstype, options, freq, passno)
+        """
+        yield from self.entries
+
+    def lookup(self, key, value):
+        """
+        Finds and generates all entries matching a specific key-value pair.
+
+        :param key: The field to search by. Must be one of 'what', 'where',
+                    'fstype', 'options', 'freq', or 'passno'.
+        :type key: str
+        :param value: The value to match for the given key.
+        :type value: str|int
+        :yields: A 6-tuple for each matching fstab entry.
+
+        :raises KeyError: If the provided key is not a valid fstab field name.
+        """
+        if key not in self.FsTabEntry._fields:
+            raise KeyError(
+                f"Invalid lookup key: '{key}'. "
+                f"Valid keys are: {self.FsTabEntry._fields}"
+            )
+
+        for entry in self.entries:
+            # getattr() allows us to get an attribute by its string name.
+            if getattr(entry, key) == value:
+                yield entry
+
+    def __repr__(self):
+        """
+        Return a machine readable string representation of this FsTabReader.
+        """
+        return f"FsTabReader(path='{self.path}')"
+
+
 __all__ = [
     "ETC_FSTAB",
     "SNAPSET_NAME",
@@ -1756,4 +1888,5 @@ __all__ = [
     "SnapStatus",
     "SnapshotSet",
     "Snapshot",
+    "FsTabReader",
 ]
