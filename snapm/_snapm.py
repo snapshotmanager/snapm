@@ -1871,15 +1871,13 @@ def get_device_path(identifier: str, by_type: str) -> Optional[str]:
         )
         raise SnapmNotFoundError("blkid command not found.") from exc
     except subprocess.CalledProcessError as e:
-        # blkid returns 1 if the specified UUID/label is not found.
-        # Other non-zero codes indicate different errors (e.g., permissions).
-        if e.returncode == 1:
+        # blkid returns 2 if the specified UUID/label is not found.
+        if e.returncode == 2:
             # This is the expected behavior when the identifier is not found.
             _log_error(
-                "Identifier '%s' (%s) not found by blkid. Stderr: %s",
+                "Identifier '%s' (%s) not found by blkid.",
                 identifier,
                 by_type,
-                e.stderr.strip(),
             )
             return None
 
