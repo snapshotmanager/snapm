@@ -10,9 +10,8 @@ Boot integration for snapshot manager
 """
 from os import uname
 from os.path import exists as path_exists
-import logging
 from typing import Optional
-import subprocess
+import logging
 
 import boom
 import boom.cache
@@ -28,9 +27,9 @@ from boom.osprofile import match_os_profile_by_version
 from snapm import (
     SnapmNotFoundError,
     SnapmCalloutError,
-    SnapmSystemError,
     ETC_FSTAB,
     FsTabReader,
+    get_device_path,
 )
 
 _log = logging.getLogger(__name__)
@@ -90,85 +89,6 @@ def _get_machine_id() -> Optional[str]:
             _log_error("Could not read machine-id from '%s': %s", path, err)
             machine_id = None
     return machine_id
-
-
-def get_device_path(identifier: str, by_type: str) -> Optional[str]:
-    """
-    Translates a filesystem UUID or label to its corresponding device path
-    using the blkid command.
-
-    :param:   identifier: The UUID or label of the filesystem.
-    :param:   by_type: The type of identifier to search for.
-
-    :returns:   The device path if found, otherwise None.
-    :rtype:    Optional[str]
-
-    :raises:   ValueError: If 'identifier' is empty or 'by_type' is not 'uuid' or 'label'.
-    :raises:   SnapmNotFoundError: If the 'blkid' command is not found on the system.
-    :raises:   SnapmSystemError: If the 'blkid' command exits with a non-zero status
-                                due to reasons other than the identifier not being found
-                                (e.g., permission issues).
-    :raises:   SnapmCalloutError: For any other unexpected errors during command execution
-                                  or parsing.
-    """
-    if not identifier:
-        raise ValueError("Identifier cannot be an empty string.")
-    if by_type not in ["uuid", "label"]:
-        raise ValueError("Invalid 'by_type'. Must be 'uuid' or 'label'.")
-
-    try:
-        command = ["blkid"]
-
-        if by_type == "uuid":
-            command.extend(["--uuid", identifier])
-        else:  # by_type == "label"
-            command.extend(["--label", identifier])
-
-        # Execute the command
-        result = subprocess.run(command, capture_output=True, text=True, check=True)
-
-        # The output of 'blkid --uuid <UUID>' or 'blkid --label <LABEL>' is simply the device path
-        # if found. If not found, it returns a non-zero exit code, which
-        # 'check=True' converts into a CalledProcessError.
-        device_path = result.stdout.strip()
-
-        if device_path:
-            return device_path
-
-        # This case should ideally not be reached if check=True is working as expected
-        # for "not found" scenarios, but it's a safeguard.
-        return None
-
-    except FileNotFoundError as exc:
-        _log_error(
-            "Error: 'blkid' command not found. Please ensure it is installed and in your PATH."
-        )
-        raise SnapmNotFoundError("blkid command not found.") from exc
-    except subprocess.CalledProcessError as e:
-        # blkid returns 1 if the specified UUID/label is not found.
-        # Other non-zero codes indicate different errors (e.g., permissions).
-        if e.returncode == 1:
-            # This is the expected behavior when the identifier is not found.
-            _log_error(
-                "Identifier '%s' (%s) not found by blkid. Stderr: %s",
-                identifier,
-                by_type,
-                e.stderr.strip(),
-            )
-            return None
-
-        # Other errors (e.g., permission denied) should still be raised.
-        _log_error(
-            "Error executing blkid command (return code %d): %s", e.returncode, e
-        )
-        _log_error("Stdout: %s", e.stdout.strip())
-        _log_error("Stderr: %s", e.stderr.strip())
-        raise SnapmSystemError(f"Error executing blkid command: {e}") from e
-    except Exception as e:
-        _log_error("An unexpected error occurred while executing blkid: %s", str(e))
-        raise SnapmCalloutError(
-            f"An unexpected error occurred while executing blkid: {e}"
-        ) from e
 
 
 def _find_snapset_root(snapset, origin=False):
