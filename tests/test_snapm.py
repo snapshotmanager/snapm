@@ -5,14 +5,18 @@
 # This file is part of the snapm project.
 #
 # SPDX-License-Identifier: Apache-2.0
+import subprocess
 import unittest
 import logging
 from uuid import UUID
+import os
 
 import snapm
 import snapm._snapm
 
-from tests import MockArgs
+from tests import MockArgs, have_root, BOOT_ROOT_TEST
+from ._util import LvmLoopBacked, StratisLoopBacked
+
 
 log = logging.getLogger()
 
@@ -31,7 +35,7 @@ EIGHT_TIB = 8 * 2**40
 TEN_TIB = 10 * 2**40
 
 
-class SnapmTests(unittest.TestCase):
+class SnapmTestsSimple(unittest.TestCase):
     """Test snapm module"""
 
     def setUp(self):
@@ -213,3 +217,51 @@ class SnapmTests(unittest.TestCase):
     def test__unescape_mounts_not_a_string(self):
         with self.assertRaises(AttributeError):
             snapm._snapm._unescape_mounts(1)
+
+
+@unittest.skipIf(not have_root(), "requires root privileges")
+class SnapmTests(unittest.TestCase):
+    """Test snapm module with devices"""
+    volumes = ["root"]
+    thin_volumes = ["opt"]
+    stratis_volumes = ["fs1"]
+
+    def setUp(self):
+        log.debug("Preparing %s", self._testMethodName)
+        def cleanup_lvm():
+            log.debug("Cleaning up LVM (%s)", self._testMethodName)
+            if hasattr(self, "_lvm"):
+                self._lvm.destroy()
+
+        def cleanup_stratis():
+            log.debug("Cleaning up Stratis (%s)", self._testMethodName)
+            if hasattr(self, "_stratis"):
+                self._stratis.destroy()
+
+        self.addCleanup(cleanup_lvm)
+        self.addCleanup(cleanup_stratis)
+
+        self._lvm = LvmLoopBacked(self.volumes, thin_volumes=self.thin_volumes)
+        self._stratis = StratisLoopBacked(self.stratis_volumes)
+
+    def test_get_device_path_uuid(self):
+        dev_path = self._lvm.block_devs()[0]
+        blkid_cmd = ["blkid", "--match-tag=UUID", "--output=value", dev_path]
+        result = subprocess.run(blkid_cmd, check=True, capture_output=True, encoding="utf8")
+        dev_uuid = result.stdout.strip()
+        self.assertTrue(os.path.samefile(dev_path, snapm.get_device_path("uuid", dev_uuid)))
+
+    def test_get_device_path_no_such_uuid(self):
+        dev_uuid = "f00f00f0-baaa-cafe-f000-b4f67cea90d5"
+        self.assertEqual(None, snapm.get_device_path("uuid", dev_uuid))
+
+    def test_get_device_path_label(self):
+        dev_path = self._lvm.block_devs()[0]
+        blkid_cmd = ["blkid", "--match-tag=LABEL", "--output=value", dev_path]
+        result = subprocess.run(blkid_cmd, check=True, capture_output=True, encoding="utf8")
+        dev_label = result.stdout.strip()
+        self.assertTrue(os.path.samefile(dev_path, snapm.get_device_path("label", dev_label)))
+
+    def test_get_device_path_no_such_label(self):
+        dev_label = "ThisIsNotALabel"
+        self.assertEqual(None, snapm.get_device_path("label", dev_label))

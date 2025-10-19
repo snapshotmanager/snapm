@@ -1810,29 +1810,29 @@ class FsTabReader:
         return f"FsTabReader(path='{self.path}')"
 
 
-def get_device_path(identifier: str, by_type: str) -> Optional[str]:
+def get_device_path(by_type: str, identifier: str) -> Optional[str]:
     """
     Translates a filesystem UUID or label to its corresponding device path
     using the blkid command.
 
-    :param:   identifier: The UUID or label of the filesystem.
-    :param:   by_type: The type of identifier to search for.
+    :param by_type: The type of identifier to search for.
+    :param identifier: The UUID or label of the filesystem.
 
-    :returns:   The device path if found, otherwise None.
-    :rtype:    Optional[str]
+    :returns: The device path if found, otherwise None.
+    :rtype: Optional[str]
 
-    :raises:   ValueError: If 'identifier' is empty or 'by_type' is not 'uuid' or 'label'.
-    :raises:   SnapmNotFoundError: If the 'blkid' command is not found on the system.
-    :raises:   SnapmSystemError: If the 'blkid' command exits with a non-zero status
-                                due to reasons other than the identifier not being found
-                                (e.g., permission issues).
-    :raises:   SnapmCalloutError: For any other unexpected errors during command execution
-                                  or parsing.
+    :raises ValueError: If 'identifier' is empty or 'by_type' is not 'uuid' or 'label'.
+    :raises SnapmNotFoundError: If the 'blkid' command is not found on the system.
+    :raises SnapmSystemError: If the 'blkid' command exits with a non-zero status
+                              due to reasons other than the identifier not being found
+                              (e.g., permission issues).
+    :raises SnapmCalloutError: For any other unexpected errors during command execution
+                               or parsing.
     """
-    if not identifier:
-        raise ValueError("Identifier cannot be an empty string.")
     if by_type not in ["uuid", "label"]:
         raise ValueError("Invalid 'by_type'. Must be 'uuid' or 'label'.")
+    if not identifier:
+        raise ValueError("Identifier cannot be an empty string.")
 
     env = dict(os.environ, LC_ALL="C", LANG="C")
     try:
@@ -1874,7 +1874,7 @@ def get_device_path(identifier: str, by_type: str) -> Optional[str]:
         # blkid returns 2 if the specified UUID/label is not found.
         if e.returncode == 2:
             # This is the expected behavior when the identifier is not found.
-            _log_error(
+            _log_debug(
                 "Identifier '%s' (%s) not found by blkid.",
                 identifier,
                 by_type,

@@ -111,9 +111,9 @@ def _find_snapset_root(snapset, origin=False):
     fstab = FsTabReader()
     for entry in fstab.lookup("where", "/"):
         if entry.what.startswith("UUID="):
-            dev_path = get_device_path(entry.what.split("=", maxsplit=1)[1], "uuid")
+            dev_path = get_device_path("uuid", entry.what.split("=", maxsplit=1)[1])
         if entry.what.startswith("LABEL="):
-            dev_path = get_device_path(entry.what.split("=", maxsplit=1)[1], "label")
+            dev_path = get_device_path("label", entry.what.split("=", maxsplit=1)[1])
         if entry.what.startswith("/"):
             dev_path = entry.what
     if dev_path:
