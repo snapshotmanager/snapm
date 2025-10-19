@@ -265,3 +265,20 @@ class SnapmTests(unittest.TestCase):
     def test_get_device_path_no_such_label(self):
         dev_label = "ThisIsNotALabel"
         self.assertEqual(None, snapm.get_device_path("label", dev_label))
+
+    def test_get_device_fstype_ext4(self):
+        dev_path = self._lvm.block_devs()[0]
+        fstype = snapm.get_device_fstype(dev_path)
+        self.assertEqual("ext4", fstype)
+
+    def test_get_device_fstype_empty(self):
+        with self.assertRaises(ValueError):
+            snapm.get_device_fstype("")
+
+    def test_get_device_fstype_no_such_path(self):
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            snapm.get_device_fstype("/whats/the/frequency/kenneth/?")
+
+    def test_get_device_fstype_not_a_blockdev(self):
+        with self.assertRaises(snapm.SnapmPathError):
+            snapm.get_device_fstype("/dev/null")

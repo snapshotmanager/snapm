@@ -11,6 +11,7 @@ Global definitions for the top-level snapm package.
 from typing import Union, Optional
 from uuid import UUID, uuid5
 from datetime import datetime
+from stat import S_ISBLK
 from enum import Enum
 import collections
 import subprocess
@@ -1895,6 +1896,76 @@ def get_device_path(by_type: str, identifier: str) -> Optional[str]:
         ) from e
 
 
+def get_device_fstype(devpath: str) -> str:
+    """
+    Determine the file system type for the device at `devpath`.
+
+    :param devpath: The path to the device.
+    :returns: The file system type, 'xfs', 'ext4', 'swap', etc.
+    :rtype: str
+
+    :raises SnapmNotFoundError: If the device is not found.
+    :raises SnapmSystemError: If the 'blkid' command exits with a non-zero status
+                              due to reasons other than the identifier not being found
+                              (e.g., permission issues).
+    :raises SnapmCalloutError: For any other unexpected errors during command execution
+                               or parsing.
+    """
+    if not devpath:
+        raise ValueError("Device path cannot be an empty string.")
+    if not os.path.exists(devpath):
+        raise SnapmNotFoundError(f"Unknown device path: {devpath}")
+    if not S_ISBLK(os.stat(devpath).st_mode):
+        raise SnapmPathError(f"Path {devpath} is not a block device.")
+
+    env = dict(os.environ, LC_ALL="C", LANG="C")
+    try:
+        command = ["blkid", "--match-tag=TYPE", "--output=value", devpath]
+
+        # Execute the command
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+            env=env,
+        )
+
+        # The output of 'blkid --match-tag=TYPE --output=value /path/to/dev' is simply
+        # the value of the requested tag, e.g.:
+        # # blkid --match-tag=TYPE --output=value /dev/fedora/root
+        # xfs
+        # if found. If not found, it returns a non-zero exit code, which
+        # 'check=True' converts into a CalledProcessError.
+        return result.stdout.strip()
+
+    except FileNotFoundError as exc:
+        _log_error(
+            "Error: 'blkid' command not found. Please ensure it is installed and in your PATH."
+        )
+        raise SnapmNotFoundError("blkid command not found.") from exc
+    except subprocess.CalledProcessError as e:
+        # blkid returns 2 if the specified device path does not exist, is not a
+        # block device, or if the specified tag is undefined.
+        if e.returncode == 2:
+            _log_debug("blkid: no TYPE for %s", devpath)
+            return ""
+
+        # Other errors (e.g., permission denied) should still be raised.
+        _log_error(
+            "Error executing blkid command (return code %d): %s", e.returncode, e
+        )
+        _log_error("Stdout: %s", e.stdout.strip())
+        _log_error("Stderr: %s", e.stderr.strip())
+        raise SnapmSystemError(f"Error executing blkid command: {e}") from e
+    except Exception as e:
+        _log_error("An unexpected error occurred while executing blkid: %s", str(e))
+        raise SnapmCalloutError(
+            f"An unexpected error occurred while executing blkid: {e}"
+        ) from e
+
+
 __all__ = [
     "ETC_FSTAB",
     "SNAPSET_NAME",
@@ -1976,4 +2047,5 @@ __all__ = [
     "Snapshot",
     "FsTabReader",
     "get_device_path",
+    "get_device_fstype",
 ]
