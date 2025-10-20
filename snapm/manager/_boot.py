@@ -27,7 +27,6 @@ from boom.osprofile import match_os_profile_by_version
 from snapm import (
     SnapmNotFoundError,
     SnapmCalloutError,
-    ETC_FSTAB,
     FsTabReader,
     get_device_path,
 )
@@ -91,7 +90,7 @@ def _get_machine_id() -> Optional[str]:
     return machine_id
 
 
-def _find_snapset_root(snapset, origin=False):
+def _find_snapset_root(snapset, fstab: FsTabReader, origin: bool = False):
     """
     Find the device that backs the root filesystem for snapshot set ``snapset``.
 
@@ -99,6 +98,7 @@ def _find_snapset_root(snapset, origin=False):
     fstab.
 
     :param snapset: The ``SnapshotSet`` to check.
+    :param fstab: An ``FsTabReader`` instance to use.
     :param origin: Always return the origin device, even if a snapshot exists
                    for the root mount point.
     """
@@ -108,12 +108,12 @@ def _find_snapset_root(snapset, origin=False):
                 return snapshot.origin
             return snapshot.devpath
     dev_path = None
-    fstab = FsTabReader()
+
     for entry in fstab.lookup("where", "/"):
         if entry.what.startswith("UUID="):
-            dev_path = get_device_path("uuid", entry.what.split("=", maxsplit=1)[1])
+            dev_path = get_device_path(entry.what.split("=", maxsplit=1)[1], "uuid")
         if entry.what.startswith("LABEL="):
-            dev_path = get_device_path("label", entry.what.split("=", maxsplit=1)[1])
+            dev_path = get_device_path(entry.what.split("=", maxsplit=1)[1], "label")
         if entry.what.startswith("/"):
             dev_path = entry.what
     if dev_path:
@@ -136,54 +136,48 @@ def _create_default_os_profile():
     )
 
 
-def _build_snapset_mount_list(snapset):
+def _build_snapset_mount_list(snapset, fstab: FsTabReader):
     """
     Build a list of command line mount unit definitions for the snapshot set
     ``snapset``. Mount points that are not part of the snapset are substituted
     from /etc/fstab.
 
     :param snapset: The snapshot set to build a mount list for.
+    :param fstab: An ``FsTabReader`` instance to use.
     """
     mounts = []
     snapset_mounts = snapset.mount_points
-    with open(ETC_FSTAB, "r", encoding="utf8") as fstab:
-        for line in fstab.readlines():
-            if line == "\n" or line.startswith("#"):
-                continue
-            parts = line.split()
-            if len(parts) != 6:
-                _log_warn("Skipping malformed fstab line: %s", line.strip())
-                continue
-            what, where, fstype, options, _, _ = parts
-            if where == "/" or fstype == "swap":
-                continue
-            if where in snapset_mounts:
-                snapshot = snapset.snapshot_by_mount_point(where)
-                mounts.append(f"{snapshot.devpath}:{where}:{fstype}:{options}")
-            else:
-                mounts.append(f"{what}:{where}:{fstype}:{options}")
+
+    for entry in fstab:
+        what, where, fstype, options, _, _ = entry
+        if where == "/" or fstype == "swap":
+            continue
+        if where in snapset_mounts:
+            snapshot = snapset.snapshot_by_mount_point(where)
+            mounts.append(f"{snapshot.devpath}:{where}:{fstype}:{options}")
+        else:
+            mounts.append(f"{what}:{where}:{fstype}:{options}")
     return mounts
 
 
-def _build_swap_list():
+def _build_swap_list(fstab: FsTabReader) -> List[str]:
     """
     Build a list of command line swap unit definitions for the running system.
     Swap entries are extracted from /etc/fstab and returned as a list of
     "WHAT:OPTIONS" strings.
     """
     swaps = []
-    with open(ETC_FSTAB, "r", encoding="utf8") as fstab:
-        for line in fstab.readlines():
-            if line == "\n" or line.startswith("#"):
-                continue
-            parts = line.split()
-            if len(parts) != 6:
-                _log_warn("Skipping malformed fstab line: %s", line.strip())
-                continue
-            what, _, fstype, options, _, _ = parts
-            if fstype != "swap":
-                continue
-            swaps.append(f"{what}:{options}")
+    for entry in fstab:
+        what, where, fstype, options, _, _ = entry
+        if fstype != "swap":
+            continue
+        if where != "none":
+            _log_warn(
+                "Swap entry %s has invalid mount point '%s' (expected 'none')",
+                what,
+                where,
+            )
+        swaps.append(f"{what}:{options}")
     return swaps
 
 
@@ -267,9 +261,12 @@ def create_snapset_boot_entry(snapset, title=None):
     """
     version = _get_uts_release()
     title = title or f"Snapshot {snapset.name} {snapset.time} ({version})"
-    root_device = _find_snapset_root(snapset)
-    mounts = _build_snapset_mount_list(snapset)
-    swaps = _build_swap_list()
+
+    fstab = FsTabReader()
+    root_device = _find_snapset_root(snapset, fstab)
+    mounts = _build_snapset_mount_list(snapset, fstab)
+    swaps = _build_swap_list(fstab)
+
     snapset.boot_entry = _create_boom_boot_entry(
         version,
         title,
@@ -295,7 +292,10 @@ def create_snapset_revert_entry(snapset, title=None):
     """
     version = _get_uts_release()
     title = title or f"Revert {snapset.name} {snapset.time} ({version})"
-    root_device = _find_snapset_root(snapset, origin=True)
+
+    fstab = FsTabReader()
+    root_device = _find_snapset_root(snapset, fstab, origin=True)
+
     snapset.revert_entry = _create_boom_boot_entry(
         version,
         title,
