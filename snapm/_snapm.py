@@ -1966,6 +1966,59 @@ def get_device_fstype(devpath: str) -> str:
         ) from e
 
 
+def find_snapset_root(snapset, fstab: FsTabReader, origin: bool = False):
+    """
+    Find the device that backs the root filesystem for snapshot set ``snapset``.
+
+    If the snapset does not include the root volume look the device up via the
+    fstab.
+
+    :param snapset: The ``SnapshotSet`` to check.
+    :type snapset: SnapshotSet
+    :param fstab: An ``FsTabReader`` instance to use.
+    :type fstab: FsTabReader
+    :param origin: Always return the origin device, even if a snapshot exists
+                   for the root mount point.
+    :type origin: bool
+    :returns: The device path for the root filesystem.
+    :rtype: str
+    :raises SnapmNotFoundError: If no root device can be found in the snapshot set
+                                or fstab.
+    """
+    for snapshot in snapset.snapshots:
+        if snapshot.mount_point == "/":
+            if origin:
+                return snapshot.origin
+            return snapshot.devpath
+    dev_path = None
+
+    for entry in fstab.lookup("where", "/"):
+        if entry.what.startswith("UUID="):
+            dev_path = get_device_path("uuid", entry.what.split("=", maxsplit=1)[1])
+            break
+        if entry.what.startswith("LABEL="):
+            dev_path = get_device_path("label", entry.what.split("=", maxsplit=1)[1])
+            break
+        if entry.what.startswith("PARTUUID="):
+            ident = entry.what.split("=", maxsplit=1)[1]
+            cand = f"/dev/disk/by-partuuid/{ident}"
+            dev_path = cand if os.path.exists(cand) else None
+            break
+        if entry.what.startswith("PARTLABEL="):
+            ident = entry.what.split("=", maxsplit=1)[1]
+            cand = f"/dev/disk/by-partlabel/{ident}"
+            dev_path = cand if os.path.exists(cand) else None
+            break
+        if entry.what.startswith("/"):
+            dev_path = entry.what
+            break
+
+    if dev_path:
+        return dev_path
+
+    raise SnapmNotFoundError(f"Could not find root device for snapset {snapset.name}")
+
+
 __all__ = [
     "ETC_FSTAB",
     "SNAPSET_NAME",
@@ -2048,4 +2101,5 @@ __all__ = [
     "FsTabReader",
     "get_device_path",
     "get_device_fstype",
+    "find_snapset_root",
 ]

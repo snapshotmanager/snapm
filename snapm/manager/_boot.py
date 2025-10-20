@@ -25,10 +25,9 @@ from boom.bootloader import (
 from boom.osprofile import match_os_profile_by_version
 
 from snapm import (
-    SnapmNotFoundError,
     SnapmCalloutError,
     FsTabReader,
-    get_device_path,
+    find_snapset_root,
 )
 
 _log = logging.getLogger(__name__)
@@ -88,37 +87,6 @@ def _get_machine_id() -> Optional[str]:
             _log_error("Could not read machine-id from '%s': %s", path, err)
             machine_id = None
     return machine_id
-
-
-def _find_snapset_root(snapset, fstab: FsTabReader, origin: bool = False):
-    """
-    Find the device that backs the root filesystem for snapshot set ``snapset``.
-
-    If the snapset does not include the root volume look the device up via the
-    fstab.
-
-    :param snapset: The ``SnapshotSet`` to check.
-    :param fstab: An ``FsTabReader`` instance to use.
-    :param origin: Always return the origin device, even if a snapshot exists
-                   for the root mount point.
-    """
-    for snapshot in snapset.snapshots:
-        if snapshot.mount_point == "/":
-            if origin:
-                return snapshot.origin
-            return snapshot.devpath
-    dev_path = None
-
-    for entry in fstab.lookup("where", "/"):
-        if entry.what.startswith("UUID="):
-            dev_path = get_device_path(entry.what.split("=", maxsplit=1)[1], "uuid")
-        if entry.what.startswith("LABEL="):
-            dev_path = get_device_path(entry.what.split("=", maxsplit=1)[1], "label")
-        if entry.what.startswith("/"):
-            dev_path = entry.what
-    if dev_path:
-        return dev_path
-    raise SnapmNotFoundError(f"Could not find root device for snapset {snapset.name}")
 
 
 def _create_default_os_profile():
@@ -263,8 +231,8 @@ def create_snapset_boot_entry(snapset, title=None):
     title = title or f"Snapshot {snapset.name} {snapset.time} ({version})"
 
     fstab = FsTabReader()
-    root_device = _find_snapset_root(snapset, fstab)
     mounts = _build_snapset_mount_list(snapset, fstab)
+    root_device = find_snapset_root(snapset, fstab)
     swaps = _build_swap_list(fstab)
 
     snapset.boot_entry = _create_boom_boot_entry(
@@ -294,7 +262,7 @@ def create_snapset_revert_entry(snapset, title=None):
     title = title or f"Revert {snapset.name} {snapset.time} ({version})"
 
     fstab = FsTabReader()
-    root_device = _find_snapset_root(snapset, fstab, origin=True)
+    root_device = find_snapset_root(snapset, fstab, origin=True)
 
     snapset.revert_entry = _create_boom_boot_entry(
         version,
