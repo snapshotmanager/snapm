@@ -10,7 +10,7 @@ Boot integration for snapshot manager
 """
 from os import uname
 from os.path import exists as path_exists
-from typing import Optional
+from typing import List, Optional, Tuple
 import logging
 
 import boom
@@ -28,6 +28,7 @@ from snapm import (
     SnapmCalloutError,
     FsTabReader,
     find_snapset_root,
+    build_snapset_mount_list,
 )
 
 _log = logging.getLogger(__name__)
@@ -104,27 +105,20 @@ def _create_default_os_profile():
     )
 
 
-def _build_snapset_mount_list(snapset, fstab: FsTabReader):
+def _mount_list_to_units(mount_list: List[Tuple[str, str, str, str]]) -> List[str]:
     """
-    Build a list of command line mount unit definitions for the snapshot set
-    ``snapset``. Mount points that are not part of the snapset are substituted
-    from /etc/fstab.
+    Transform a list of ``(what, where, fstype, options)`` tuples into systemd
+    command line mount unit notation.
 
-    :param snapset: The snapshot set to build a mount list for.
-    :param fstab: An ``FsTabReader`` instance to use.
+    :param mount_list: The list of mount tuples to transform.
+    :returns: A list of systemd.mount-extra= argument strings.
+    :rtype: ``List[str]``
     """
     mounts = []
-    snapset_mounts = snapset.mount_points
 
-    for entry in fstab:
-        what, where, fstype, options, _, _ = entry
-        if where == "/" or fstype == "swap":
-            continue
-        if where in snapset_mounts:
-            snapshot = snapset.snapshot_by_mount_point(where)
-            mounts.append(f"{snapshot.devpath}:{where}:{fstype}:{options}")
-        else:
-            mounts.append(f"{what}:{where}:{fstype}:{options}")
+    for mount in mount_list:
+        what, where, fstype, options = mount
+        mounts.append(f"{what}:{where}:{fstype}:{options}")
     return mounts
 
 
@@ -231,8 +225,8 @@ def create_snapset_boot_entry(snapset, title=None):
     title = title or f"Snapshot {snapset.name} {snapset.time} ({version})"
 
     fstab = FsTabReader()
-    mounts = _build_snapset_mount_list(snapset, fstab)
     root_device = find_snapset_root(snapset, fstab)
+    mounts = _mount_list_to_units(build_snapset_mount_list(snapset, fstab))
     swaps = _build_swap_list(fstab)
 
     snapset.boot_entry = _create_boom_boot_entry(

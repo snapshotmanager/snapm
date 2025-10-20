@@ -2019,6 +2019,36 @@ def find_snapset_root(snapset, fstab: FsTabReader, origin: bool = False):
     raise SnapmNotFoundError(f"Could not find root device for snapset {snapset.name}")
 
 
+def build_snapset_mount_list(snapset: SnapshotSet, fstab: FsTabReader):
+    """
+    Build a list of command line mount unit definitions for the snapshot set
+    ``snapset``. Mount points that are not part of the snapset are substituted
+    from /etc/fstab.
+
+    :param snapset: The snapshot set to build a mount list for.
+    :type snapset: SnapshotSet
+    :param fstab: An ``FsTabReader`` instance to use.
+    :type fstab: FsTabReader
+    :returns: A list of 4-tuples, each containing (device_path, mount_point,
+              filesystem_type, mount_options) for auxiliary mounts. The root
+              filesystem ("/") and swap entries are excluded from the list.
+    :rtype: List[Tuple[str, str, str, str]]
+    """
+    mounts = []
+    snapset_mounts = snapset.mount_points
+
+    for entry in fstab:
+        what, where, fstype, options, _, _ = entry
+        if where == "/" or fstype == "swap":
+            continue
+        if where in snapset_mounts:
+            snapshot = snapset.snapshot_by_mount_point(where)
+            mounts.append((snapshot.devpath, where, fstype, options))
+        else:
+            mounts.append((what, where, fstype, options))
+    return mounts
+
+
 __all__ = [
     "ETC_FSTAB",
     "SNAPSET_NAME",
@@ -2102,4 +2132,5 @@ __all__ = [
     "get_device_path",
     "get_device_fstype",
     "find_snapset_root",
+    "build_snapset_mount_list",
 ]
