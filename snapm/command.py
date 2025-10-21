@@ -14,7 +14,7 @@ and may be used by application programs, or interactively in the
 Python shell by users who do not require all the features present
 in the snapm object API.
 """
-from argparse import ArgumentParser
+from argparse import ArgumentParser, REMAINDER
 from typing import Union, List
 from os.path import basename
 from json import dumps
@@ -24,6 +24,8 @@ import os
 
 from snapm import (
     SnapmInvalidIdentifierError,
+    SnapmPathError,
+    SnapmArgumentError,
     SNAPSET_NAME,
     SNAPSET_BASENAME,
     SNAPSET_INDEX,
@@ -1394,6 +1396,54 @@ def _umount_cmd(cmd_args):
     return 0
 
 
+def _exec_cmd(cmd_args):
+    """
+    Execute in snapshot set command handler.
+
+    Execute the specified command in the given snapshot set.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    did_mount = False
+    ret = 0
+
+    if not cmd_args.command:
+        _log_error("the following arguments are required: COMMAND")
+        return 1
+
+    manager = Manager()
+    select = Selection(name=cmd_args.name)
+    matches = manager.find_snapshot_sets(selection=select)
+    if len(matches) != 1:
+        _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
+        return 1
+    snapset = matches[0]
+
+    pre_existing = manager.mounts.find_mounts(select)
+    mount = manager.mounts.mount(snapset)  # idempotent
+    did_mount = not any(m.mounted for m in pre_existing)
+
+    try:
+        ret = mount.exec(cmd_args.command)
+    except (SnapmPathError, SnapmArgumentError) as err:
+        _log_error("mount.exec(%s) failed: %s", cmd_args.command, err)
+        ret = 1
+    finally:
+        if did_mount:
+            manager.mounts.umount(snapset)
+
+    if ret:
+        _log_error(
+            "Command '%s' failed in snapshot set %s: %d",
+            " ".join(cmd_args.command),
+            cmd_args.name,
+            ret,
+        )
+
+    return ret
+
+
 def _snapshot_activate_cmd(cmd_args):
     """
     Activate snapshot command handler.
@@ -1989,6 +2039,7 @@ LIST_CMD = "list"
 GC_CMD = "gc"
 MOUNT_CMD = "mount"
 UMOUNT_CMD = "umount"
+EXEC_CMD = "exec"
 
 SNAPSET_TYPE = "snapset"
 SNAPSHOT_TYPE = "snapshot"
@@ -2175,6 +2226,14 @@ def _add_snapset_subparser(type_subparser):
     snapset_show_parser = snapset_subparser.add_parser(
         SHOW_CMD, help="Display snapshot sets"
     )
+    _add_identifier_args(snapset_show_parser, snapset=True)
+    snapset_show_parser.add_argument(
+        "-m",
+        "--members",
+        action="store_true",
+        help="Show snapshots that are part of each snapshot set",
+    )
+    _add_json_arg(snapset_show_parser)
     snapset_show_parser.set_defaults(func=_show_cmd)
 
     # snapset mount subcommand
@@ -2203,14 +2262,29 @@ def _add_snapset_subparser(type_subparser):
     )
     snapset_umount_parser.set_defaults(func=_umount_cmd)
 
-    _add_identifier_args(snapset_show_parser, snapset=True)
-    snapset_show_parser.add_argument(
-        "-m",
-        "--members",
-        action="store_true",
-        help="Show snapshots that are part of each snapshot set",
+    # snapset exec subcommand
+    snapset_exec_parser = snapset_subparser.add_parser(
+        EXEC_CMD,
+        help="Execute command in snapshot set",
     )
-    _add_json_arg(snapset_show_parser)
+    snapset_exec_parser.add_argument(
+        "name",
+        metavar="NAME",
+        type=str,
+        action="store",
+        help="The name of the snapshot set in which to execute the command",
+    )
+    snapset_exec_parser.add_argument(
+        "command",
+        metavar="COMMAND",
+        default=[],
+        nargs=REMAINDER,
+        action="extend",
+        help="The command to be executed with its arguments",
+    )
+    snapset_exec_parser.set_defaults(func=_exec_cmd)
+
+    )
 
 
 def _add_snapshot_subparser(type_subparser):

@@ -9,10 +9,11 @@
 Mount integration for snapshot manager
 """
 from subprocess import run, CalledProcessError, TimeoutExpired
-from os.path import exists as path_exists, ismount, isdir, join as path_join
-from typing import List, Optional
+from typing import List, Optional, Union
 import collections
 import logging
+import shlex
+import os.path
 import os
 
 from snapm import (
@@ -21,6 +22,7 @@ from snapm import (
     SnapmNotFoundError,
     SnapmCalloutError,
     SnapmPathError,
+    SnapmArgumentError,
     SnapmMountError,
     SnapmUmountError,
     Selection,
@@ -199,13 +201,13 @@ def _resolve_device(device: str) -> str:
     elif device.startswith("PARTUUID="):
         ident = device.split("=", maxsplit=1)[1]
         cand = f"/dev/disk/by-partuuid/{ident}"
-        if not path_exists(cand):
+        if not os.path.exists(cand):
             raise SnapmNotFoundError(f"Device with PARTUUID '{ident}' not found")
         device = cand
     elif device.startswith("PARTLABEL="):
         ident = device.split("=", maxsplit=1)[1]
         cand = f"/dev/disk/by-partlabel/{ident}"
-        if not path_exists(cand):
+        if not os.path.exists(cand):
             raise SnapmNotFoundError(f"Device with PARTLABEL '{ident}' not found")
         device = cand
     return device
@@ -365,7 +367,7 @@ class Mount:
         :raises SnapmPathError: If mount_root is not a directory, or if discover is True
                                 and mount_root is not a mount point.
         """
-        if not isdir(mount_root):
+        if not os.path.isdir(mount_root):
             raise SnapmPathError(f"Mount path {mount_root} is not a directory.")
 
         _log_debug("Building snapshot set Mount instance for %s", snapset.name)
@@ -377,7 +379,7 @@ class Mount:
         self.snapset = snapset
 
         if discover:
-            if not ismount(mount_root):
+            if not os.path.ismount(mount_root):
                 raise SnapmPathError(f"Mount path {mount_root} is not a mount point.")
             pmr = ProcMountsReader()
             submounts = [mnt.where for mnt in pmr.submounts(self.root)]
@@ -403,7 +405,7 @@ class Mount:
         for entry in pmr.submounts(self.root):
             abs_mount_path = entry.where
             rel_mount_path = entry.where.removeprefix(self.root)
-            path_is_mount = ismount(abs_mount_path)
+            path_is_mount = os.path.ismount(abs_mount_path)
             if rel_mount_path in checked:
                 checked[rel_mount_path] = path_is_mount
             elif rel_mount_path in bind_checked:
@@ -428,9 +430,7 @@ class Mount:
         """
         Determine whether this snapshot set mount is currently mounted.
         """
-        if not ismount(self.root):
-            return False
-        return True
+        return os.path.ismount(self.root)
 
     def mount(self):
         """
@@ -458,11 +458,11 @@ class Mount:
             # 2. Build an auxiliary mount list from the SnapshotSet/FsTabReader.
             mount_list = build_snapset_mount_list(self.snapset, fstab)
 
-            # 3. Mount the discovered auxiliary mount points and make them unbindable.
+            # 3. Mount the discovered auxiliary mount points.
             for mount_spec in mount_list:
                 what, where, fstype, options = mount_spec
-                where = path_join(self.root, where.lstrip("/"))
-                if not isdir(where):
+                where = os.path.join(self.root, where.lstrip("/"))
+                if not os.path.isdir(where):
                     _log_warn(
                         "Mount point %s does not exist in snapshot set %s, skipping mount",
                         where,
@@ -473,9 +473,9 @@ class Mount:
 
             # 4. Recursively bind mount API file systems from the host.
             for what in _BIND_MOUNTS:
-                if path_exists(what) and ismount(what):
-                    where = path_join(self.root, what.lstrip("/"))
-                    if not isdir(where):
+                if os.path.exists(what) and os.path.ismount(what):
+                    where = os.path.join(self.root, what.lstrip("/"))
+                    if not os.path.isdir(where):
                         _log_warn(
                             "Bind mount point %s does not exist in snapshot set %s, skipping mount",
                             where,
@@ -530,6 +530,36 @@ class Mount:
         _log_debug_mounts("Attempting to unmount snapshot set root: %s", self.root)
         _umount(self.root)
 
+    def exec(self, command: Union[str, List[str]]) -> int:
+        """
+        Execute a ``command`` chrooted inside this mount namespace.
+
+        :param command: A command and its arguments, suitable for passing to
+                        ``shlex.split()``.
+        """
+        chroot_cmd = ["chroot", self.root]
+        if not self.mounted:
+            raise SnapmPathError(
+                f"Snapshot set {self.snapset.name} is not mounted at {self.root}"
+            )
+        if isinstance(command, str):
+            try:
+                cmd_args = shlex.split(command)
+            except ValueError as err:
+                raise SnapmArgumentError(
+                    f"Cannot parse command string: {command}"
+                ) from err
+        else:
+            cmd_args = command
+        chroot_cmd.extend(cmd_args)
+        _log_debug("Invoking snapshot set chroot command: %s", " ".join(chroot_cmd))
+        try:
+            status = run(chroot_cmd, check=False)
+            return status.returncode
+        except FileNotFoundError as err:  # pragma: no cover
+            _log_error("Failed to execute chroot command: %s", err)
+            return 127
+
 
 class Mounts:
     """
@@ -565,7 +595,7 @@ class Mounts:
                 continue
             snapset = self._manager.by_name[dirent]
             try:
-                mount_path = path_join(self._root, dirent)
+                mount_path = os.path.join(self._root, dirent)
                 mount = Mount(snapset, mount_path, discover=True)
                 mounts.append(mount)
                 snapset.mount_root = mount.root
@@ -605,7 +635,7 @@ class Mounts:
         # Ensure the snapshot set's volumes are active
         snapset.activate()
 
-        mount_path = path_join(self._root, snapset.name)
+        mount_path = os.path.join(self._root, snapset.name)
         os.makedirs(mount_path, exist_ok=True)
 
         mount = Mount(snapset, mount_path)
@@ -656,7 +686,7 @@ class Mounts:
         snapshot sets managed by this `Mounts` instance.
         """
         matches = []
-        for mount in self.mounts:
+        for mount in self._mounts:
             if select_snapshot_set(selection, mount.snapset):
                 matches.append(mount)
         return matches

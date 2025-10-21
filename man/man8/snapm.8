@@ -35,9 +35,9 @@
 ..
 .
 .de ARG_SNAPSET_COMMANDS
-.  RI create | create-scheduled | delete | rename | revert | resize | \
-split | prune | activate | deactivate | autoactivate | list | show | \
-mount | umount
+.  RI create | create-scheduled | delete | rename | revert | resize " "\c
+.  RI | split | prune | activate | deactivate | autoactivate | list | show " "\c
+.  RI | mount | umount | exec
 ..
 .
 .de ARG_SNAPSHOT_TYPE
@@ -63,6 +63,10 @@ mount | umount
 .
 .de ARG_NAME
 .  RI name " "\c
+..
+.
+.de ARG_COMMAND
+.  RI command " "\c
 ..
 .
 .de ARG_NAME_OR_UUID
@@ -288,6 +292,14 @@ snapm \- Linux Snapshot Manager
 ..
 .CMD_SNAPSET_UMOUNT
 .br
+.
+.de CMD_SNAPSET_EXEC
+.  B snapset
+.  B exec
+.  ARG_NAME
+.  ARG_COMMAND
+..
+.CMD_SNAPSET_EXEC
 .PP
 .
 .B snapm
@@ -980,6 +992,12 @@ are created automatically.
 .CMD_SNAPSET_UMOUNT
 .br
 Unmount the specified snapshot set members from \fI/run/snapm/mounts/<name>\fP.
+.TP
+.B snapm
+.CMD_SNAPSET_EXEC
+.br
+Execute the specified command in snapshot set \fIname\fP. Arguments following
+\fIcommand\fP are passed through verbatim.
 .
 .P
 .B Snapshot Commands
