@@ -1322,6 +1322,48 @@ def _show_cmd(cmd_args):
     return 0
 
 
+def _mount_cmd(cmd_args):
+    """
+    Mount snapshot set command handler.
+
+    Mount the specified snapshot set (by default snapshot set mounts appear
+    under /run/snapm/mounts/<name>).
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    select = Selection(name=cmd_args.name)
+    matches = manager.find_snapshot_sets(selection=select)
+    if len(matches) != 1:
+        _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
+        return 1
+    snapset = matches[0]
+    manager.mounts.mount(snapset)
+    return 0
+
+
+def _umount_cmd(cmd_args):
+    """
+    Unmount snapshot set command handler.
+
+    Unmount the specified snapshot set (by default from
+    /run/snapm/mounts/<name>).
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    select = Selection(name=cmd_args.name)
+    matches = manager.find_snapshot_sets(selection=select)
+    if len(matches) != 1:
+        _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
+        return 1
+    snapset = matches[0]
+    manager.mounts.umount(snapset)
+    return 0
+
+
 def _snapshot_activate_cmd(cmd_args):
     """
     Activate snapshot command handler.
@@ -1915,6 +1957,8 @@ DISABLE_CMD = "disable"
 SHOW_CMD = "show"
 LIST_CMD = "list"
 GC_CMD = "gc"
+MOUNT_CMD = "mount"
+UMOUNT_CMD = "umount"
 
 SNAPSET_TYPE = "snapset"
 SNAPSHOT_TYPE = "snapshot"
@@ -2102,6 +2146,33 @@ def _add_snapset_subparser(type_subparser):
         SHOW_CMD, help="Display snapshot sets"
     )
     snapset_show_parser.set_defaults(func=_show_cmd)
+
+    # snapset mount subcommand
+    snapset_mount_parser = snapset_subparser.add_parser(
+        MOUNT_CMD, help="Mount snapshot set"
+    )
+    snapset_mount_parser.add_argument(
+        "name",
+        metavar="NAME",
+        type=str,
+        action="store",
+        help="The name of the snapshot set to be mounted",
+    )
+    snapset_mount_parser.set_defaults(func=_mount_cmd)
+
+    # snapset umount subcommand
+    snapset_umount_parser = snapset_subparser.add_parser(
+        UMOUNT_CMD, help="Unmount snapshot set"
+    )
+    snapset_umount_parser.add_argument(
+        "name",
+        metavar="NAME",
+        type=str,
+        action="store",
+        help="The name of the snapshot set to be unmounted",
+    )
+    snapset_umount_parser.set_defaults(func=_umount_cmd)
+
     _add_identifier_args(snapset_show_parser, snapset=True)
     snapset_show_parser.add_argument(
         "-m",
