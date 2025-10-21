@@ -93,6 +93,8 @@ SNAPSET_TIMESTAMP = "Timestamp"
 SNAPSET_UUID = "UUID"
 SNAPSET_STATUS = "Status"
 SNAPSET_AUTOACTIVATE = "Autoactivate"
+SNAPSET_MOUNTED = "Mounted"
+SNAPSET_MOUNT_ROOT = "MountRoot"
 SNAPSET_BOOTABLE = "Bootable"
 SNAPSET_BOOT_ENTRIES = "BootEntries"
 SNAPSET_SNAPSHOT_ENTRY = "SnapshotEntry"
@@ -886,6 +888,7 @@ class SnapshotSet:
         self._link_snapshots()
         self.boot_entry = None
         self.revert_entry = None
+        self.mount_root = ""
 
         if _has_index(name):
             self._basename = _parse_basename(name)
@@ -916,10 +919,15 @@ class SnapshotSet:
             f"{SNAPSET_TIME}:             {datetime.fromtimestamp(self.timestamp)}\n"
             f"{SNAPSET_UUID}:             {self.uuid}\n"
             f"{SNAPSET_STATUS}:           {str(self.status)}\n"
-            f"{SNAPSET_AUTOACTIVATE}:     {'yes' if self.autoactivate else 'no'}\n"
-            f"{SNAPSET_BOOTABLE}:         {'yes' if self.boot_entry is not None else 'no'}"
+            f"{SNAPSET_AUTOACTIVATE}:     {bool_to_yes_no(self.autoactivate)}\n"
+            f"{SNAPSET_ORIGIN_MOUNTED}:  {bool_to_yes_no(self.origin_mounted)}\n"
+            f"{SNAPSET_MOUNTED}:          {bool_to_yes_no(self.snapshot_mounted)}\n"
         )
 
+        if self.snapshot_mounted:
+            snapset_str += f"  {SNAPSET_MOUNT_ROOT}:      {self.mount_root}\n"
+
+        snapset_str += f"{SNAPSET_BOOTABLE}:         {bool_to_yes_no(self.boot_entry)}"
         if self.boot_entry or self.revert_entry:
             snapset_str += f"\n{SNAPSET_BOOT_ENTRIES}:"
         if self.boot_entry:
@@ -947,6 +955,10 @@ class SnapshotSet:
         pmap[SNAPSET_UUID] = str(self.uuid)
         pmap[SNAPSET_STATUS] = str(self.status)
         pmap[SNAPSET_AUTOACTIVATE] = self.autoactivate
+        pmap[SNAPSET_ORIGIN_MOUNTED] = self.origin_mounted
+        pmap[SNAPSET_MOUNTED] = self.snapshot_mounted
+        if pmap[SNAPSET_MOUNTED]:
+            pmap[SNAPSET_MOUNT_ROOT] = self.mount_root
         pmap[SNAPSET_BOOTABLE] = self.boot_entry is not None
 
         if self.boot_entry or self.revert_entry:
@@ -1627,11 +1639,15 @@ class Snapshot:
         :returns: ``True`` if this snapshot's origin is currently mounted
                   or ``False`` otherwise.
         """
-        with open("/proc/mounts", "r", encoding="utf8") as mounts:
+        if not self.mount_point:
+            return False
+        with open("/proc/self/mounts", "r", encoding="utf8") as mounts:
             for line in mounts:
-                fields = line.split(" ")
-                if self.mount_point == fields[1]:
-                    return os.path.samefile(self.origin, fields[0])
+                fields = line.split()
+                if self.mount_point == _unescape_mounts(fields[1]):
+                    devpath = _unescape_mounts(fields[0])
+                    if os.path.exists(self.origin) and os.path.exists(devpath):
+                        return os.path.samefile(self.origin, devpath)
         return False
 
     @property
@@ -1645,11 +1661,13 @@ class Snapshot:
         """
         if self.status != SnapStatus.ACTIVE:
             return False
-        with open("/proc/mounts", "r", encoding="utf8") as mounts:
+        if not self.mount_point:
+            return False
+        with open("/proc/self/mounts", "r", encoding="utf8") as mounts:
             for line in mounts:
-                fields = line.split(" ")
-                devpath = fields[0]
-                if os.path.exists(devpath):
+                fields = line.split()
+                devpath = _unescape_mounts(fields[0])
+                if os.path.exists(devpath) and os.path.exists(self.devpath):
                     if os.path.samefile(self.devpath, devpath):
                         return True
         return False

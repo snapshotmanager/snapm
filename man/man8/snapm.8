@@ -756,6 +756,7 @@ Time:             2024-12-05 17:46:12
 UUID:             87c89914-51a5-5043-8513-667100213243
 Status:           Inactive
 Autoactivate:     no
+Mounted:          no
 Bootable:         no
 .EE
 When creating snapshot sets \fB--bootable\fP and \fB--revert\fP can optionally
@@ -784,6 +785,8 @@ Status:           Inactive
 .br
 Autoactivate:     no
 .br
+Mounted:          no
+.br
 Bootable:         no
 .br
 .IP
@@ -807,6 +810,7 @@ Time:             2025-03-26 14:17:18
 UUID:             ae082452-7995-5316-ac65-388eadd9879c
 Status:           Active
 Autoactivate:     yes
+Mounted:          no
 Bootable:         no
 .EE
 .
@@ -1606,6 +1610,7 @@ Time:             2024-12-05 17:57:05
 UUID:             b9b4cd96-75a5-5826-a26b-b617c06bd877
 Status:           Active
 Autoactivate:     no
+Mounted:          no
 Bootable:         no
 .EE
 .P
@@ -1621,6 +1626,7 @@ Time:             2025-08-23 03:10:19
 UUID:             d9b63a58-333b-517a-b38d-7cc818040fab
 Status:           Active
 Autoactivate:     yes
+Mounted:          no
 Bootable:         yes
 BootEntries:
   SnapshotEntry:  61cb664
@@ -1651,6 +1657,7 @@ with output formatted in JSON notation
     "UUID": "d9b63a58-333b-517a-b38d-7cc818040fab",
     "Status": "Active",
     "Autoactivate": true,
+    "Mounted": false,
     "Bootable": true,
     "BootEntries": {
         "SnapshotEntry": "61cb664",
@@ -1690,6 +1697,7 @@ Time:             2025-08-23 03:10:19
 UUID:             d9b63a58-333b-517a-b38d-7cc818040fab
 Status:           Active
 Autoactivate:     yes
+Mounted:          no
 Bootable:         yes
 BootEntries:
   SnapshotEntry:  61cb664
