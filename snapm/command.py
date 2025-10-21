@@ -1444,6 +1444,21 @@ def _exec_cmd(cmd_args):
     return ret
 
 
+def _shell_cmd(cmd_args):
+    """
+    Shell snapshot set command handler.
+
+    Start an interactive shell in the given snapshot set. The shell invoked
+    defaults to the SHELL environment variable if set, or the program at
+    /bin/bash otherwise.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    cmd_args.command = [os.environ.get("SHELL") or "/bin/bash"]
+    return _exec_cmd(cmd_args)
+
+
 def _snapshot_activate_cmd(cmd_args):
     """
     Activate snapshot command handler.
@@ -2040,6 +2055,7 @@ GC_CMD = "gc"
 MOUNT_CMD = "mount"
 UMOUNT_CMD = "umount"
 EXEC_CMD = "exec"
+SHELL_CMD = "shell"
 
 SNAPSET_TYPE = "snapset"
 SNAPSHOT_TYPE = "snapshot"
@@ -2284,7 +2300,19 @@ def _add_snapset_subparser(type_subparser):
     )
     snapset_exec_parser.set_defaults(func=_exec_cmd)
 
+    # snapset shell subcommand
+    snapset_shell_parser = snapset_subparser.add_parser(
+        SHELL_CMD,
+        help="Start interactive shell in snapshot set",
     )
+    snapset_shell_parser.add_argument(
+        "name",
+        metavar="NAME",
+        type=str,
+        action="store",
+        help="The name of the snapshot set in which to start the shell",
+    )
+    snapset_shell_parser.set_defaults(func=_shell_cmd)
 
 
 def _add_snapshot_subparser(type_subparser):
