@@ -36,6 +36,9 @@ from snapm import (
     SNAPSET_UUID,
     SNAPSET_STATUS,
     SNAPSET_AUTOACTIVATE,
+    SNAPSET_MOUNTED,
+    SNAPSET_ORIGIN_MOUNTED,
+    SNAPSET_MOUNT_ROOT,
     SNAPSET_BOOTABLE,
     SNAPSET_SNAPSHOT_ENTRY,
     SNAPSET_REVERT_ENTRY,
@@ -246,6 +249,33 @@ _snapshot_set_fields = [
     ),
     FieldType(
         PR_SNAPSET,
+        "mounted",
+        SNAPSET_MOUNTED,
+        "SnapshotSet mount status",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.snapshot_mounted)),
+    ),
+    FieldType(
+        PR_SNAPSET,
+        "origin_mounted",
+        SNAPSET_ORIGIN_MOUNTED,
+        "SnapshotSet origin mount status",
+        13,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.origin_mounted)),
+    ),
+    FieldType(
+        PR_SNAPSET,
+        "mount_root",
+        SNAPSET_MOUNT_ROOT,
+        "SnapshotSet mount root directory path",
+        9,
+        REP_STR,
+        lambda f, d: f.report_str(d.mount_root),
+    ),
+    FieldType(
+        PR_SNAPSET,
         "bootable",
         SNAPSET_BOOTABLE,
         "Configured for snapshot boot",
@@ -273,7 +303,7 @@ _snapshot_set_fields = [
     ),
 ]
 
-_DEFAULT_SNAPSET_FIELDS = "name,time,nr_snapshots,status,sources"
+_DEFAULT_SNAPSET_FIELDS = "name,time,nr_snapshots,status,sources,mounted"
 
 _snapshot_fields = [
     FieldType(

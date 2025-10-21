@@ -94,6 +94,7 @@ SNAPSET_UUID = "UUID"
 SNAPSET_STATUS = "Status"
 SNAPSET_AUTOACTIVATE = "Autoactivate"
 SNAPSET_MOUNTED = "Mounted"
+SNAPSET_ORIGIN_MOUNTED = "OriginMounted"
 SNAPSET_MOUNT_ROOT = "MountRoot"
 SNAPSET_BOOTABLE = "Bootable"
 SNAPSET_BOOT_ENTRIES = "BootEntries"
@@ -920,7 +921,7 @@ class SnapshotSet:
             f"{SNAPSET_UUID}:             {self.uuid}\n"
             f"{SNAPSET_STATUS}:           {str(self.status)}\n"
             f"{SNAPSET_AUTOACTIVATE}:     {bool_to_yes_no(self.autoactivate)}\n"
-            f"{SNAPSET_ORIGIN_MOUNTED}:  {bool_to_yes_no(self.origin_mounted)}\n"
+            f"{SNAPSET_ORIGIN_MOUNTED}:    {bool_to_yes_no(self.origin_mounted)}\n"
             f"{SNAPSET_MOUNTED}:          {bool_to_yes_no(self.snapshot_mounted)}\n"
         )
 
@@ -2123,6 +2124,9 @@ __all__ = [
     "SNAPSET_UUID",
     "SNAPSET_STATUS",
     "SNAPSET_AUTOACTIVATE",
+    "SNAPSET_MOUNTED",
+    "SNAPSET_ORIGIN_MOUNTED",
+    "SNAPSET_MOUNT_ROOT",
     "SNAPSET_BOOTABLE",
     "SNAPSET_BOOT_ENTRIES",
     "SNAPSET_SNAPSHOT_ENTRY",
