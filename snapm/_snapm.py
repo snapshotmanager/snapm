@@ -441,7 +441,7 @@ class Selection:
         attrs = [attr for attr in all_attrs if self.__attr_has_value(attr)]
         strval = ""
         tail = ", "
-        for attr in set(attrs):
+        for attr in sorted(set(attrs)):
             strval += f"{attr}='{getattr(self, attr)}'{tail}"
         return strval.rstrip(tail)
 
