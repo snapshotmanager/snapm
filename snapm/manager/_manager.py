@@ -46,6 +46,8 @@ from snapm import (
     is_size_policy,
     SnapStatus,
     SnapshotSet,
+    select_snapshot_set,
+    select_snapshot,
 )
 
 from ._boot import (
@@ -144,65 +146,6 @@ class SnapmConfig:
 
 
 # pylint: disable=too-many-return-statements
-def select_snapshot_set(select, snapshot_set):
-    """
-    Test SnapshotSet against Selection criteria.
-
-    Test the supplied ``SnapshotSet`` against the selection criteria
-    in ``s`` and return ``True`` if it passes, or ``False``
-    otherwise.
-
-    :param s: The selection criteria
-    :param be: The SnapshotSet to test
-    :rtype: bool
-    :returns: True if SnapshotSet passes selection or ``False``
-              otherwise.
-    """
-    if select.name and select.name != snapshot_set.name:
-        return False
-    if select.uuid and select.uuid != snapshot_set.uuid:
-        return False
-    if select.basename and select.basename != snapshot_set.basename:
-        return False
-    if select.index is not None and select.index != snapshot_set.index:
-        return False
-    if select.timestamp and select.timestamp != snapshot_set.timestamp:
-        return False
-    if select.nr_snapshots and select.nr_snapshots != snapshot_set.nr_snapshots:
-        return False
-    if select.mount_points:
-        s_mount_points = sorted(select.mount_points)
-        mount_points = sorted(snapshot_set.mount_points)
-        if s_mount_points != mount_points:
-            return False
-
-    return True
-
-
-def select_snapshot(select, snapshot):
-    """
-    Test SnapshotSet against Selection criteria.
-
-    Test the supplied ``SnapshotSet`` against the selection criteria
-    in ``s`` and return ``True`` if it passes, or ``False``
-    otherwise.
-
-    :param s: The selection criteria
-    :param be: The SnapshotSet to test
-    :rtype: bool
-    :returns: True if SnapshotSet passes selection or ``False``
-              otherwise.
-    """
-    if not select_snapshot_set(select, snapshot.snapshot_set):
-        return False
-    if select.snapshot_uuid and select.snapshot_uuid != snapshot.uuid:
-        return False
-    if select.snapshot_name and select.snapshot_name != snapshot.name:
-        return False
-
-    return True
-
-
 def select_schedule(select: Selection, schedule: Schedule):
     """
     Test Schedule against Selection criteria.

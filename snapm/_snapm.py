@@ -1759,6 +1759,69 @@ class Snapshot:
         self.invalidate_cache()
 
 
+# pylint: disable=too-many-return-statements
+def select_snapshot_set(select, snapshot_set):
+    """
+    Test SnapshotSet against Selection criteria.
+
+    Test the supplied ``SnapshotSet`` against the selection criteria
+    in ``select`` and return ``True`` if it passes, or ``False``
+    otherwise.
+
+    :param select: The selection criteria
+    :param snapshot_set: The SnapshotSet to test
+    :rtype: bool
+    :returns: True if SnapshotSet passes selection or ``False``
+              otherwise.
+    """
+    if select.name and select.name != snapshot_set.name:
+        return False
+    if select.uuid and select.uuid != snapshot_set.uuid:
+        return False
+    if select.basename and select.basename != snapshot_set.basename:
+        return False
+    if select.index is not None and select.index != snapshot_set.index:
+        return False
+    if select.timestamp and select.timestamp != snapshot_set.timestamp:
+        return False
+    if (
+        select.nr_snapshots is not None
+        and select.nr_snapshots != snapshot_set.nr_snapshots
+    ):
+        return False
+    if select.mount_points:
+        s_mount_points = sorted(select.mount_points)
+        mount_points = sorted(snapshot_set.mount_points)
+        if s_mount_points != mount_points:
+            return False
+
+    return True
+
+
+def select_snapshot(select, snapshot):
+    """
+    Test SnapshotSet against Selection criteria.
+
+    Test the supplied ``Snapshot`` against the selection criteria
+    in ``select`` and return ``True`` if it passes, or ``False``
+    otherwise.
+
+    :param select: The selection criteria
+    :param snapshot: The Snapshot to test
+    :rtype: bool
+    :returns: True if Snapshot passes selection or ``False``
+              otherwise.
+    """
+    if not select_snapshot_set(select, snapshot.snapshot_set):
+        return False
+    if select.snapshot_uuid and select.snapshot_uuid != snapshot.uuid:
+        return False
+    if select.snapshot_name and select.snapshot_name != snapshot.name:
+        return False
+
+    return True
+
+
 class FsTabReader:
     """
     A class to read and query data from an fstab file.
@@ -2196,6 +2259,8 @@ __all__ = [
     "SnapStatus",
     "SnapshotSet",
     "Snapshot",
+    "select_snapshot_set",
+    "select_snapshot",
     "FsTabReader",
     "get_device_path",
     "get_device_fstype",
