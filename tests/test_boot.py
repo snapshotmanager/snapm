@@ -21,20 +21,13 @@ import snapm.manager
 from snapm.manager.plugins import format_snapshot_name, encode_mount_point
 import boom
 
-from tests import have_root, BOOT_ROOT_TEST
+from tests import have_root, is_redhat, BOOT_ROOT_TEST
 from ._util import LvmLoopBacked
 
 ETC_FSTAB = "/etc/fstab"
 TMP_FSTAB = "/tmp/fstab"
 
 _VAR_TMP = "/var/tmp"
-
-
-def is_redhat():
-    # Exclude CentOS for now until the fix for boom-boot #59 is available
-    # in the CentOS repositories.
-    return (os.path.exists("/etc/redhat-release")
-            and not os.path.exists("/etc/centos-release"))
 
 
 class BootTestsSimple(unittest.TestCase):
