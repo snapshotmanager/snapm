@@ -55,6 +55,17 @@ REVERT_ARG = "snapm.revert"
 _DEV_PREFIX = "/dev/"
 
 
+def _escape(orig: str) -> str:
+    """
+    Convert literal ':' characters into the hexadecimal escape (\x3a): systemd
+    will decode these when reading systemd.{mount,swap}-extra values.
+
+    :param orig: The original string possibly containing literal ':' characters.
+    :returns: An escaped string with ':' replaced by '\x3a'.
+    """
+    return orig.replace(":", r"\x3a")
+
+
 def _get_uts_release():
     """
     Return the UTS release (kernel version) of the running system.
@@ -118,7 +129,7 @@ def _mount_list_to_units(mount_list: List[Tuple[str, str, str, str]]) -> List[st
 
     for mount in mount_list:
         what, where, fstype, options = mount
-        mounts.append(f"{what}:{where}:{fstype}:{options}")
+        mounts.append(f"{_escape(what)}:{_escape(where)}:{fstype}:{_escape(options)}")
     return mounts
 
 
@@ -139,7 +150,7 @@ def _build_swap_list(fstab: FsTabReader) -> List[str]:
                 what,
                 where,
             )
-        swaps.append(f"{what}:{options}")
+        swaps.append(f"{_escape(what)}:{_escape(options)}")
     return swaps
 
 
