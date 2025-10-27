@@ -259,6 +259,14 @@ class MountsTestsBase(unittest.TestCase):
         # 1. Setup LVM
         self._lvm = LvmLoopBacked(self.volumes, thin_volumes=self.thin_volumes)
 
+        # 2. Setup fake fstab
+        self._set_fstab()
+
+        # Push LVM and /etc/fstab cleanup
+        self.addCleanup(self.cleanup) # self.cleanup already calls _clear_fstab and _lvm.destroy
+
+        # 3. Build fake root and optionally install static busybox binaries
+
         # ./~ Make it cheap & keep it shallow. Fill it up and make it hollow. ./~
         with tempfile.TemporaryDirectory(prefix="snapm_root_prep_") as tempdir:
             with mounted("/dev/test_vg0/root", tempdir):
@@ -267,10 +275,10 @@ class MountsTestsBase(unittest.TestCase):
 
                 if self.need_exec:
                     # ./~ Keep it working 'til tomorrow; it might be wrong but no one will know. ./~
-                    run(["dnf", "-y", "install", "--use-host-config", "--installroot", tempdir, "busybox"])
-                    run([os.path.join(tempdir, "bin", "busybox"), "--install", os.path.join(tempdir, "bin")])
+                    run(["dnf", "-y", "install", "--use-host-config", "--installroot", tempdir, "busybox"], check=True)
+                    run([os.path.join(tempdir, "bin", "busybox"), "--install", os.path.join(tempdir, "bin")], check=True)
 
-        # 2. Setup fake snapshot set
+        # 4. Setup fake snapshot set
         snapset_name = self.snapset_name
         snapset_time = self.snapset_time
         for origin, mp in self.mount_volumes:
@@ -281,24 +289,20 @@ class MountsTestsBase(unittest.TestCase):
                 ),
             )
 
-        # 3. Setup fake fstab
-        self._set_fstab()
-        self.addCleanup(self.cleanup) # self.cleanup already calls _clear_fstab and _lvm.destroy
-
-        # 4. Setup temp directory for mounts
+        # 5. Setup temp directory for mounts
         self._mounts_root_dir_obj = tempfile.TemporaryDirectory(prefix="snapm_mnt_")
         self.mounts_root_dir = self._mounts_root_dir_obj.name
         self.addCleanup(self._mounts_root_dir_obj.cleanup)
 
-        # 5. Setup Manager and find the SnapshotSet
+        # 6. Setup Manager and find the SnapshotSet
         self.manager = snapm.manager.Manager()
         self.manager.discover_snapshot_sets()
         self.snapset = self.manager.by_name[self.snapset_name]
 
-        # 6. Initialize the Mounts object
+        # 7. Initialize the Mounts object
         self.mounts = mounts.Mounts(self.manager, self.mounts_root_dir)
 
-        # 7. Cleanup mounts - this MUST be executed before _mounts_root_dir_obj.cleanup
+        # 8. Cleanup mounts - this MUST be executed before _mounts_root_dir_obj.cleanup
         # or very bad things will happen (rm -rf /dev/* /run/*)
         self.addCleanup(self.cleanup_mounts)
 
