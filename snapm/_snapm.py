@@ -8,10 +8,13 @@
 """
 Global definitions for the top-level snapm package.
 """
+from typing import Union, Optional
 from uuid import UUID, uuid5
 from datetime import datetime
-from typing import Union
+from stat import S_ISBLK
 from enum import Enum
+import collections
+import subprocess
 import string
 import json
 import math
@@ -30,17 +33,22 @@ _log_error = _log.error
 SNAPM_DEBUG_MANAGER = 1
 SNAPM_DEBUG_COMMAND = 2
 SNAPM_DEBUG_REPORT = 4
-SNAPM_DEBUG_ALL = SNAPM_DEBUG_MANAGER | SNAPM_DEBUG_COMMAND | SNAPM_DEBUG_REPORT
+SNAPM_DEBUG_MOUNTS = 8
+SNAPM_DEBUG_ALL = (
+    SNAPM_DEBUG_MANAGER | SNAPM_DEBUG_COMMAND | SNAPM_DEBUG_REPORT | SNAPM_DEBUG_MOUNTS
+)
 
 # Snapm debugging subsystem names
 SNAPM_SUBSYSTEM_MANAGER = "snapm.manager"
 SNAPM_SUBSYSTEM_COMMAND = "snapm.command"
 SNAPM_SUBSYSTEM_REPORT = "snapm.report"
+SNAPM_SUBSYSTEM_MOUNTS = "snapm.mounts"
 
 _DEBUG_MASK_TO_SUBSYSTEM = {
     SNAPM_DEBUG_MANAGER: SNAPM_SUBSYSTEM_MANAGER,
     SNAPM_DEBUG_COMMAND: SNAPM_SUBSYSTEM_COMMAND,
     SNAPM_DEBUG_REPORT: SNAPM_SUBSYSTEM_REPORT,
+    SNAPM_DEBUG_MOUNTS: SNAPM_SUBSYSTEM_MOUNTS,
 }
 
 _debug_subsystems = set()
@@ -85,6 +93,9 @@ SNAPSET_TIMESTAMP = "Timestamp"
 SNAPSET_UUID = "UUID"
 SNAPSET_STATUS = "Status"
 SNAPSET_AUTOACTIVATE = "Autoactivate"
+SNAPSET_MOUNTED = "Mounted"
+SNAPSET_ORIGIN_MOUNTED = "OriginMounted"
+SNAPSET_MOUNT_ROOT = "MountRoot"
 SNAPSET_BOOTABLE = "Bootable"
 SNAPSET_BOOT_ENTRIES = "BootEntries"
 SNAPSET_SNAPSHOT_ENTRY = "SnapshotEntry"
@@ -313,6 +324,43 @@ class SnapmLimitError(SnapmError):
     """
 
 
+class SnapmMountError(SnapmError):
+    """
+    An error performing a mount operation.
+    """
+
+    def __init__(self, what: str, where: str, status: int, stderr: str):
+        """
+        Initialise a new `SnapmMountError` exception.
+
+        :param what: The source for the failed mount operation.
+        :param where: The intended mount point of the operation.
+        :param status: The exit status of the mount(8) program.
+        :param stderr: The error message from mount(8).
+        """
+        self.what, self.where, self.status, self.stderr = what, where, status, stderr
+        msg = f"Failed to mount {what} to {where} (status={status}): {stderr}"
+        super().__init__(msg)
+
+
+class SnapmUmountError(SnapmError):
+    """
+    An error performing an unmount operation.
+    """
+
+    def __init__(self, where: str, status: int, stderr: str):
+        """
+        Initialise a new `SnapmUmountError` exception.
+
+        :param where: The mount point for the failed umount operation.
+        :param status: The exit status of the umount(8) program.
+        :param stderr: The error message from umount(8).
+        """
+        self.where, self.status, self.stderr = where, status, stderr
+        msg = f"Failed to unmount {where} (status={status}): {stderr}"
+        super().__init__(msg)
+
+
 #
 # Selection criteria class
 #
@@ -393,7 +441,7 @@ class Selection:
         attrs = [attr for attr in all_attrs if self.__attr_has_value(attr)]
         strval = ""
         tail = ", "
-        for attr in set(attrs):
+        for attr in sorted(set(attrs)):
             strval += f"{attr}='{getattr(self, attr)}'{tail}"
         return strval.rstrip(tail)
 
@@ -767,6 +815,24 @@ class SnapStatus(Enum):
         return "Invalid"
 
 
+def _unescape_mounts(escaped: str) -> str:
+    """
+    Unescape octal escapes in values read from /proc/*mounts
+
+    :param escaped: The string to unescape.
+    :type escaped: str
+    :returns: The unescaped string with octal values replaced by literal
+              character values.
+    :rtype: str
+    """
+    return (
+        escaped.replace("\\040", " ")
+        .replace("\\011", "\t")
+        .replace("\\012", "\n")
+        .replace("\\134", "\\")
+    )
+
+
 def _split_name(name):
     return name.rsplit(".", maxsplit=1)
 
@@ -823,6 +889,7 @@ class SnapshotSet:
         self._link_snapshots()
         self.boot_entry = None
         self.revert_entry = None
+        self.mount_root = ""
 
         if _has_index(name):
             self._basename = _parse_basename(name)
@@ -853,10 +920,15 @@ class SnapshotSet:
             f"{SNAPSET_TIME}:             {datetime.fromtimestamp(self.timestamp)}\n"
             f"{SNAPSET_UUID}:             {self.uuid}\n"
             f"{SNAPSET_STATUS}:           {str(self.status)}\n"
-            f"{SNAPSET_AUTOACTIVATE}:     {'yes' if self.autoactivate else 'no'}\n"
-            f"{SNAPSET_BOOTABLE}:         {'yes' if self.boot_entry is not None else 'no'}"
+            f"{SNAPSET_AUTOACTIVATE}:     {bool_to_yes_no(self.autoactivate)}\n"
+            f"{SNAPSET_ORIGIN_MOUNTED}:    {bool_to_yes_no(self.origin_mounted)}\n"
+            f"{SNAPSET_MOUNTED}:          {bool_to_yes_no(self.snapshot_mounted)}\n"
         )
 
+        if self.snapshot_mounted:
+            snapset_str += f"  {SNAPSET_MOUNT_ROOT}:      {self.mount_root}\n"
+
+        snapset_str += f"{SNAPSET_BOOTABLE}:         {bool_to_yes_no(self.boot_entry)}"
         if self.boot_entry or self.revert_entry:
             snapset_str += f"\n{SNAPSET_BOOT_ENTRIES}:"
         if self.boot_entry:
@@ -884,6 +956,10 @@ class SnapshotSet:
         pmap[SNAPSET_UUID] = str(self.uuid)
         pmap[SNAPSET_STATUS] = str(self.status)
         pmap[SNAPSET_AUTOACTIVATE] = self.autoactivate
+        pmap[SNAPSET_ORIGIN_MOUNTED] = self.origin_mounted
+        pmap[SNAPSET_MOUNTED] = self.snapshot_mounted
+        if pmap[SNAPSET_MOUNTED]:
+            pmap[SNAPSET_MOUNT_ROOT] = self.mount_root
         pmap[SNAPSET_BOOTABLE] = self.boot_entry is not None
 
         if self.boot_entry or self.revert_entry:
@@ -1564,11 +1640,15 @@ class Snapshot:
         :returns: ``True`` if this snapshot's origin is currently mounted
                   or ``False`` otherwise.
         """
-        with open("/proc/mounts", "r", encoding="utf8") as mounts:
+        if not self.mount_point:
+            return False
+        with open("/proc/self/mounts", "r", encoding="utf8") as mounts:
             for line in mounts:
-                fields = line.split(" ")
-                if self.mount_point == fields[1]:
-                    return os.path.samefile(self.origin, fields[0])
+                fields = line.split()
+                if self.mount_point == _unescape_mounts(fields[1]):
+                    devpath = _unescape_mounts(fields[0])
+                    if os.path.exists(self.origin) and os.path.exists(devpath):
+                        return os.path.samefile(self.origin, devpath)
         return False
 
     @property
@@ -1582,11 +1662,13 @@ class Snapshot:
         """
         if self.status != SnapStatus.ACTIVE:
             return False
-        with open("/proc/mounts", "r", encoding="utf8") as mounts:
+        if not self.mount_point:
+            return False
+        with open("/proc/self/mounts", "r", encoding="utf8") as mounts:
             for line in mounts:
-                fields = line.split(" ")
-                devpath = fields[0]
-                if os.path.exists(devpath):
+                fields = line.split()
+                devpath = _unescape_mounts(fields[0])
+                if os.path.exists(devpath) and os.path.exists(self.devpath):
                     if os.path.samefile(self.devpath, devpath):
                         return True
         return False
@@ -1677,6 +1759,420 @@ class Snapshot:
         self.invalidate_cache()
 
 
+# pylint: disable=too-many-return-statements
+def select_snapshot_set(select, snapshot_set):
+    """
+    Test SnapshotSet against Selection criteria.
+
+    Test the supplied ``SnapshotSet`` against the selection criteria
+    in ``select`` and return ``True`` if it passes, or ``False``
+    otherwise.
+
+    :param select: The selection criteria
+    :param snapshot_set: The SnapshotSet to test
+    :rtype: bool
+    :returns: True if SnapshotSet passes selection or ``False``
+              otherwise.
+    """
+    if select.name and select.name != snapshot_set.name:
+        return False
+    if select.uuid and select.uuid != snapshot_set.uuid:
+        return False
+    if select.basename and select.basename != snapshot_set.basename:
+        return False
+    if select.index is not None and select.index != snapshot_set.index:
+        return False
+    if select.timestamp and select.timestamp != snapshot_set.timestamp:
+        return False
+    if (
+        select.nr_snapshots is not None
+        and select.nr_snapshots != snapshot_set.nr_snapshots
+    ):
+        return False
+    if select.mount_points:
+        s_mount_points = sorted(select.mount_points)
+        mount_points = sorted(snapshot_set.mount_points)
+        if s_mount_points != mount_points:
+            return False
+
+    return True
+
+
+def select_snapshot(select, snapshot):
+    """
+    Test SnapshotSet against Selection criteria.
+
+    Test the supplied ``Snapshot`` against the selection criteria
+    in ``select`` and return ``True`` if it passes, or ``False``
+    otherwise.
+
+    :param select: The selection criteria
+    :param snapshot: The Snapshot to test
+    :rtype: bool
+    :returns: True if Snapshot passes selection or ``False``
+              otherwise.
+    """
+    if not select_snapshot_set(select, snapshot.snapshot_set):
+        return False
+    if select.snapshot_uuid and select.snapshot_uuid != snapshot.uuid:
+        return False
+    if select.snapshot_name and select.snapshot_name != snapshot.name:
+        return False
+
+    return True
+
+
+class FsTabReader:
+    """
+    A class to read and query data from an fstab file.
+
+    This class reads an fstab-like file and provides methods to iterate
+    over its entries and look up specific entries based on their properties.
+
+    """
+
+    # Define a named tuple to give structure to each fstab entry.
+    FsTabEntry = collections.namedtuple(
+        "FsTabEntry", ["what", "where", "fstype", "options", "freq", "passno"]
+    )
+
+    def __init__(self, path=ETC_FSTAB):
+        """
+        Initializes the FsTabReader object by reading and parsing the file.
+
+        :param path: The path to the fstab file. Defaults to '/etc/fstab'.
+        :type path: str
+        :raises SnapmNotFoundError: If the specified fstab file does not exist.
+        :raises SnapmSystemError: If there is an error reading the fstab file.
+
+        """
+        self.path = path
+        self.entries = []
+        self._read_fstab()
+
+    def _read_fstab(self):
+        """
+        Private method to read and parse the fstab file.
+        It populates the self.entries list.
+        """
+        try:
+            with open(self.path, "r", encoding="utf8") as f:
+                for line in f:
+                    # 1. Remove end-of-line comments and trim; ignore empties.
+                    line = line.split("#", 1)[0].strip()
+                    if not line:
+                        continue
+
+                    # 2. Split the line into parts.
+                    parts = line.split()
+
+                    # 3. An fstab entry must have 6 fields.
+                    if len(parts) != 6:
+                        _log_warn("Skipping malformed %s entry: %s", self.path, line)
+                        continue
+
+                    # 4. Create a named tuple and append it to our list.
+                    what, where, fstype, options, freq, passno = parts
+                    try:
+                        entry = self.FsTabEntry(
+                            _unescape_mounts(what),
+                            _unescape_mounts(where),
+                            fstype,
+                            _unescape_mounts(options),
+                            int(freq),
+                            int(passno),
+                        )
+                    except ValueError:
+                        # Keep as strings if non-numeric (defensive)
+                        entry = self.FsTabEntry(*parts)
+                    self.entries.append(entry)
+
+        except FileNotFoundError as exc:
+            _log_error("Error: The file '%s' was not found.", self.path)
+            raise SnapmNotFoundError(f"FsTab file not found: {self.path}") from exc
+        except IOError as e:
+            _log_error("Error: Could not read the file '%s': %s", self.path, e)
+            raise SnapmSystemError(f"Error reading fstab file: {self.path}") from e
+
+    def __iter__(self):
+        """
+        Allows iteration over the fstab entries.
+
+        :yields:
+            A 6-tuple for each entry in the fstab file:
+            (what, where, fstype, options, freq, passno)
+        """
+        yield from self.entries
+
+    def lookup(self, key, value):
+        """
+        Finds and generates all entries matching a specific key-value pair.
+
+        :param key: The field to search by. Must be one of 'what', 'where',
+                    'fstype', 'options', 'freq', or 'passno'.
+        :type key: str
+        :param value: The value to match for the given key.
+        :type value: str|int
+        :yields: A 6-tuple for each matching fstab entry.
+
+        :raises KeyError: If the provided key is not a valid fstab field name.
+        """
+        if key not in self.FsTabEntry._fields:
+            raise KeyError(
+                f"Invalid lookup key: '{key}'. "
+                f"Valid keys are: {self.FsTabEntry._fields}"
+            )
+
+        for entry in self.entries:
+            # getattr() allows us to get an attribute by its string name.
+            if getattr(entry, key) == value:
+                yield entry
+
+    def __repr__(self):
+        """
+        Return a machine readable string representation of this FsTabReader.
+        """
+        return f"FsTabReader(path='{self.path}')"
+
+
+def get_device_path(by_type: str, identifier: str) -> Optional[str]:
+    """
+    Translates a filesystem UUID or label to its corresponding device path
+    using the blkid command.
+
+    :param by_type: The type of identifier to search for.
+    :param identifier: The UUID or label of the filesystem.
+
+    :returns: The device path if found, otherwise None.
+    :rtype: Optional[str]
+
+    :raises ValueError: If 'identifier' is empty or 'by_type' is not 'uuid' or 'label'.
+    :raises SnapmNotFoundError: If the 'blkid' command is not found on the system.
+    :raises SnapmSystemError: If the 'blkid' command exits with a non-zero status
+                              due to reasons other than the identifier not being found
+                              (e.g., permission issues).
+    :raises SnapmCalloutError: For any other unexpected errors during command execution
+                               or parsing.
+    """
+    if by_type not in ["uuid", "label"]:
+        raise ValueError("Invalid 'by_type'. Must be 'uuid' or 'label'.")
+    if not identifier:
+        raise ValueError("Identifier cannot be an empty string.")
+
+    env = dict(os.environ, LC_ALL="C", LANG="C")
+    try:
+        command = ["blkid"]
+
+        if by_type == "uuid":
+            command.extend(["--uuid", identifier])
+        else:  # by_type == "label"
+            command.extend(["--label", identifier])
+
+        # Execute the command
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+            env=env,
+        )
+
+        # The output of 'blkid --uuid <UUID>' or 'blkid --label <LABEL>' is simply the device path
+        # if found. If not found, it returns a non-zero exit code, which
+        # 'check=True' converts into a CalledProcessError.
+        device_path = result.stdout.strip()
+
+        if device_path:
+            return device_path
+
+        # This case should ideally not be reached if check=True is working as expected
+        # for "not found" scenarios, but it's a safeguard.
+        return None
+
+    except FileNotFoundError as exc:
+        _log_error(
+            "Error: 'blkid' command not found. Please ensure it is installed and in your PATH."
+        )
+        raise SnapmNotFoundError("blkid command not found.") from exc
+    except subprocess.CalledProcessError as e:
+        # blkid returns 2 if the specified UUID/label is not found.
+        if e.returncode == 2:
+            # This is the expected behavior when the identifier is not found.
+            _log_debug(
+                "Identifier '%s' (%s) not found by blkid.",
+                identifier,
+                by_type,
+            )
+            return None
+
+        # Other errors (e.g., permission denied) should still be raised.
+        _log_error(
+            "Error executing blkid command (return code %d): %s", e.returncode, e
+        )
+        _log_error("Stdout: %s", e.stdout.strip())
+        _log_error("Stderr: %s", e.stderr.strip())
+        raise SnapmSystemError(f"Error executing blkid command: {e}") from e
+    except Exception as e:
+        _log_error("An unexpected error occurred while executing blkid: %s", str(e))
+        raise SnapmCalloutError(
+            f"An unexpected error occurred while executing blkid: {e}"
+        ) from e
+
+
+def get_device_fstype(devpath: str) -> str:
+    """
+    Determine the file system type for the device at `devpath`.
+
+    :param devpath: The path to the device.
+    :returns: The file system type, 'xfs', 'ext4', 'swap', etc.
+    :rtype: str
+
+    :raises SnapmNotFoundError: If the device is not found.
+    :raises SnapmSystemError: If the 'blkid' command exits with a non-zero status
+                              due to reasons other than the identifier not being found
+                              (e.g., permission issues).
+    :raises SnapmCalloutError: For any other unexpected errors during command execution
+                               or parsing.
+    """
+    if not devpath:
+        raise ValueError("Device path cannot be an empty string.")
+    if not os.path.exists(devpath):
+        raise SnapmNotFoundError(f"Unknown device path: {devpath}")
+    if not S_ISBLK(os.stat(devpath).st_mode):
+        raise SnapmPathError(f"Path {devpath} is not a block device.")
+
+    env = dict(os.environ, LC_ALL="C", LANG="C")
+    try:
+        command = ["blkid", "--match-tag=TYPE", "--output=value", devpath]
+
+        # Execute the command
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=10,
+            env=env,
+        )
+
+        # The output of 'blkid --match-tag=TYPE --output=value /path/to/dev' is simply
+        # the value of the requested tag, e.g.:
+        # # blkid --match-tag=TYPE --output=value /dev/fedora/root
+        # xfs
+        # if found. If not found, it returns a non-zero exit code, which
+        # 'check=True' converts into a CalledProcessError.
+        return result.stdout.strip()
+
+    except FileNotFoundError as exc:
+        _log_error(
+            "Error: 'blkid' command not found. Please ensure it is installed and in your PATH."
+        )
+        raise SnapmNotFoundError("blkid command not found.") from exc
+    except subprocess.CalledProcessError as e:
+        # blkid returns 2 if the specified device path does not exist, is not a
+        # block device, or if the specified tag is undefined.
+        if e.returncode == 2:
+            _log_debug("blkid: no TYPE for %s", devpath)
+            return ""
+
+        # Other errors (e.g., permission denied) should still be raised.
+        _log_error(
+            "Error executing blkid command (return code %d): %s", e.returncode, e
+        )
+        _log_error("Stdout: %s", e.stdout.strip())
+        _log_error("Stderr: %s", e.stderr.strip())
+        raise SnapmSystemError(f"Error executing blkid command: {e}") from e
+    except Exception as e:
+        _log_error("An unexpected error occurred while executing blkid: %s", str(e))
+        raise SnapmCalloutError(
+            f"An unexpected error occurred while executing blkid: {e}"
+        ) from e
+
+
+def find_snapset_root(snapset, fstab: FsTabReader, origin: bool = False):
+    """
+    Find the device that backs the root filesystem for snapshot set ``snapset``.
+
+    If the snapset does not include the root volume look the device up via the
+    fstab.
+
+    :param snapset: The ``SnapshotSet`` to check.
+    :type snapset: SnapshotSet
+    :param fstab: An ``FsTabReader`` instance to use.
+    :type fstab: FsTabReader
+    :param origin: Always return the origin device, even if a snapshot exists
+                   for the root mount point.
+    :type origin: bool
+    :returns: The device path for the root filesystem.
+    :rtype: str
+    :raises SnapmNotFoundError: If no root device can be found in the snapshot set
+                                or fstab.
+    """
+    for snapshot in snapset.snapshots:
+        if snapshot.mount_point == "/":
+            if origin:
+                return snapshot.origin
+            return snapshot.devpath
+    dev_path = None
+
+    for entry in fstab.lookup("where", "/"):
+        if entry.what.startswith("UUID="):
+            dev_path = get_device_path("uuid", entry.what.split("=", maxsplit=1)[1])
+            break
+        if entry.what.startswith("LABEL="):
+            dev_path = get_device_path("label", entry.what.split("=", maxsplit=1)[1])
+            break
+        if entry.what.startswith("PARTUUID="):
+            ident = entry.what.split("=", maxsplit=1)[1]
+            cand = f"/dev/disk/by-partuuid/{ident}"
+            dev_path = cand if os.path.exists(cand) else None
+            break
+        if entry.what.startswith("PARTLABEL="):
+            ident = entry.what.split("=", maxsplit=1)[1]
+            cand = f"/dev/disk/by-partlabel/{ident}"
+            dev_path = cand if os.path.exists(cand) else None
+            break
+        if entry.what.startswith("/"):
+            dev_path = entry.what
+            break
+
+    if dev_path:
+        return dev_path
+
+    raise SnapmNotFoundError(f"Could not find root device for snapset {snapset.name}")
+
+
+def build_snapset_mount_list(snapset: SnapshotSet, fstab: FsTabReader):
+    """
+    Build a list of command line mount unit definitions for the snapshot set
+    ``snapset``. Mount points that are not part of the snapset are substituted
+    from /etc/fstab.
+
+    :param snapset: The snapshot set to build a mount list for.
+    :type snapset: SnapshotSet
+    :param fstab: An ``FsTabReader`` instance to use.
+    :type fstab: FsTabReader
+    :returns: A list of 4-tuples, each containing (device_path, mount_point,
+              filesystem_type, mount_options) for auxiliary mounts. The root
+              filesystem ("/") and swap entries are excluded from the list.
+    :rtype: List[Tuple[str, str, str, str]]
+    """
+    mounts = []
+    snapset_mounts = snapset.mount_points
+
+    for entry in fstab:
+        what, where, fstype, options, _, _ = entry
+        if where == "/" or fstype == "swap":
+            continue
+        if where in snapset_mounts:
+            snapshot = snapset.snapshot_by_mount_point(where)
+            mounts.append((snapshot.devpath, where, fstype, options))
+        else:
+            mounts.append((what, where, fstype, options))
+    return mounts
+
+
 __all__ = [
     "ETC_FSTAB",
     "SNAPSET_NAME",
@@ -1691,6 +2187,9 @@ __all__ = [
     "SNAPSET_UUID",
     "SNAPSET_STATUS",
     "SNAPSET_AUTOACTIVATE",
+    "SNAPSET_MOUNTED",
+    "SNAPSET_ORIGIN_MOUNTED",
+    "SNAPSET_MOUNT_ROOT",
     "SNAPSET_BOOTABLE",
     "SNAPSET_BOOT_ENTRIES",
     "SNAPSET_SNAPSHOT_ENTRY",
@@ -1717,6 +2216,7 @@ __all__ = [
     "SNAPM_DEBUG_MANAGER",
     "SNAPM_DEBUG_COMMAND",
     "SNAPM_DEBUG_REPORT",
+    "SNAPM_DEBUG_MOUNTS",
     "SNAPM_DEBUG_ALL",
     # Path to runtime directory
     "SNAPM_RUNTIME_DIR",
@@ -1725,6 +2225,7 @@ __all__ = [
     "SNAPM_SUBSYSTEM_MANAGER",
     "SNAPM_SUBSYSTEM_COMMAND",
     "SNAPM_SUBSYSTEM_REPORT",
+    "SNAPM_SUBSYSTEM_MOUNTS",
     # Debug logging - legacy interface
     "set_debug_mask",
     "get_debug_mask",
@@ -1746,6 +2247,8 @@ __all__ = [
     "SnapmArgumentError",
     "SnapmTimerError",
     "SnapmLimitError",
+    "SnapmMountError",
+    "SnapmUmountError",
     "Selection",
     "size_fmt",
     "is_size_policy",
@@ -1756,4 +2259,11 @@ __all__ = [
     "SnapStatus",
     "SnapshotSet",
     "Snapshot",
+    "select_snapshot_set",
+    "select_snapshot",
+    "FsTabReader",
+    "get_device_path",
+    "get_device_fstype",
+    "find_snapset_root",
+    "build_snapset_mount_list",
 ]

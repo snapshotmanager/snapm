@@ -35,8 +35,9 @@
 ..
 .
 .de ARG_SNAPSET_COMMANDS
-.  RI create | create-scheduled | delete | rename | revert | resize | \
-split | prune | activate | deactivate | autoactivate | list | show
+.  RI create | create-scheduled | delete | rename | revert | resize " "\c
+.  RI | split | prune | activate | deactivate | autoactivate | list | show " "\c
+.  RI | mount | umount | exec | shell
 ..
 .
 .de ARG_SNAPSHOT_TYPE
@@ -58,6 +59,14 @@ split | prune | activate | deactivate | autoactivate | list | show
 ..
 .de ARG_SCHEDULE_COMMANDS
 .  RI create | delete | enable | disable | list | show | gc
+..
+.
+.de ARG_NAME
+.  RI name " "\c
+..
+.
+.de ARG_COMMAND
+.  RI command " "\c
 ..
 .
 .de ARG_NAME_OR_UUID
@@ -267,6 +276,38 @@ snapm \- Linux Snapshot Manager
 ..
 .CMD_SNAPSET_SHOW
 .br
+.
+.de CMD_SNAPSET_MOUNT
+.  B snapset
+.  B mount
+.  ARG_NAME
+..
+.CMD_SNAPSET_MOUNT
+.br
+.
+.de CMD_SNAPSET_UMOUNT
+.  B snapset
+.  B umount
+.  ARG_NAME
+..
+.CMD_SNAPSET_UMOUNT
+.br
+.
+.de CMD_SNAPSET_EXEC
+.  B snapset
+.  B exec
+.  ARG_NAME
+.  ARG_COMMAND
+..
+.CMD_SNAPSET_EXEC
+.br
+.
+.de CMD_SNAPSET_SHELL
+.  B snapset
+.  B shell
+.  ARG_NAME
+..
+.CMD_SNAPSET_SHELL
 .PP
 .
 .B snapm
@@ -464,7 +505,7 @@ The name of a configured schedule.
 \fB-d | --debug\fP \fIdebug_flags\fP
 A comma-separated list of subsystem names to enable debugging output
 for, or 'all' to enable all debugging. The available debug classes
-are: manager, command, plugins, report.
+are: manager, command, report, mounts.
 .
 .TP 8
 .B -h | --help
@@ -735,6 +776,7 @@ Time:             2024-12-05 17:46:12
 UUID:             87c89914-51a5-5043-8513-667100213243
 Status:           Inactive
 Autoactivate:     no
+Mounted:          no
 Bootable:         no
 .EE
 When creating snapshot sets \fB--bootable\fP and \fB--revert\fP can optionally
@@ -763,6 +805,8 @@ Status:           Inactive
 .br
 Autoactivate:     no
 .br
+Mounted:          no
+.br
 Bootable:         no
 .br
 .IP
@@ -786,6 +830,7 @@ Time:             2025-03-26 14:17:18
 UUID:             ae082452-7995-5316-ac65-388eadd9879c
 Status:           Active
 Autoactivate:     yes
+Mounted:          no
 Bootable:         no
 .EE
 .
@@ -941,6 +986,33 @@ that field respectively.
 Display snapshot sets matching selection criteria on standard out. If the
 \fB--members\fP option is given individual snapshots are included in the
 output.
+.
+.TP
+.B snapm
+.CMD_SNAPSET_MOUNT
+.br
+Mount the members of the specified snapshot set. The root volume is mounted at
+\fI/run/snapm/mounts/<name>\fP. Bind mounts for API and runtime file systems
+are created automatically.
+.
+.TP
+.B snapm
+.CMD_SNAPSET_UMOUNT
+.br
+Unmount the specified snapshot set members from \fI/run/snapm/mounts/<name>\fP.
+.
+.TP
+.B snapm
+.CMD_SNAPSET_EXEC
+.br
+Execute the specified command in snapshot set \fIname\fP. Arguments following
+\fIcommand\fP are passed through verbatim.
+.
+.TP
+.B snapm
+.CMD_SNAPSET_SHELL
+.br
+Start an interactive shell in snapshot set \fIname\fP.
 .
 .P
 .B Snapshot Commands
@@ -1328,6 +1400,15 @@ status section.
 .B autoactivate
 The autoactivation setting for this snapshot set.
 .TP 8
+.B mounted
+The snapshot set mount status.
+.TP 8
+.B origin_mounted
+The snapshot set origin mount status.
+.TP 8
+.B mount_root
+The path to the root volume mount if this snapshot set is currently mounted.
+.TP 8
 .B bootentry
 The \fBboot identifier\fP of the boot loader entry configured to boot this
 snapshot set, or the empty string if no boot entry has been created.
@@ -1571,6 +1652,7 @@ Time:             2024-12-05 17:57:05
 UUID:             b9b4cd96-75a5-5826-a26b-b617c06bd877
 Status:           Active
 Autoactivate:     no
+Mounted:          no
 Bootable:         no
 .EE
 .P
@@ -1586,6 +1668,7 @@ Time:             2025-08-23 03:10:19
 UUID:             d9b63a58-333b-517a-b38d-7cc818040fab
 Status:           Active
 Autoactivate:     yes
+Mounted:          no
 Bootable:         yes
 BootEntries:
   SnapshotEntry:  61cb664
@@ -1616,6 +1699,7 @@ with output formatted in JSON notation
     "UUID": "d9b63a58-333b-517a-b38d-7cc818040fab",
     "Status": "Active",
     "Autoactivate": true,
+    "Mounted": false,
     "Bootable": true,
     "BootEntries": {
         "SnapshotEntry": "61cb664",
@@ -1655,6 +1739,7 @@ Time:             2025-08-23 03:10:19
 UUID:             d9b63a58-333b-517a-b38d-7cc818040fab
 Status:           Active
 Autoactivate:     yes
+Mounted:          no
 Bootable:         yes
 BootEntries:
   SnapshotEntry:  61cb664
@@ -1708,6 +1793,14 @@ Configuration is read from the following locations:
 The main configuration file is \fI/etc/snapm/snapm.conf\fP.
 Plugin-specific settings are stored in \fIplugins.d\fP, and snapshot schedules
 are defined in \fIschedule.d\fP.
+.PP
+Snapshot set mounts are created in:
+.PP
+.I /run/snapm/mounts
+.br
+.PP
+The snapshot set root volume is mounted to a directory named for the snapshot
+set.
 .
 .SH BUGS
 Please report bugs via the GitHub issue tracker:

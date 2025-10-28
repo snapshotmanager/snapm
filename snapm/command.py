@@ -14,7 +14,7 @@ and may be used by application programs, or interactively in the
 Python shell by users who do not require all the features present
 in the snapm object API.
 """
-from argparse import ArgumentParser
+from argparse import ArgumentParser, REMAINDER
 from typing import Union, List
 from os.path import basename
 from json import dumps
@@ -24,6 +24,8 @@ import os
 
 from snapm import (
     SnapmInvalidIdentifierError,
+    SnapmPathError,
+    SnapmArgumentError,
     SNAPSET_NAME,
     SNAPSET_BASENAME,
     SNAPSET_INDEX,
@@ -36,6 +38,9 @@ from snapm import (
     SNAPSET_UUID,
     SNAPSET_STATUS,
     SNAPSET_AUTOACTIVATE,
+    SNAPSET_MOUNTED,
+    SNAPSET_ORIGIN_MOUNTED,
+    SNAPSET_MOUNT_ROOT,
     SNAPSET_BOOTABLE,
     SNAPSET_SNAPSHOT_ENTRY,
     SNAPSET_REVERT_ENTRY,
@@ -55,6 +60,7 @@ from snapm import (
     SNAPM_DEBUG_MANAGER,
     SNAPM_DEBUG_COMMAND,
     SNAPM_DEBUG_REPORT,
+    SNAPM_DEBUG_MOUNTS,
     SNAPM_DEBUG_ALL,
     SNAPM_SUBSYSTEM_COMMAND,
     SubsystemFilter,
@@ -245,6 +251,33 @@ _snapshot_set_fields = [
     ),
     FieldType(
         PR_SNAPSET,
+        "mounted",
+        SNAPSET_MOUNTED,
+        "SnapshotSet mount status",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.snapshot_mounted)),
+    ),
+    FieldType(
+        PR_SNAPSET,
+        "origin_mounted",
+        SNAPSET_ORIGIN_MOUNTED,
+        "SnapshotSet origin mount status",
+        13,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.origin_mounted)),
+    ),
+    FieldType(
+        PR_SNAPSET,
+        "mount_root",
+        SNAPSET_MOUNT_ROOT,
+        "SnapshotSet mount root directory path",
+        9,
+        REP_STR,
+        lambda f, d: f.report_str(d.mount_root),
+    ),
+    FieldType(
+        PR_SNAPSET,
         "bootable",
         SNAPSET_BOOTABLE,
         "Configured for snapshot boot",
@@ -272,7 +305,7 @@ _snapshot_set_fields = [
     ),
 ]
 
-_DEFAULT_SNAPSET_FIELDS = "name,time,nr_snapshots,status,sources"
+_DEFAULT_SNAPSET_FIELDS = "name,time,nr_snapshots,status,sources,mounted"
 
 _snapshot_fields = [
     FieldType(
@@ -1321,6 +1354,111 @@ def _show_cmd(cmd_args):
     return 0
 
 
+def _mount_cmd(cmd_args):
+    """
+    Mount snapshot set command handler.
+
+    Mount the specified snapshot set (by default snapshot set mounts appear
+    under /run/snapm/mounts/<name>).
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    select = Selection(name=cmd_args.name)
+    matches = manager.find_snapshot_sets(selection=select)
+    if len(matches) != 1:
+        _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
+        return 1
+    snapset = matches[0]
+    manager.mounts.mount(snapset)
+    return 0
+
+
+def _umount_cmd(cmd_args):
+    """
+    Unmount snapshot set command handler.
+
+    Unmount the specified snapshot set (by default from
+    /run/snapm/mounts/<name>).
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    manager = Manager()
+    select = Selection(name=cmd_args.name)
+    matches = manager.find_snapshot_sets(selection=select)
+    if len(matches) != 1:
+        _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
+        return 1
+    snapset = matches[0]
+    manager.mounts.umount(snapset)
+    return 0
+
+
+def _exec_cmd(cmd_args):
+    """
+    Execute in snapshot set command handler.
+
+    Execute the specified command in the given snapshot set.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    did_mount = False
+    ret = 0
+
+    if not cmd_args.command:
+        _log_error("the following arguments are required: COMMAND")
+        return 1
+
+    manager = Manager()
+    select = Selection(name=cmd_args.name)
+    matches = manager.find_snapshot_sets(selection=select)
+    if len(matches) != 1:
+        _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
+        return 1
+    snapset = matches[0]
+
+    pre_existing = manager.mounts.find_mounts(select)
+    mount = manager.mounts.mount(snapset)  # idempotent
+    did_mount = not any(m.mounted for m in pre_existing)
+
+    try:
+        ret = mount.exec(cmd_args.command)
+    except (SnapmPathError, SnapmArgumentError) as err:
+        _log_error("mount.exec(%s) failed: %s", cmd_args.command, err)
+        ret = 1
+    finally:
+        if did_mount:
+            manager.mounts.umount(snapset)
+
+    if ret:
+        _log_error(
+            "Command '%s' failed in snapshot set %s: %d",
+            " ".join(cmd_args.command),
+            cmd_args.name,
+            ret,
+        )
+
+    return ret
+
+
+def _shell_cmd(cmd_args):
+    """
+    Shell snapshot set command handler.
+
+    Start an interactive shell in the given snapshot set. The shell invoked
+    defaults to the SHELL environment variable if set, or the program at
+    /bin/bash otherwise.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    cmd_args.command = [os.environ.get("SHELL") or "/bin/bash"]
+    return _exec_cmd(cmd_args)
+
+
 def _snapshot_activate_cmd(cmd_args):
     """
     Activate snapshot command handler.
@@ -1623,6 +1761,7 @@ def set_debug(debug_arg):
         "manager": SNAPM_DEBUG_MANAGER,
         "command": SNAPM_DEBUG_COMMAND,
         "report": SNAPM_DEBUG_REPORT,
+        "mounts": SNAPM_DEBUG_MOUNTS,
         "all": SNAPM_DEBUG_ALL,
     }
 
@@ -1913,6 +2052,10 @@ DISABLE_CMD = "disable"
 SHOW_CMD = "show"
 LIST_CMD = "list"
 GC_CMD = "gc"
+MOUNT_CMD = "mount"
+UMOUNT_CMD = "umount"
+EXEC_CMD = "exec"
+SHELL_CMD = "shell"
 
 SNAPSET_TYPE = "snapset"
 SNAPSHOT_TYPE = "snapshot"
@@ -2099,7 +2242,6 @@ def _add_snapset_subparser(type_subparser):
     snapset_show_parser = snapset_subparser.add_parser(
         SHOW_CMD, help="Display snapshot sets"
     )
-    snapset_show_parser.set_defaults(func=_show_cmd)
     _add_identifier_args(snapset_show_parser, snapset=True)
     snapset_show_parser.add_argument(
         "-m",
@@ -2108,6 +2250,69 @@ def _add_snapset_subparser(type_subparser):
         help="Show snapshots that are part of each snapshot set",
     )
     _add_json_arg(snapset_show_parser)
+    snapset_show_parser.set_defaults(func=_show_cmd)
+
+    # snapset mount subcommand
+    snapset_mount_parser = snapset_subparser.add_parser(
+        MOUNT_CMD, help="Mount snapshot set"
+    )
+    snapset_mount_parser.add_argument(
+        "name",
+        metavar="NAME",
+        type=str,
+        action="store",
+        help="The name of the snapshot set to be mounted",
+    )
+    snapset_mount_parser.set_defaults(func=_mount_cmd)
+
+    # snapset umount subcommand
+    snapset_umount_parser = snapset_subparser.add_parser(
+        UMOUNT_CMD, help="Unmount snapshot set"
+    )
+    snapset_umount_parser.add_argument(
+        "name",
+        metavar="NAME",
+        type=str,
+        action="store",
+        help="The name of the snapshot set to be unmounted",
+    )
+    snapset_umount_parser.set_defaults(func=_umount_cmd)
+
+    # snapset exec subcommand
+    snapset_exec_parser = snapset_subparser.add_parser(
+        EXEC_CMD,
+        help="Execute command in snapshot set",
+    )
+    snapset_exec_parser.add_argument(
+        "name",
+        metavar="NAME",
+        type=str,
+        action="store",
+        help="The name of the snapshot set in which to execute the command",
+    )
+    snapset_exec_parser.add_argument(
+        "command",
+        metavar="COMMAND",
+        default=[],
+        nargs=REMAINDER,
+        action="extend",
+        help="The command to be executed with its arguments",
+    )
+    snapset_exec_parser.set_defaults(func=_exec_cmd)
+
+    # snapset shell subcommand
+    snapset_shell_parser = snapset_subparser.add_parser(
+        SHELL_CMD,
+        help="Start interactive shell in snapshot set",
+    )
+    snapset_shell_parser.add_argument(
+        "name",
+        metavar="NAME",
+        type=str,
+        action="store",
+        help="The name of the snapshot set in which to start the shell",
+    )
+    snapset_shell_parser.set_defaults(func=_shell_cmd)
 
 
 def _add_snapshot_subparser(type_subparser):

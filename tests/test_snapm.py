@@ -5,13 +5,18 @@
 # This file is part of the snapm project.
 #
 # SPDX-License-Identifier: Apache-2.0
+import subprocess
 import unittest
 import logging
 from uuid import UUID
+import os
 
 import snapm
+import snapm._snapm
 
-from tests import MockArgs
+from tests import MockArgs, have_root, BOOT_ROOT_TEST
+from ._util import LvmLoopBacked, StratisLoopBacked
+
 
 log = logging.getLogger()
 
@@ -30,7 +35,7 @@ EIGHT_TIB = 8 * 2**40
 TEN_TIB = 10 * 2**40
 
 
-class SnapmTests(unittest.TestCase):
+class SnapmTestsSimple(unittest.TestCase):
     """Test snapm module"""
 
     def setUp(self):
@@ -194,3 +199,86 @@ class SnapmTests(unittest.TestCase):
 
     def test_size_fmt_yib(self):
         self.assertEqual(snapm.size_fmt(1000000000000000000000000000), "827.2YiB")
+
+    def test__unescape_mounts(self):
+        unesc_strings = {
+            "/foo/bar\\040baz": "/foo/bar baz",
+            "/path/with/tab\\011chars": "/path/with/tab\tchars",
+            "embedded\\012newline": "embedded\nnewline",
+            "back\\134slash": "back\\slash",
+        }
+        for to_unesc in unesc_strings:
+            self.assertEqual(snapm._snapm._unescape_mounts(to_unesc), unesc_strings[to_unesc])
+
+    def test__unescape_mounts_None(self):
+        with self.assertRaises(AttributeError):
+            snapm._snapm._unescape_mounts(None)
+
+    def test__unescape_mounts_not_a_string(self):
+        with self.assertRaises(AttributeError):
+            snapm._snapm._unescape_mounts(1)
+
+
+@unittest.skipIf(not have_root(), "requires root privileges")
+class SnapmTests(unittest.TestCase):
+    """Test snapm module with devices"""
+    volumes = ["root"]
+    thin_volumes = ["opt"]
+    stratis_volumes = ["fs1"]
+
+    def setUp(self):
+        log.debug("Preparing %s", self._testMethodName)
+        def cleanup_lvm():
+            log.debug("Cleaning up LVM (%s)", self._testMethodName)
+            if hasattr(self, "_lvm"):
+                self._lvm.destroy()
+
+        def cleanup_stratis():
+            log.debug("Cleaning up Stratis (%s)", self._testMethodName)
+            if hasattr(self, "_stratis"):
+                self._stratis.destroy()
+
+        self.addCleanup(cleanup_lvm)
+        self.addCleanup(cleanup_stratis)
+
+        self._lvm = LvmLoopBacked(self.volumes, thin_volumes=self.thin_volumes)
+        self._stratis = StratisLoopBacked(self.stratis_volumes)
+
+    def test_get_device_path_uuid(self):
+        dev_path = self._lvm.block_devs()[0]
+        blkid_cmd = ["blkid", "--match-tag=UUID", "--output=value", dev_path]
+        result = subprocess.run(blkid_cmd, check=True, capture_output=True, encoding="utf8")
+        dev_uuid = result.stdout.strip()
+        self.assertTrue(os.path.samefile(dev_path, snapm.get_device_path("uuid", dev_uuid)))
+
+    def test_get_device_path_no_such_uuid(self):
+        dev_uuid = "f00f00f0-baaa-cafe-f000-b4f67cea90d5"
+        self.assertEqual(None, snapm.get_device_path("uuid", dev_uuid))
+
+    def test_get_device_path_label(self):
+        dev_path = self._lvm.block_devs()[0]
+        blkid_cmd = ["blkid", "--match-tag=LABEL", "--output=value", dev_path]
+        result = subprocess.run(blkid_cmd, check=True, capture_output=True, encoding="utf8")
+        dev_label = result.stdout.strip()
+        self.assertTrue(os.path.samefile(dev_path, snapm.get_device_path("label", dev_label)))
+
+    def test_get_device_path_no_such_label(self):
+        dev_label = "ThisIsNotALabel"
+        self.assertEqual(None, snapm.get_device_path("label", dev_label))
+
+    def test_get_device_fstype_ext4(self):
+        dev_path = self._lvm.block_devs()[0]
+        fstype = snapm.get_device_fstype(dev_path)
+        self.assertEqual("ext4", fstype)
+
+    def test_get_device_fstype_empty(self):
+        with self.assertRaises(ValueError):
+            snapm.get_device_fstype("")
+
+    def test_get_device_fstype_no_such_path(self):
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            snapm.get_device_fstype("/whats/the/frequency/kenneth/?")
+
+    def test_get_device_fstype_not_a_blockdev(self):
+        with self.assertRaises(snapm.SnapmPathError):
+            snapm.get_device_fstype("/dev/null")

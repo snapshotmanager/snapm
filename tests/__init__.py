@@ -56,6 +56,14 @@ class MockArgs(object):
     keep_yearly = 0
 
 
+def is_redhat():
+    """
+    Return True for Red Hat derivatives (excluding CentOS pending boom-boot #59).
+    """
+    return (os.path.exists("/etc/redhat-release")
+            and not os.path.exists("/etc/centos-release"))
+
+
 def have_root():
     """Return ``True`` if the test suite is running as the root user,
     and ``False`` otherwise.

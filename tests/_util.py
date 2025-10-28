@@ -268,7 +268,7 @@ class LvmLoopBacked(object):
         return self.volumes + self.thin_volumes
 
     def format(self, name):
-        _run([_MKFS_EXT4_CMD, f"/dev/{_VG_NAME}/{name}"])
+        _run([_MKFS_EXT4_CMD, "-L", name, f"/dev/{_VG_NAME}/{name}"])
 
     def make_mount_point(self, name):
         os.makedirs(os.path.join(self.mount_root, name))

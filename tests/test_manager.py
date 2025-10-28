@@ -136,6 +136,16 @@ class ManagerTestsSimple(unittest.TestCase):
                 os.dup(fd)
             self.assertEqual(cm.exception.errno, errno.EBADF)
 
+    def test__check_mounts_dir(self):
+        _manager = manager._manager
+        _orig_mounts_dir = _manager._SNAPM_MOUNTS_DIR
+        self.addCleanup(setattr, _manager, "_SNAPM_MOUNTS_DIR", _orig_mounts_dir)
+        with tempfile.TemporaryDirectory(suffix="_test_run_mounts", dir="/tmp") as tempdir:
+            _manager._SNAPM_MOUNTS_DIR = os.path.join(str(tempdir), _orig_mounts_dir.lstrip(os.sep))
+            self.assertEqual(_manager._check_mounts_dir(), _manager._SNAPM_MOUNTS_DIR)
+            st = os.stat(_manager._SNAPM_MOUNTS_DIR)
+            self.assertEqual(st.st_mode & 0o777, _manager._SNAPM_MOUNTS_DIR_MODE)
+
 
 @unittest.skipIf(not have_root(), "requires root privileges")
 class ManagerTests(unittest.TestCase):

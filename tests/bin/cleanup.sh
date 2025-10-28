@@ -1,6 +1,8 @@
 #!/bin/bash
+set -euo pipefail
+shopt -s nullglob
 
-if [[ "$1" != "--force" ]]; then
+if [[ "$#" -eq 0 ]] || [[ "$1" != "--force" ]]; then
     echo -n "Clean up test suite mounts and devices? (y/n): "
     read YES
     if [[ "$YES" != "y" ]]; then
@@ -8,16 +10,21 @@ if [[ "$1" != "--force" ]]; then
     fi
 fi
 
-umount /var/tmp/*_snapm_mounts/* &> /dev/null
+if test -n "$(echo /var/tmp/*_snapm_mounts/*)"; then
+    umount -R /var/tmp/*_snapm_mounts/* || true
+fi
+if test -n "$(echo /var/tmp/snapm_mnt_*/)"; then
+    umount -R /var/tmp/snapm_mnt_*/ || true
+fi
 
 if [ -f /tmp/fstab ]; then
-    umount /etc/fstab &> /dev/null
+    umount /etc/fstab &> /dev/null || true
     rm -f /tmp/fstab
 fi
 
 if [ -d /dev/test_vg0 ]; then
 	export LVM_SYSTEM_DIR="$PWD/tests/lvm"
-	vgremove --force --yes test_vg0 &> /dev/null || echo Failed to clean up test_vg0
+	vgremove --force --yes test_vg0 &> /dev/null || echo Failed to clean up test_vg0 || true
 fi
 
 if [ -d /dev/stratis/pool1 ]; then
