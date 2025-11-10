@@ -1295,13 +1295,54 @@ class Manager:
         self.by_uuid.pop(snapset.uuid)
         self.snapshot_sets.remove(snapset)
 
+        has_boot = snapset.boot_entry is not None
+        has_revert = snapset.revert_entry is not None
+
         try:
+            if has_boot:
+                delete_snapset_boot_entry(snapset)
+            if has_revert:
+                delete_snapset_revert_entry(snapset)
             snapset.rename(new_name)
         except SnapmError as err:
+            _log_error("Failed to rename snapshot set '%s': %s", old_name, err)
+            # Restore boot entries if deletion succeeded but rename failed
+            if has_boot:
+                create_snapset_boot_entry(snapset)
+            if has_revert:
+                create_snapset_revert_entry(snapset)
+            if has_boot or has_revert:
+                self._boot_cache.refresh_cache()
             self.by_name[snapset.name] = snapset
             self.by_uuid[snapset.uuid] = snapset
             self.snapshot_sets.append(snapset)
-            raise err
+            raise
+
+        # Recreate boot entries with the new snapshot set name
+        try:
+            if has_boot:
+                create_snapset_boot_entry(snapset)
+            if has_revert:
+                create_snapset_revert_entry(snapset)
+            if has_boot or has_revert:
+                self._boot_cache.refresh_cache()
+        except (SnapmError, OSError, ValueError) as err:
+            # If recreation fails, undo the rename
+            _log_error("Failed to recreate boot entries after rename: %s", err)
+            try:
+                snapset.rename(old_name)
+                if has_boot:
+                    create_snapset_boot_entry(snapset)
+                if has_revert:
+                    create_snapset_revert_entry(snapset)
+                if has_boot or has_revert:
+                    self._boot_cache.refresh_cache()
+            except (SnapmError, OSError, ValueError) as rollback_err:
+                _log_error("Failed to rollback rename: %s", rollback_err)
+            self.by_name[snapset.name] = snapset
+            self.by_uuid[snapset.uuid] = snapset
+            self.snapshot_sets.append(snapset)
+            raise
 
         self.by_name[snapset.name] = snapset
         self.by_uuid[snapset.uuid] = snapset

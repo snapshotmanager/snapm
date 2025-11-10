@@ -290,3 +290,27 @@ class BootTestsWithRoot(BootTestsBase):
 
         # Clean up boot entry
         self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
+
+    def test_create_boot_entries_and_rename(self):
+        sset = self.manager.find_snapshot_sets(snapm.Selection(name="bootset0"))[0]
+        self.manager.create_snapshot_set_boot_entry(name="bootset0")
+        self.manager.create_snapshot_set_revert_entry(name="bootset0")
+
+        self.assertIsNotNone(sset.boot_entry)
+        self.assertIsNotNone(sset.revert_entry)
+
+        # Stash original boot_id values
+        orig_boot_id = sset.boot_entry.boot_id
+        orig_revert_id = sset.revert_entry.boot_id
+
+        self.manager.rename_snapshot_set("bootset0", "bootset1")
+
+        self.assertIsNotNone(sset.boot_entry)
+        self.assertIsNotNone(sset.revert_entry)
+
+        # Verify boot_id values are changed
+        self.assertNotEqual(orig_boot_id, sset.boot_entry.boot_id)
+        self.assertNotEqual(orig_revert_id, sset.revert_entry.boot_id)
+
+        # Clean up boot entries
+        self.manager.delete_snapshot_sets(snapm.Selection(name="bootset1"))
