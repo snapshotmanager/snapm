@@ -8,8 +8,8 @@
 """
 Snapshot set scheduling abstractions for Snapshot Manager.
 """
+from typing import Dict, List, Tuple, Union
 from datetime import datetime, timedelta
-from typing import List, Union, Dict
 from dataclasses import dataclass
 from json import dumps, loads
 from os.path import join
@@ -274,7 +274,7 @@ class GcPolicyParamsAge(GcPolicyParams):
         _log_debug_schedule(
             "%s garbage collecting: %s",
             repr(self),
-            ", ".join(td.name for td in to_delete)
+            ", ".join(td.name for td in to_delete),
         )
         return to_delete
 
@@ -318,6 +318,7 @@ class GcPolicyParamsTimeline(GcPolicyParams):
     #: The maximum number of hourly snapshot sets to keep.
     keep_hourly: int = 0
 
+    # pylint: disable=too-many-locals
     def evaluate(self, sets: List[SnapshotSet]) -> List[SnapshotSet]:
         """
         Evaluate the list of ``SnapshotSet`` objects in ``sets``
@@ -326,17 +327,25 @@ class GcPolicyParamsTimeline(GcPolicyParams):
         to the configured ``keep_yearly``, ``keep_quarterly``, ``keep_monthly``,
         ``keep_weekly``, ``keep_daily``, and ``keep_hourly``.
 
+        Snapshots can be classified into multiple categories (e.g., a snapshot
+        on Monday Jan 1 is yearly, quarterly, monthly, weekly, daily, and hourly).
+        A snapshot is only deleted if ALL of its applicable categories vote for
+        deletion. If ANY category wants to keep it, the snapshot is retained.
+
         :param sets: The list of ``SnapshotSet`` objects to evaluate,
                               sorted in order of increasing creation date.
         :type sets: ``list[SnapshotSet]``.
         :returns: A list of ``SnapshotSet`` objects to garbage collect.
         :rtype: ``list[SnapshotSet]``
         """
+        categories = ["yearly", "quarterly", "monthly", "weekly", "daily", "hourly"]
 
-        def classify_snapshot_sets(sets: List[SnapshotSet]) -> Dict[str, List]:
+        def classify_snapshot_sets(
+            sets: List[SnapshotSet],
+        ) -> Tuple[Dict[str, List[SnapshotSet]], Dict[int, List[str]]]:
             """
-            Classify snapshot sets into one of six categories based on creation
-            time:
+            Classify snapshot sets into categories based on creation time.
+            Snapshots can belong to MULTIPLE categories:
 
                 * yearly (first snapshot set after midnight 1st Jan)
                 * quarterly (first snapshot set after midnight 1st Apr, Jul, Oct)
@@ -345,27 +354,20 @@ class GcPolicyParamsTimeline(GcPolicyParams):
                 * daily (first snapshot set after midnight)
                 * hourly (first snapshot set after top of hour)
 
-            Snapshot sets are assigned only to the first matching category (for
-            e.g. a snapshot set taken at 'Thu  1 Jan 00:05:00 1970' is assigned
-            to "yearly").
-
-            Any snapshot sets that are not classified by these rules (e.g. a
-            second snapshot set taken within a single hour) are assigned to
-            a catch-all "unclassified" list.
-
             :param sets: The list of ``SnapshotSet`` objects to classify.
             :type sets: ``List[SnapshotSet]``
-            :returns: a dictionary mapping category names to lists of
-                      ``SnapshotSet`` objects.
-            :rtype: ``Dict[str, List]``
+            :returns: A tuple of (classified dict, snapshot_categories dict)
+            :rtype: ``Tuple[Dict[str, List[SnapshotSet]], Dict[int, List[str]]]``
             """
-            categories = ["yearly", "quarterly", "monthly", "weekly", "daily", "hourly"]
             classified = {category: [] for category in categories}
             seen_boundaries = {category: set() for category in categories}
 
-            # Catch-all for snapshot sets that are not classified as one of the fixed
-            # timeline categories.
-            classified["unclassified"] = []
+            _log_debug_schedule(
+                "%s: classifying %d snapshot sets", repr(self), len(sets)
+            )
+
+            # Track which categories each snapshot belongs to
+            snapshot_categories = {}
 
             # pylint: disable=too-many-return-statements
             def get_boundary(dt, category):
@@ -387,30 +389,27 @@ class GcPolicyParamsTimeline(GcPolicyParams):
 
             for sset in sets:
                 dt = sset.datetime
-                have_classified = False
+                sset_categories = []
 
                 for category in categories:
                     if category == "quarterly" and dt.month not in (1, 4, 7, 10):
-                        continue
-                    if category == "monthly" and dt.month in (1, 4, 7, 10):
                         continue
                     if category == "weekly" and dt.weekday() != 0:
                         continue
 
                     boundary = get_boundary(dt, category)
-                    if dt > boundary and boundary not in seen_boundaries[category]:
+                    if dt >= boundary and boundary not in seen_boundaries[category]:
                         classified[category].append(sset)
                         seen_boundaries[category].add(boundary)
-                        have_classified = True
-                        break  # Do not allow multiple labels per snapshot set
+                        sset_categories.append(category)
+                        # Continue checking other categories
 
-                if not have_classified:
-                    classified["unclassified"].append(sset)
+                snapshot_categories[id(sset)] = sset_categories
 
-            return classified
+            return classified, snapshot_categories
 
         # Build lists of categorised snapshot sets
-        classified_sets = classify_snapshot_sets(sets)
+        classified_sets, snapshot_categories = classify_snapshot_sets(sets)
 
         # Short cuts for each category
         yearly = classified_sets["yearly"]
@@ -420,28 +419,73 @@ class GcPolicyParamsTimeline(GcPolicyParams):
         daily = classified_sets["daily"]
         hourly = classified_sets["hourly"]
 
-        if classified_sets["unclassified"]:
-            _log_warn(
-                "Found %d unclassified snapshot sets for GcPolicyParamsTimeline",
-                len(classified_sets["unclassified"]),
+        for category in categories:
+            members = classified_sets[category]
+            _log_debug_schedule(
+                "Classified %s: %s",
+                category,
+                ", ".join(c.name for c in members),
             )
 
-        # Select snapshot sets for garbage collection based on category and
-        # per-category keep count values.
-        to_delete = []
-        to_delete += yearly[0 : len(yearly) - self.keep_yearly]
-        to_delete += quarterly[0 : len(quarterly) - self.keep_quarterly]
-        to_delete += monthly[0 : len(monthly) - self.keep_monthly]
-        to_delete += weekly[0 : len(weekly) - self.keep_weekly]
-        to_delete += daily[0 : len(daily) - self.keep_daily]
-        to_delete += hourly[0 : len(hourly) - self.keep_hourly]
+        # Build a set of snapshots that should be KEPT by each category
+        kept_by_category = {
+            "yearly": set(
+                yearly[len(yearly) - self.keep_yearly :] if self.keep_yearly else []
+            ),
+            "quarterly": set(
+                quarterly[len(quarterly) - self.keep_quarterly :]
+                if self.keep_quarterly
+                else []
+            ),
+            "monthly": set(
+                monthly[len(monthly) - self.keep_monthly :] if self.keep_monthly else []
+            ),
+            "weekly": set(
+                weekly[len(weekly) - self.keep_weekly :] if self.keep_weekly else []
+            ),
+            "daily": set(
+                daily[len(daily) - self.keep_daily :] if self.keep_daily else []
+            ),
+            "hourly": set(
+                hourly[len(hourly) - self.keep_hourly :] if self.keep_hourly else []
+            ),
+        }
 
-        return to_delete
+        for category in categories:
+            _log_debug_schedule(
+                "Selected %d sets for %s retention: %s",
+                len(kept_by_category[category]),
+                category,
+                ", ".join(k.name for k in kept_by_category[category]),
+            )
+
+        # Determine which snapshots to delete
+        # A snapshot is KEPT if ANY of its categories wants to keep it
+        # A snapshot is DELETED only if ALL of its categories want to delete it
+        to_delete = []
+
+        for sset in sets:
+            sset_cats = snapshot_categories.get(id(sset), [])
+
+            # If snapshot has no categories, delete it
+            if not sset_cats:
+                to_delete.append(sset)
+                continue
+
+            # Check if ANY category wants to keep this snapshot
+            should_keep = any(
+                sset in kept_by_category[category] for category in sset_cats
+            )
+
+            if not should_keep:
+                to_delete.append(sset)
+
         _log_debug_schedule(
             "%s garbage collecting: %s",
             repr(self),
-            ", ".join(td.name for td in to_delete)
+            ", ".join(td.name for td in to_delete),
         )
+        return to_delete
 
     @property
     def has_params(self):
