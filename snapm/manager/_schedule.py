@@ -24,6 +24,7 @@ from snapm import (
     SnapmSystemError,
     SnapmArgumentError,
     SnapshotSet,
+    SNAPM_SUBSYSTEM_SCHEDULE,
 )
 from ._boot import (
     delete_snapset_boot_entry,
@@ -37,6 +38,12 @@ _log_debug = _log.debug
 _log_info = _log.info
 _log_warn = _log.warning
 _log_error = _log.error
+
+
+def _log_debug_schedule(msg, *args, **kwargs):
+    """A wrapper for schedule subsystem debug logs."""
+    _log.debug(msg, *args, extra={"subsystem": SNAPM_SUBSYSTEM_SCHEDULE}, **kwargs)
+
 
 #: Garbage collect timer default calendarspec
 _GC_CALENDAR_SPEC = "*-*-* *:10:00"
@@ -180,7 +187,13 @@ class GcPolicyParamsCount(GcPolicyParams):
         :returns: A list of ``SnapshotSet`` objects to garbage collect.
         :rtype: ``list[SnapshotSet]``
         """
-        return sets[0 : len(sets) - self.keep_count]
+        to_delete = sets[0 : len(sets) - self.keep_count]
+        _log_debug_schedule(
+            "%s garbage collecting: %s",
+            repr(self),
+            ", ".join(td.name for td in to_delete),
+        )
+        return to_delete
 
     @property
     def has_params(self):
@@ -257,7 +270,13 @@ class GcPolicyParamsAge(GcPolicyParams):
         :rtype: ``list[SnapshotSet]``
         """
         limit = datetime.now() - self.to_timedelta()
-        return [sset for sset in sets if sset.datetime < limit]
+        to_delete = [sset for sset in sets if sset.datetime < limit]
+        _log_debug_schedule(
+            "%s garbage collecting: %s",
+            repr(self),
+            ", ".join(td.name for td in to_delete)
+        )
+        return to_delete
 
     @property
     def has_params(self):
@@ -418,6 +437,11 @@ class GcPolicyParamsTimeline(GcPolicyParams):
         to_delete += hourly[0 : len(hourly) - self.keep_hourly]
 
         return to_delete
+        _log_debug_schedule(
+            "%s garbage collecting: %s",
+            repr(self),
+            ", ".join(td.name for td in to_delete)
+        )
 
     @property
     def has_params(self):
