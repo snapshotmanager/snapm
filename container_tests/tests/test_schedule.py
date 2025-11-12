@@ -30,7 +30,8 @@ class MockSnapshotSet:
     boot_entry = None
     revert_entry = None
 
-    def __init__(self, timestamp):
+    def __init__(self, name, timestamp):
+        self.name = name
         self.timestamp = timestamp
         self.deleted = False
 
@@ -80,21 +81,21 @@ def get_six_weeks():
     # Pretend the most recent MockSnapshotSet is ~5 minutes ago.
     nowish = datetime.now() - timedelta(minutes=5)
     return [
-        MockSnapshotSet((nowish - timedelta(weeks=weeks)).timestamp())
-        for weeks in range(5, -1, -1)
+        MockSnapshotSet(f"test.{index}", (nowish - timedelta(weeks=weeks)).timestamp())
+        for index, weeks in enumerate(range(5, -1, -1))
     ]
 
 
 # Return a list of 18 months of hourly MockSnapshotSet, sorted from
 # oldest to newest.
 def get_eighteen_months():
-    # Pretend the most recent MockSnapshotSet is ~on the last hour.
+    # Pretend the most recent MockSnapshotSet is ~midnight last Monday
     now = datetime.now()
-    on_hour = now - timedelta(minutes=now.minute)
+    mon_midnight = now - timedelta(days=now.weekday(), hours=now.hour, minutes=now.minute)
     hours_in_eighteen_months = floor((365.25 + 6 * 30.44) * 24)
     return [
-        MockSnapshotSet((on_hour - timedelta(hours=hours)).timestamp())
-        for hours in range(hours_in_eighteen_months, -1, -1)
+        MockSnapshotSet(f"test.{index}", (mon_midnight - timedelta(hours=hours)).timestamp())
+        for index, hours in enumerate(range(hours_in_eighteen_months, -1, -1))
     ]
 
 
@@ -391,7 +392,103 @@ class GcPolicyTests(unittest.TestCase):
 
         to_delete = gcp.evaluate(eighteen_months)
 
-        self.assertEqual(count - len(to_delete), 18)
+        # Result is one less than the sum of retention counts since weekly/daily
+        # overlap for Monday's first snapshot.
+        self.assertEqual(count - len(to_delete), 17)
+
+    def test_GcPolicyParamsTimeline_first_snapshot_bug(self):
+        """
+        Regression test for bug where first snapshot is deleted even with
+        weekly/daily retention configured.
+
+        Bug: First snapshot on arbitrary date classified as "yearly" and
+        deleted when keep_yearly=0, even though keep_weekly and keep_daily
+        are configured.
+
+        Fix: Snapshot now classified into multiple categories (yearly, monthly,
+        daily, hourly) and kept because daily wants to keep it.
+        """
+        params = {
+            "keep_yearly": 0,
+            "keep_quarterly": 0,
+            "keep_monthly": 0,
+            "keep_weekly": 4,
+            "keep_daily": 3,
+            "keep_hourly": 0
+        }
+
+        gcp = GcPolicy("test", GcPolicyType.TIMELINE, params)
+
+        # Single snapshot on Nov 12, 2025 (Wednesday)
+        snapshot = MockSnapshotSet("test.0", datetime(2025, 11, 12, 0, 0, 38).timestamp())
+
+        to_delete = gcp.evaluate([snapshot])
+
+        # Should NOT be deleted - it's the first weekly/daily snapshot
+        self.assertEqual(len(to_delete), 0,
+                        "First snapshot should not be deleted when weekly/daily retention configured")
+
+    def test_GcPolicyParamsTimeline_jan_1_monday(self):
+        """
+        Test snapshot on Jan 1 (Monday) at midnight with selective retention.
+
+        This snapshot qualifies for ALL categories but should be kept if
+        any category has retention configured.
+        """
+        params = {
+            "keep_yearly": 0,
+            "keep_quarterly": 0,
+            "keep_monthly": 0,
+            "keep_weekly": 2,
+            "keep_daily": 0,
+            "keep_hourly": 0
+        }
+
+        gcp = GcPolicy("test", GcPolicyType.TIMELINE, params)
+
+        # Jan 1, 2024 is a Monday at midnight
+        snapshot_set = MockSnapshotSet("test.0", datetime(2024, 1, 1, 0, 0, 0).timestamp())
+
+        to_delete = gcp.evaluate([snapshot_set])
+
+        # Should NOT be deleted - it's also a weekly snapshot set
+        self.assertEqual(len(to_delete), 0,
+                        "Snapshot on Jan 1 should not be deleted when weekly retention > 0")
+
+
+    def test_GcPolicyParamsTimeline_multiple_weekly_snapshots(self):
+        """
+        Test proper retention with multiple weekly snapshots.
+
+        Ensures that the fix doesn't break normal retention behavior.
+        """
+        params = {
+            "keep_yearly": 0,
+            "keep_quarterly": 0,
+            "keep_monthly": 0,
+            "keep_weekly": 2,
+            "keep_daily": 0,
+            "keep_hourly": 0
+        }
+
+        gcp = GcPolicy("test", GcPolicyType.TIMELINE, params)
+
+        # Three Monday snapshots, one week apart
+        # Using recent dates to ensure they're after Jan 1
+        base = datetime(2025, 11, 3, 0, 0, 0)  # Monday, Nov 3, 2025
+        snapshot_sets = [
+            MockSnapshotSet(f"test.{index}", (base + timedelta(weeks=week)).timestamp())
+            for index, week in enumerate(range(3))
+        ]
+
+        to_delete = gcp.evaluate(snapshot_sets)
+
+        # Should delete oldest snapshot_set only (keep 2 most recent)
+        self.assertEqual(len(to_delete), 1,
+                        "Should delete 1 snapshot_set when keep_weekly=2 and "
+                        "we have 3 weekly snapshot sets")
+        self.assertEqual(to_delete[0], snapshot_sets[0],
+                        "Should delete the oldest snapshot set")
 
     def test_GcPolicy__str__(self):
         gcp = GcPolicy("test", GcPolicyType.ALL, {})
