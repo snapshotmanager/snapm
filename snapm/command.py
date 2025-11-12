@@ -56,6 +56,7 @@ from snapm import (
     SNAPM_DEBUG_MANAGER,
     SNAPM_DEBUG_COMMAND,
     SNAPM_DEBUG_REPORT,
+    SNAPM_DEBUG_SCHEDULE,
     SNAPM_DEBUG_ALL,
     SNAPM_SUBSYSTEM_COMMAND,
     SubsystemFilter,
@@ -1716,6 +1717,7 @@ def set_debug(debug_arg):
         "manager": SNAPM_DEBUG_MANAGER,
         "command": SNAPM_DEBUG_COMMAND,
         "report": SNAPM_DEBUG_REPORT,
+        "schedule": SNAPM_DEBUG_SCHEDULE,
         "all": SNAPM_DEBUG_ALL,
     }
 
