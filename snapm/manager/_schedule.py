@@ -187,7 +187,8 @@ class GcPolicyParamsCount(GcPolicyParams):
         :returns: A list of ``SnapshotSet`` objects to garbage collect.
         :rtype: ``list[SnapshotSet]``
         """
-        to_delete = sets[0 : len(sets) - self.keep_count]
+        end = max(len(sets) - self.keep_count, 0)
+        to_delete = sets[0:end]
         _log_debug_schedule(
             "%s garbage collecting: %s",
             repr(self),
