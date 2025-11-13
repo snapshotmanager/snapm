@@ -789,18 +789,20 @@ class Scheduler:
         return schedule
 
     @suspend_signals
-    def gc(self, name: str):
+    def gc(self, name: str) -> List[str]:
         """
-        Apply garbage collection policy to schedule ``name``.
+        Apply the configured garbage collection policy to schedule ``name``.
 
-        :param name: The name of the schedule to disable.
+        :param name: The name of the schedule to run garbage collection for.
         :type name: ``str``
+        :returns: A list of deleted snapshot set names.
+        :rtype: ``List[str]``
         :raises: ``SnapmNotFoundError`` if ``name`` does not exist.
         """
         schedule = self._get_schedule_by_name(name)
         sets = self._manager.find_snapshot_sets(Selection(basename=name))
         sets.sort(key=lambda x: x.timestamp)
-        schedule.gc(sets)
+        return schedule.gc(sets)
 
 
 class Manager:

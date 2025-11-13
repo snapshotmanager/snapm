@@ -894,7 +894,7 @@ def disable_schedule(manager: Manager, name: str):
     return manager.scheduler.disable(name)
 
 
-def gc_schedule(manager: Manager, name: str):
+def gc_schedule(manager: Manager, name: str) -> List[str]:
     """
     Run garbage collection for an existing schedule. This executes the
     configured garbage collection policy for the schedule named ``name``.
@@ -902,7 +902,7 @@ def gc_schedule(manager: Manager, name: str):
     :param manager: The manager context to use.
     :param name: The name of the schedule to run garbage collection for.
     """
-    manager.scheduler.gc(name)
+    return manager.scheduler.gc(name)
 
 
 def print_schedules(
@@ -1612,7 +1612,10 @@ def _schedule_gc_cmd(cmd_args):
     :returns: integer status code returned from ``main()``.
     """
     manager = Manager()
-    gc_schedule(manager, cmd_args.config)
+    garbage = gc_schedule(manager, cmd_args.config)
+    if garbage:
+        names = ", ".join(garbage)
+        print(f"Garbage collected snapshot sets: {names}")
     return 0
 
 
