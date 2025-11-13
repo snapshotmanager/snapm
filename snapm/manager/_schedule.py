@@ -995,15 +995,18 @@ class Schedule:
         self.gc_policy.stop()
         self.gc_policy.disable()
 
-    def gc(self, sets: List[SnapshotSet]):
+    def gc(self, sets: List[SnapshotSet]) -> List[str]:
         """
         Apply the configured garbage collection policy for this ``Schedule``.
         """
         to_delete = self.gc_policy.evaluate(sets)
+        deleted = []
         for snapshot_set in to_delete:
             delete_snapset_boot_entry(snapshot_set)
             delete_snapset_revert_entry(snapshot_set)
+            deleted.append(snapshot_set.name)
             snapshot_set.delete()
+        return deleted
 
     def write_config(self, sched_dir: str):
         """
