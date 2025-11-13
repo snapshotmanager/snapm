@@ -1991,6 +1991,7 @@ def _add_schedule_config_arg(parser):
         metavar="SCHEDULE_NAME",
         type=str,
         action="store",
+        required=True,
         help="The name of a configured schedule to create snapshot sets for",
     )
 
