@@ -1,7 +1,7 @@
 %global summary A set of tools for managing snapshots
 
 Name:		snapm
-Version:	0.5.1
+Version:	0.5.2
 Release:	1%{?dist}
 Summary:	%{summary}
 
@@ -141,6 +141,15 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_tmpfilesdir}
 %doc doc
 
 %changelog
+* Sun Nov 16 2025 Bryn M. Reeves <bmr@redhat.com> - 0.5.2-1
+- schedule: Fix COUNT policy off-by-many when keep_count > len(sets)
+- snapm: make -c|--config mandatory for create-scheduled/gc
+- snapm: report garbage collected snapshot set names
+- schedule: fix timeline classification to allow multiple categories
+- schedule: add gc decision debug logging
+- snapm: add new snapm.schedule debug subsystem
+- snapm: fix renaming of snapshot sets with boot entries
+
 * Mon Nov 03 2025 Bryn M. Reeves <bmr@redhat.com> - 0.5.1-1
 - dist: don't recursively set SELinux contexts for /run/snapm
 - tests: coverage for Scheduler.edit()
