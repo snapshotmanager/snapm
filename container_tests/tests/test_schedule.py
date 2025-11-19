@@ -100,6 +100,12 @@ def get_eighteen_months():
 
 
 class GcPolicyTests(unittest.TestCase):
+    def setUp(self):
+        log.debug("Preparing %s", self._testMethodName)
+
+    def tearDown(self):
+        log.debug("Tearing down %s", self._testMethodName)
+
     def test_gcpolicy_bad_name(self):
         with self.assertRaises(snapm.SnapmArgumentError) as cm:
             gcp = GcPolicy("", GcPolicyType.ALL, {})
@@ -489,6 +495,185 @@ class GcPolicyTests(unittest.TestCase):
                         "we have 3 weekly snapshot sets")
         self.assertEqual(to_delete[0], snapshot_sets[0],
                         "Should delete the oldest snapshot set")
+
+    def test_GcPolicyParamsTimeline_progressive_hourly_3_months(self):
+        """
+        Regression test for bug where snapshot sets are incorrectly garbage
+        collected due to a mis-calculation of the retention index when the
+        keep_x parameter for category x is greater than the number of snapshot
+        sets in that category.
+
+        Generates a sequence of MockSnapshotSet objects at hourly intervals,
+        and applies garbage collection progressively at the end of each
+        interval. This accurately reflects how the GcPolicy applies in real
+        world use.
+        """
+        params = {
+            "keep_yearly": 0,
+            "keep_quarterly": 1,
+            "keep_monthly": 3,
+            "keep_weekly": 4,
+            "keep_daily": 7,
+            "keep_hourly": 12
+        }
+
+        gcp = GcPolicy("test", GcPolicyType.TIMELINE, params)
+
+        base = datetime(2024, 1, 1, 0, 0, 0)
+
+        # first timestamp
+        start_ts = int(base.timestamp())
+
+        # seconds in three months
+        delta_ts = int(3 * 30.44 * 24 * 3600)
+
+        snapshot_sets = []
+
+        for index, ts in enumerate(range(start_ts, start_ts + delta_ts, 3600)):
+            snapshot_sets.append(MockSnapshotSet(f"hourly.{index}", ts))
+            to_delete = gcp.evaluate(snapshot_sets)
+            for td in to_delete:
+                snapshot_sets.remove(td)
+            log.debug("Nr snapshot sets (%d): %d", index, len(snapshot_sets))
+
+            # First 12 hours (12 hourly + 1 daily): 0-12 hours
+            if index <= 12:
+                self.assertEqual(len(snapshot_sets), index + 1)
+
+            # First 1 day 11 hours (12 hourly + 1 daily): 14-35 hours
+            if index > 12 and index <= 35:
+                self.assertEqual(len(snapshot_sets), 13)
+
+            # First 2 days 11 hours (12 hourly + 2 daily): 36-59 hours
+            if index > 35 and index <= 59:
+                self.assertEqual(len(snapshot_sets), 14)
+
+            # First 3 days 11 hours (12 hourly + 3 daily): 60-83 hours
+            if index > 59 and index <= 83:
+                self.assertEqual(len(snapshot_sets), 15)
+
+            # First 4 days 11 hours (12 hourly + 4 daily): 84-107 hours
+            if index > 83 and index <= 107:
+                self.assertEqual(len(snapshot_sets), 16)
+
+            # First 5 days 11 hours (12 hourly + 5 daily): 108-131 hours
+            if index > 107 and index <= 131:
+                self.assertEqual(len(snapshot_sets), 17)
+
+            # First 6 days 11 hours (12 hourly + 6 daily): 132-155 hours
+            if index > 131 and index <= 155:
+                self.assertEqual(len(snapshot_sets), 18)
+
+            # First 7 days 11 hours (12 hourly + 7 daily + 1 weekly): 156-179 hours
+            if index > 155 and index <= 179:
+                self.assertEqual(len(snapshot_sets), 19)
+
+            # First 7 days 23 hours (12 hourly + 7 daily  + 1 weekly - dailies begin to expire): 180-191 hours
+            if index > 179 and index <= 191:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 8 days 11 hours (12 hourly + 7 daily) + 1 weekly: 192-203 hours
+            if index > 191 and index <= 203:
+                self.assertEqual(len(snapshot_sets), 19)
+
+            # First 8 days 23 hours (12 hourly + 7 daily) + 1 weekly: 204-215 hours
+            if index > 203 and index <= 215:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 9 days 11 hours (12 hourly + 7 daily) + 1 weekly: 216-227 hours
+            if index > 215 and index <= 227:
+                self.assertEqual(len(snapshot_sets), 19)
+
+            # First 9 days 23 hours (12 hourly + 7 daily) + 1 weekly: 228-239 hours
+            if index > 227 and index <= 239:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 10 days 11 hours (12 hourly + 7 daily) + 1 weekly: 240-251 hours
+            if index > 239 and index <= 251:
+                self.assertEqual(len(snapshot_sets), 19)
+
+            # First 10 days 23 hours (12 hourly + 7 daily + 1 weekly): 252-263 hours
+            if index > 251 and index <= 263:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 11 days 11 hours (12 hourly + 7 daily + 1 weekly): 264-275 hours
+            if index > 263 and index <= 275:
+                self.assertEqual(len(snapshot_sets), 19)
+
+            # First 11 days 23 hours (12 hourly + 7 daily + 1 weekly): 276-287 hours
+            if index > 275 and index <= 287:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 12 days 11 hours (12 hourly + 7 daily + 1 weekly): 288-299 hours
+            if index > 287 and index <= 299:
+                self.assertEqual(len(snapshot_sets), 19)
+
+            # First 12 days 23 hours (12 hourly + 7 daily + 1 weekly): 300-311 hours
+            if index > 299 and index <= 311:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 13 days 11 hours (12 hourly + 7 daily + 1 weekly): 312-323 hours
+            if index > 311 and index <= 323:
+                self.assertEqual(len(snapshot_sets), 19)
+
+            # First 14 days 11 hours (12 hourly + 7 daily + 2 weekly): 324-347 hours
+            if index > 323 and index <= 347:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 14 days 23 hours (12 hourly + 7 daily + 2 weekly): 348-359 hours
+            if index > 347 and index <= 359:
+                self.assertEqual(len(snapshot_sets), 21)
+
+            # First 15 days 11 hours (12 hourly + 7 daily + 2 weekly): 360-371 hours
+            if index > 359 and index <= 371:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 15 days 23 hours (12 hourly + 7 daily + 2 weekly): 372-383 hours
+            if index > 371 and index <= 383:
+                self.assertEqual(len(snapshot_sets), 21)
+
+            # First 16 days 11 hours (12 hourly + 7 daily + 2 weekly): 384-395 hours
+            if index > 383 and index <= 395:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 16 days 23 hours (12 hourly + 7 daily + 2 weekly): 396-407 hours
+            if index > 395 and index <= 407:
+                self.assertEqual(len(snapshot_sets), 21)
+
+            # First 17 days 11 hours (12 hourly + 7 daily + 2 weekly): 408-419 hours
+            if index > 407 and index <= 419:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 17 days 23 hours (12 hourly + 7 daily + 2 weekly): 420-431 hours
+            if index > 419 and index <= 431:
+                self.assertEqual(len(snapshot_sets), 21)
+
+            # First 18 days 11 hours (12 hourly + 7 daily + 2 weekly): 432-443 hours
+            if index > 431 and index <= 443:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 18 days 23 hours (12 hourly + 7 daily + 2 weekly): 444-455 hours
+            if index > 443 and index <= 455:
+                self.assertEqual(len(snapshot_sets), 21)
+
+            # First 19 days 11 hours (12 hourly + 7 daily + 2 weekly): 456-467 hours
+            if index > 455 and index <= 467:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 19 days 23 hours (12 hourly + 7 daily + 2 weekly): 468-479 hours
+            if index > 467 and index <= 479:
+                self.assertEqual(len(snapshot_sets), 21)
+
+            # First 20 days 11 hours (12 hourly + 7 daily + 2 weekly): 480-491 hours
+            if index > 479 and index <= 491:
+                self.assertEqual(len(snapshot_sets), 20)
+
+            # First 21 days 11 hours (12 hourly + 7 daily + 3 weekly): 492-515 hours
+            if index > 491 and index <= 515:
+                self.assertEqual(len(snapshot_sets), 21)
+
+            if index > 515:
+                self.assertIn(len(snapshot_sets), (21, 22, 23, 24, 25))
 
     def test_GcPolicy__str__(self):
         gcp = GcPolicy("test", GcPolicyType.ALL, {})
