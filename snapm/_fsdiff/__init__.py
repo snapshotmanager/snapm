@@ -5,7 +5,17 @@
 # This file is part of the snapm project.
 #
 # SPDX-License-Identifier: Apache-2.0
+"""
+File system diff package.
 
-#__all__ = [
-#    "TODO",
-#]
+Provides snapshot-set comparison facilities including tree walking, change
+detection, content diffing, and move detection. The main entry points are
+``FsDiffer`` and ``DiffOptions``.
+"""
+from .fsdiffer import FsDiffer
+from .options import DiffOptions
+
+__all__ = [
+    "DiffOptions",
+    "FsDiffer",
+]

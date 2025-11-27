@@ -5,6 +5,7 @@ boom-boot>=1.6.0
 dbus-client-gen>=0.4
 dbus-python-client-gen>=0.7
 justbytes>=0.14
+file-magic>=0.4.0
 packaging
 psutil
 python-dateutil
