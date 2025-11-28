@@ -63,6 +63,7 @@ from snapm import (
     SNAPM_DEBUG_REPORT,
     SNAPM_DEBUG_SCHEDULE,
     SNAPM_DEBUG_MOUNTS,
+    SNAPM_DEBUG_FSDIFF,
     SNAPM_DEBUG_ALL,
     SNAPM_SUBSYSTEM_COMMAND,
     SubsystemFilter,
@@ -1860,6 +1861,7 @@ def set_debug(debug_arg):
         "report": SNAPM_DEBUG_REPORT,
         "schedule": SNAPM_DEBUG_SCHEDULE,
         "mounts": SNAPM_DEBUG_MOUNTS,
+        "fsdiff": SNAPM_DEBUG_FSDIFF,
         "all": SNAPM_DEBUG_ALL,
     }
 
