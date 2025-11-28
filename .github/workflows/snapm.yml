@@ -78,6 +78,8 @@ jobs:
           # Create profiles for kernel variants seen in CI
           sudo boom profile create --from-host --uname-pattern generic --initramfs-pattern "/initrd.img-%{version}" --kernel-pattern "/vmlinuz-%{version}"
           sudo boom profile create --from-host --uname-pattern azure --initramfs-pattern "/initrd.img-%{version}" --kernel-pattern "/vmlinuz-%{version}"
+      - name: Forcibly install file-magic
+        run: sudo pip install --break-system-packages file-magic
       - name: Check PyCodestyle
         run: >
           pycodestyle snapm
