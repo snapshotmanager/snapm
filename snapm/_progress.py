@@ -229,9 +229,11 @@ class ProgressBase(ABC):
         """
         Initialise a ``ProgressBase`` child instance.
         """
-        self.total = 0
-        self.header = None
-        self.term = None
+        self.total: int = 0
+        self.header: Optional[str] = None
+        self.term: Optional[TermControl] = None
+        self.stream: Optional[TextIO] = None
+        self.width: int = -1
 
     def _calculate_width(
         self, width: Optional[int] = None, width_frac: Optional[float] = None
@@ -432,12 +434,12 @@ class Progress(ProgressBase):
         if tc is not None:
             term_stream = tc.term_stream
 
-        self.header = header
-        self.term = tc or TermControl(term_stream=term_stream)
-        self.stream = term_stream or sys.stdout
+        self.header: Optional[str] = header
+        self.term: Optional[TermControl] = tc or TermControl(term_stream=term_stream)
+        self.stream: Optional[TextIO] = term_stream or sys.stdout
         if not (self.term.CLEAR_EOL and self.term.UP and self.term.BOL):
             raise ValueError("Terminal does not support required control characters.")
-        self.width = self._calculate_width(width=width, width_frac=width_frac)
+        self.width: int = self._calculate_width(width=width, width_frac=width_frac)
         self.pbar: Optional[str] = None
         self.cleared = 1
         encoding = getattr(self.stream, "encoding", None)
@@ -564,9 +566,9 @@ class SimpleProgress(ProgressBase):
         :type width_frac: ``Optional[float]``
         """
         super().__init__()
-        self.header = header
-        self.stream = term_stream or sys.stdout
-        self.width = self._calculate_width(width=width, width_frac=width_frac)
+        self.header: Optional[str] = header
+        self.stream: Optional[str] = term_stream or sys.stdout
+        self.width: int = self._calculate_width(width=width, width_frac=width_frac)
 
     def _do_start(self):
         """
