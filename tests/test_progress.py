@@ -16,7 +16,7 @@ from snapm._progress import (
     ProgressBase,
     Progress,
     SimpleProgress,
-    QuietProgress,
+    NullProgress,
     ProgressFactory,
 )
 
@@ -347,15 +347,15 @@ class TestSimpleProgress(unittest.TestCase):
             sp.progress(11)
 
 
-class TestQuietProgress(unittest.TestCase):
+class TestNullProgress(unittest.TestCase):
     def test_lifecycle(self):
-        qp = QuietProgress()
-        qp.start(10)
-        qp.progress(5)  # Should produce no error and no output
-        qp.end()
+        np = NullProgress()
+        np.start(10)
+        np.progress(5)  # Should produce no error and no output
+        np.end()
 
     def test_start_non_positive_raises(self):
-        p = QuietProgress()
+        p = NullProgress()
 
         with self.assertRaisesRegex(ValueError, "must be positive"):
             p.start(0)
@@ -364,45 +364,45 @@ class TestQuietProgress(unittest.TestCase):
             p.start(-1)
 
     def test_progress_negative_raises(self):
-        qp = QuietProgress()
+        np = NullProgress()
 
-        qp.start(100)
+        np.start(100)
         with self.assertRaises(ValueError):
-            qp.progress(-1, "working")
+            np.progress(-1, "working")
 
     def test_end_before_start_raises(self):
-        qp = QuietProgress()
+        np = NullProgress()
 
         with self.assertRaisesRegex(ValueError, "called before start"):
-            qp.end("2BadMice!")
+            np.end("2BadMice!")
 
     def test_progress_after_end_raises(self):
-        qp = QuietProgress()
+        np = NullProgress()
 
-        qp.start(10)
-        qp.progress(10, "Stuff")
-        qp.end("Done!")
+        np.start(10)
+        np.progress(10, "Stuff")
+        np.end("Done!")
 
         with self.assertRaisesRegex(ValueError, "called before start"):
-            qp.progress(1, "More Stuff!")
+            np.progress(1, "More Stuff!")
 
     def test_progress_before_start_raises(self):
-        qp = QuietProgress()
+        np = NullProgress()
         with self.assertRaises(ValueError):
-            qp.progress(1)  # Not started
+            np.progress(1)  # Not started
 
     def test_done_greater_than_total_raises(self):
-        qp = QuietProgress()
+        np = NullProgress()
 
-        qp.start(10)
+        np.start(10)
         with self.assertRaisesRegex(ValueError, "cannot be > total"):
-            qp.progress(11)
+            np.progress(11)
 
 
 class TestProgressFactory(unittest.TestCase):
     def test_get_progress_quiet(self):
         p = ProgressFactory.get_progress("H", quiet=True)
-        self.assertIsInstance(p, QuietProgress)
+        self.assertIsInstance(p, NullProgress)
 
     def test_get_progress_simple(self):
         # Mock stream as non-tty
