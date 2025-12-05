@@ -176,7 +176,7 @@ class TermControl:
         set_fg_ansi = self._tigetstr("setaf")
         if set_fg_ansi:
             set_fg_ansi = set_fg_ansi.encode("utf8")
-            for i, color in enumerate(self._COLORS):
+            for i, color in enumerate(self._ANSI_COLORS):
                 setattr(self, color, curses.tparm(set_fg_ansi, i).decode("utf8") or "")
         set_bg = self._tigetstr("setb")
         if set_bg:
