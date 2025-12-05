@@ -407,6 +407,7 @@ class Progress(ProgressBase):
         term_stream: Optional[TextIO] = None,
         width: Optional[int] = None,
         width_frac: Optional[float] = None,
+        no_clear: bool = False,
         tc: Optional[TermControl] = None,
     ):
         """
@@ -437,10 +438,14 @@ class Progress(ProgressBase):
         self.header: Optional[str] = header
         self.term: Optional[TermControl] = tc or TermControl(term_stream=term_stream)
         self.stream: Optional[TextIO] = term_stream or sys.stdout
+
         if not (self.term.CLEAR_EOL and self.term.UP and self.term.BOL):
             raise ValueError("Terminal does not support required control characters.")
+
         self.width: int = self._calculate_width(width=width, width_frac=width_frac)
+        self.no_clear = no_clear
         self.pbar: Optional[str] = None
+
         encoding = getattr(self.stream, "encoding", None)
         if not encoding:
             # Stream has no usable encoding; fall back to ASCII bar.
@@ -516,12 +521,18 @@ class Progress(ProgressBase):
         :param message: An optional completion message.
         :type message: ``Optional[str]``
         """
-        print(self.term.BOL + self.term.UP + self.term.CLEAR_EOL, file=self.stream)
-        print(
-            self.term.BOL + self.term.CLEAR_EOL + self.term.UP + self.term.CLEAR_EOL,
-            file=self.stream,
-            end="",
-        )
+        if not self.no_clear:
+            print(self.term.BOL + self.term.UP + self.term.CLEAR_EOL, file=self.stream)
+            print(
+                self.term.BOL
+                + self.term.CLEAR_EOL
+                + self.term.UP
+                + self.term.CLEAR_EOL,
+                file=self.stream,
+                end="",
+            )
+        else:
+            print(self.term.CLEAR_BOL + self.term.BOL, file=self.stream, end="")
         if message:
             print(message, file=self.stream)
         self.total = 0
@@ -666,6 +677,7 @@ class ProgressFactory:
         term_control: Optional[TermControl] = None,
         width: Optional[int] = None,
         width_frac: Optional[float] = None,
+        no_clear: bool = False,
     ) -> ProgressBase:
         """
         Factory method to construct progress objects derived from
@@ -691,6 +703,13 @@ class ProgressFactory:
                            determine the width of the progress bar. Cannot be
                            used with ``width``.
         :type width_frac: ``Optional[float]``
+        :param no_clear: For progress indicators that clear and re-draw the
+                         content on progress, do not erase the progress bar
+                         when ``ProgressBase.end()`` is called, leaving it
+                         on the terminal for the user to refer to. Ignored
+                         by ``ProgressBase`` child classes that do not use
+                         ``TerminalControl``.
+        :type no_clear: ``bool``
         """
         if quiet:
             return QuietProgress()
@@ -702,7 +721,12 @@ class ProgressFactory:
             )
 
         return Progress(
-            header, term_stream, width=width, width_frac=width_frac, tc=term_control
+            header,
+            term_stream,
+            width=width,
+            width_frac=width_frac,
+            no_clear=no_clear,
+            tc=term_control,
         )
 
 

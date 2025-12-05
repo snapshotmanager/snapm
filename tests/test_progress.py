@@ -204,6 +204,42 @@ class TestProgress(unittest.TestCase):
         self.assertIn("Done!", output)
         self.assertEqual(p.total, 0)
 
+    def test_lifecycle_no_clear(self):
+        """Test start, progress, and end flow."""
+        mock_tc = MagicMock(spec=TermControl)
+        mock_tc.CLEAR_EOL = "<CE>"
+        mock_tc.UP = "<UP>"
+        mock_tc.BOL = "<BOL>"
+        mock_tc.columns = 100
+        mock_tc.render.side_effect = lambda x: x  # pass through
+        mock_tc.term_stream = StringIO()
+
+        p = Progress("Test", tc=mock_tc, width=20, no_clear=True)
+
+        # 1. Start
+        p.start(total=10)
+        output = mock_tc.term_stream.getvalue()
+        self.assertIn("<BOL>", output)
+        self.assertIn("Test", output)
+
+        # 2. Progress
+        mock_tc.term_stream.truncate(0)
+        mock_tc.term_stream.seek(0)
+        p.progress(5, "Halfway")
+        output = mock_tc.term_stream.getvalue()
+        self.assertIn("<UP>", output)
+        self.assertIn("Halfway", output)
+
+        # 3. End
+        mock_tc.term_stream.truncate(0)
+        mock_tc.term_stream.seek(0)
+        p.end("Done!")
+        output = mock_tc.term_stream.getvalue()
+        self.assertIn("Test", output)
+        self.assertIn("Done!", output)
+        self.assertEqual(len(output.splitlines()), 2)
+        self.assertEqual(p.total, 0)
+
     def test_start_non_positive_raises(self):
         p = Progress("H", tc=self.mock_tc)
 
