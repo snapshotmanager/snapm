@@ -1,0 +1,498 @@
+# Copyright Red Hat
+#
+# snapm/_fsdiff/contentdiff.py - Snapshot Manager fs diff content diffs
+#
+# This file is part of the snapm project.
+#
+# SPDX-License-Identifier: Apache-2.0
+"""
+Content-aware diff support.
+"""
+from abc import ABC, abstractmethod
+from typing import Optional
+from pathlib import Path
+import logging
+import difflib
+import json
+
+from snapm import SNAPM_SUBSYSTEM_FSDIFF
+
+from .filetypes import FileTypeCategory, FileTypeInfo
+from .treewalk import FsEntry
+
+_log = logging.getLogger(__name__)
+
+_log_debug = _log.debug
+_log_info = _log.info
+_log_warn = _log.warning
+_log_error = _log.error
+
+
+def _log_debug_fsdiff(msg, *args, **kwargs):
+    """A wrapper for fsdiff subsystem debug logs."""
+    _log.debug(msg, *args, extra={"subsystem": SNAPM_SUBSYSTEM_FSDIFF}, **kwargs)
+
+
+class ContentDiff:
+    """
+    Represents a content-aware diff between two files.
+    """
+
+    def __init__(
+        self,
+        diff_type: str,
+        old_content: Optional[str] = None,
+        new_content: Optional[str] = None,
+        summary: str = "",
+    ):
+        """
+        Initialise a new ``ContentDiff`` object.
+
+        :param diff_type: The type of diff to perform.
+        :type diff_type: ``str``
+        :param old_content: The original content.
+        :type old_content: ``str``
+        :param new_content: The updated content.
+        :type new_content: ``str``
+        :param summary: A summary of the difference.
+        :type summary: ``str``
+        """
+        self.diff_type = diff_type  # 'unified', 'json', 'binary', 'image', etc.
+        self.old_content = old_content
+        self.new_content = new_content
+        self.diff_data = None  # Type-specific diff representation
+        self.summary = summary
+        self.has_changes = False
+        self.error_message = None
+
+    def __str__(self):
+        """
+        Return a string representation of this ``ContentDiff`` object.
+
+        :returns: A human readable string representing this instance.
+        :rtype: ``str``
+        """
+
+        def content_str(content: Optional[str]) -> str:
+            """
+            Return the first 16 chars of ``content`` followed by ellipsis if
+            set, otherwise the empty string.
+
+            :param content: The content to abridge.
+            :type content: ``str``
+            :returns: The abridged content followed by ellipsis or the empty
+                      string if content is unset.
+            :rtype: ``str``
+            """
+            return f'"{content[0:16] if content else ""}{"..." if content else ""}"'
+
+        if isinstance(self.diff_data, (list, tuple)):
+            diff_repr = f"<{len(self.diff_data)} items>"
+        elif self.diff_data is None:
+            diff_repr = "<none>"
+        else:
+            diff_repr = "<non-sequence diff data>"
+
+        return (
+            f"diff_type: {self.diff_type}, "
+            f"old_content: {content_str(self.old_content)}, "
+            f"new_content: {content_str(self.new_content)}, "
+            f"diff_data: {diff_repr}, "
+            f"summary: {self.summary}, "
+            f"has_changes: {self.has_changes}, "
+            f"error_message: {self.error_message if self.error_message else ''}"
+        )
+
+
+class ContentDifferBase(ABC):
+    """
+    Base class for content-aware diff implementations.
+    """
+
+    @abstractmethod
+    def can_handle(self, file_type_info: FileTypeInfo) -> bool:
+        """
+        Return True if this differ can handle the given file type.
+
+        :param file_type_info: File type information for the file to compare.
+        :type file_type_info: ``FileTypeInfo``
+        :returns: ``True`` if this content differ can handle this file.
+        :rtype: ``bool``
+        """
+
+    @abstractmethod
+    def generate_diff(
+        self, old_path: Path, new_path: Path, old_entry: FsEntry, new_entry: FsEntry
+    ) -> ContentDiff:
+        """
+        Generate content diff between two files.
+
+        :param old_path: ``Path`` describing the original path to diff.
+        :type old_path: ``Path``
+        :param new_path: ``Path`` describing the updated path to diff.
+        :type new_path: ``Path``
+        :param old_entry: The original ``FsEntry`` to diff.
+        :type old_entry: ``FsEntry``
+        :param new_entry: The updated ``FsEntry`` to diff.
+        :type new_entry: ``FsEntry``
+        :returns: A diff of the two entries.
+        :rtype: ``ContentDiff``
+        """
+
+    @property
+    @abstractmethod
+    def priority(self) -> int:
+        """
+        Priority for selection when multiple differs match (higher = preferred)
+
+        :returns: Integer priority level.
+        :rtype: ``int``
+        """
+
+
+class TextContentDiffer(ContentDifferBase):
+    """
+    Default text-based content differ.
+    """
+
+    def can_handle(self, file_type_info: FileTypeInfo) -> bool:
+        """
+        Return True if this differ can handle the given file type.
+
+        :param file_type_info: File type information for the file to compare.
+        :type file_type_info: ``FileTypeInfo``
+        :returns: ``True`` if this content differ can handle this file.
+        :rtype: ``bool``
+        """
+        return file_type_info.is_text_like
+
+    def generate_diff(
+        self, old_path: Path, new_path: Path, old_entry: FsEntry, new_entry: FsEntry
+    ) -> ContentDiff:
+        """
+        Generate unified diff for text files.
+
+        :param old_path: ``Path`` describing the original path to diff.
+        :type old_path: ``Path``
+        :param new_path: ``Path`` describing the updated path to diff.
+        :type new_path: ``Path``
+        :param old_entry: The original ``FsEntry`` to diff.
+        :type old_entry: ``FsEntry``
+        :param new_entry: The updated ``FsEntry`` to diff.
+        :type new_entry: ``FsEntry``
+        :returns: A diff of the two entries.
+        :rtype: ``ContentDiff``
+        """
+        try:
+            file_type_info = new_entry.file_type_info or old_entry.file_type_info
+            encoding = (file_type_info.encoding if file_type_info else None) or "utf-8"
+
+            with open(old_path, "r", encoding=encoding, errors="replace") as f:
+                old_lines = f.readlines()
+            with open(new_path, "r", encoding=encoding, errors="replace") as f:
+                new_lines = f.readlines()
+
+            diff_lines = list(
+                difflib.unified_diff(
+                    old_lines,
+                    new_lines,
+                    fromfile=str(old_path),
+                    tofile=str(new_path),
+                    lineterm="",
+                )
+            )
+
+            content_diff = ContentDiff("unified")
+            content_diff.diff_data = diff_lines
+            content_diff.has_changes = len(diff_lines) > 0
+
+            def diff_summary(lines, prefix, desc):
+                """
+                Generate a summary of diff lines ``lines``.
+
+                :param lines: Lines to summarize.
+                :param prefix: Diff prefix ("-" or "+")
+                :param desc: Description ("additions" or "deletions")
+                """
+                count = len(
+                    [
+                        ln
+                        for ln in lines
+                        if ln.startswith(prefix) and not ln.startswith(3 * prefix)
+                    ]
+                )
+                return f"{count} {desc}"
+
+            content_diff.summary = ", \n".join(
+                (
+                    diff_summary(diff_lines, "-", "deletions"),
+                    diff_summary(diff_lines, "+", "additions"),
+                )
+            )
+
+        except (OSError, TypeError, ValueError) as err:
+            _log_debug_fsdiff(
+                "TextContentDiffer error reading %s / %s: %s",
+                old_path,
+                new_path,
+                err,
+            )
+            content_diff = ContentDiff("text")
+            content_diff.has_changes = False
+            content_diff.error_message = str(err)
+            content_diff.summary = "Error reading text content"
+
+        return content_diff
+
+    @property
+    def priority(self) -> int:
+        """
+        Priority for selection when multiple differs match (higher = preferred)
+
+        :returns: Integer priority level.
+        :rtype: ``int``
+        """
+        return 10  # Default priority
+
+
+class JsonContentDiffer(ContentDifferBase):
+    """
+    JSON-aware content differ.
+    """
+
+    def can_handle(self, file_type_info: FileTypeInfo) -> bool:
+        """
+        Return True if this differ can handle the given file type.
+
+        :param file_type_info: File type information for the file to compare.
+        :type file_type_info: ``FileTypeInfo``
+        :returns: ``True`` if this content differ can handle this file.
+        :rtype: ``bool``
+        """
+        return file_type_info.mime_type.startswith("application/json")
+
+    def generate_diff(
+        self, old_path: Path, new_path: Path, old_entry: FsEntry, new_entry: FsEntry
+    ) -> ContentDiff:
+        """
+        Generate structured JSON diff.
+
+        :param old_path: ``Path`` describing the original path to diff.
+        :type old_path: ``Path``
+        :param new_path: ``Path`` describing the updated path to diff.
+        :type new_path: ``Path``
+        :param old_entry: The original ``FsEntry`` to diff.
+        :type old_entry: ``FsEntry``
+        :param new_entry: The updated ``FsEntry`` to diff.
+        :type new_entry: ``FsEntry``
+        :returns: A diff of the two entries.
+        :rtype: ``ContentDiff``
+        """
+        try:
+            file_type_info = new_entry.file_type_info or old_entry.file_type_info
+            encoding = (file_type_info.encoding if file_type_info else None) or "utf-8"
+            with open(old_path, "r", encoding=encoding) as f:
+                old_data = json.load(f)
+            with open(new_path, "r", encoding=encoding) as f:
+                new_data = json.load(f)
+
+            # Use a JSON diff library like jsondiff if available
+            # For now, fall back to text diff of pretty-printed JSON
+            old_pretty = json.dumps(old_data, indent=2, sort_keys=True)
+            new_pretty = json.dumps(new_data, indent=2, sort_keys=True)
+
+            diff_lines = list(
+                difflib.unified_diff(
+                    old_pretty.splitlines(keepends=True),
+                    new_pretty.splitlines(keepends=True),
+                    fromfile=str(old_path),
+                    tofile=str(new_path),
+                    lineterm="",
+                )
+            )
+
+            content_diff = ContentDiff("json")
+            content_diff.diff_data = diff_lines
+            content_diff.has_changes = len(diff_lines) > 0
+            content_diff.summary = (
+                "JSON structure changes detected"
+                if content_diff.has_changes
+                else "No changes"
+            )
+
+        except (OSError, TypeError, ValueError) as err:
+            _log_debug_fsdiff(
+                "JsonContentDiffer error reading %s / %s as JSON (%s), "
+                "falling back to TextContentDiffer",
+                old_path,
+                new_path,
+                err,
+            )
+            # Fall back to text diff
+            return TextContentDiffer().generate_diff(
+                old_path, new_path, old_entry, new_entry
+            )
+
+        return content_diff
+
+    @property
+    def priority(self) -> int:
+        """
+        Priority for selection when multiple differs match (higher = preferred)
+
+        :returns: Integer priority level.
+        :rtype: ``int``
+        """
+        return 50  # Higher than text differ
+
+
+class BinaryContentDiffer(ContentDifferBase):
+    """
+    Binary file content differ.
+    """
+
+    binary_types = (
+        FileTypeCategory.BINARY,
+        FileTypeCategory.IMAGE,
+        FileTypeCategory.AUDIO,
+        FileTypeCategory.VIDEO,
+        FileTypeCategory.ARCHIVE,
+        FileTypeCategory.EXECUTABLE,
+        FileTypeCategory.DATABASE,
+        FileTypeCategory.DOCUMENT,
+    )
+
+    def can_handle(self, file_type_info: FileTypeInfo) -> bool:
+        """
+        Return True if this differ can handle the given file type.
+
+        :param file_type_info: File type information for the file to compare.
+        :type file_type_info: ``FileTypeInfo``
+        :returns: ``True`` if this content differ can handle this file.
+        :rtype: ``bool``
+        """
+        return file_type_info.category in self.binary_types
+
+    def generate_diff(
+        self, _old_path: Path, _new_path: Path, old_entry: FsEntry, new_entry: FsEntry
+    ) -> ContentDiff:
+        """
+        Generate binary diff summary.
+
+        :param _old_path: ``Path`` describing the original path to diff
+                         (unused).
+        :type _old_path: ``Path``
+        :param _new_path: ``Path`` describing the updated path to diff
+                         (unused).
+        :type _new_path: ``Path``
+        :param old_entry: The original ``FsEntry`` to diff.
+        :type old_entry: ``FsEntry``
+        :param new_entry: The updated ``FsEntry`` to diff.
+        :type new_entry: ``FsEntry``
+        :returns: A diff of the two entries.
+        :rtype: ``ContentDiff``
+        """
+        content_diff = ContentDiff("binary")
+
+        # For binary files, just report size differences and hash changes
+        size_diff = new_entry.size - old_entry.size
+        hash_changed = old_entry.content_hash != new_entry.content_hash
+
+        # Consider any size or hash change as a content change.
+        has_changes = size_diff != 0 or hash_changed
+        content_diff.has_changes = has_changes
+
+        if size_diff != 0:
+            content_diff.summary = f"Binary file size changed by {size_diff:+d} bytes"
+        elif hash_changed:
+            content_diff.summary = "Binary file content changed (same size)"
+        else:
+            content_diff.summary = "Binary file unchanged"
+
+        return content_diff
+
+    @property
+    def priority(self) -> int:
+        """
+        Priority for selection when multiple differs match (higher = preferred)
+
+        :returns: Integer priority level.
+        :rtype: ``int``
+        """
+        return 5  # Lower than text differ
+
+
+class ContentDifferManager:
+    """
+    Manager for content-aware diff implementations.
+    """
+
+    def __init__(self):
+        """
+        Initialise a new ``ContentDifferManager`` instance.
+        """
+        self.differs = []
+        self._register_default_differs()
+
+    def _register_default_differs(self):
+        """
+        Register built-in content differs.
+        """
+        self.register_differ(JsonContentDiffer())
+        self.register_differ(TextContentDiffer())
+        self.register_differ(BinaryContentDiffer())
+
+    def register_differ(self, differ: ContentDifferBase):
+        """
+        Register a new content differ.
+        """
+        self.differs.append(differ)
+        # Sort by priority (highest first)
+        self.differs.sort(key=lambda d: d.priority, reverse=True)
+
+    def get_differ_for_file(self, file_type_info: FileTypeInfo) -> ContentDifferBase:
+        """
+        Get the best content differ for a file type.
+
+        :param file_type_info: The file type to find a differ for.
+        :type file_type_info: ``FileTypeInfo``
+        :returns: An appropriate differ for ``file_type_info``.
+        :rtype: A ``ContentDifferBase`` subclass.
+        """
+        for differ in self.differs:
+            if differ.can_handle(file_type_info):
+                return differ
+
+        # Fallback - this shouldn't happen with proper default differs
+        return BinaryContentDiffer()
+
+    def generate_content_diff(
+        self, old_path: Path, new_path: Path, old_entry: FsEntry, new_entry: FsEntry
+    ) -> Optional[ContentDiff]:
+        """
+        Generate content diff using appropriate differ.
+
+        :param old_path: ``Path`` describing the original path to diff.
+        :type old_path: ``Path``
+        :param new_path: ``Path`` describing the updated path to diff.
+        :type new_path: ``Path``
+        :param old_entry: The original ``FsEntry`` to diff.
+        :type old_entry: ``FsEntry``
+        :param new_entry: The updated ``FsEntry`` to diff.
+        :type new_entry: ``FsEntry``
+        :returns: A diff of the two entries.
+        :rtype: ``Optional[ContentDiff]``
+        """
+
+        # Only generate content diffs for files
+        if not (old_entry.is_file and new_entry.is_file):
+            return None
+
+        # Skip if no file type info available
+        if not (new_entry.file_type_info or old_entry.file_type_info):
+            return None
+
+        file_type_info = new_entry.file_type_info or old_entry.file_type_info
+
+        differ = self.get_differ_for_file(file_type_info)
+        return differ.generate_diff(old_path, new_path, old_entry, new_entry)

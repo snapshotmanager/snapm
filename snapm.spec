@@ -32,6 +32,7 @@ BuildRequires:	python3-setuptools
 BuildRequires:	python3-sphinx
 BuildRequires:	python3-wcwidth
 BuildRequires:	python3-wheel
+BuildRequires:	python3-file-magic
 %if 0%{?fedora}
 BuildRequires: libfaketime
 %endif

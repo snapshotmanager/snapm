@@ -15,6 +15,7 @@ build:
     # golang: "1.20"
   apt_packages:
     - libdbus-1-dev
+    - libmagic1
 
 # Build documentation in the "docs/" directory with Sphinx
 sphinx:

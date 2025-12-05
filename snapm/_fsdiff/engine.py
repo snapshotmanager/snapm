@@ -1,0 +1,493 @@
+# Copyright Red Hat
+#
+# snapm/_fsdiff/engine.py - Snapshot Manager fs diff engine
+#
+# This file is part of the snapm project.
+#
+# SPDX-License-Identifier: Apache-2.0
+"""
+File system diff engine
+"""
+from typing import Dict, List, Optional
+from collections import defaultdict
+from enum import Enum
+import logging
+
+from snapm import SNAPM_SUBSYSTEM_FSDIFF
+
+from .changes import ChangeDetector, ChangeType, FileChange
+from .contentdiff import ContentDiff, ContentDifferManager
+from .options import DiffOptions
+from .treewalk import FsEntry
+
+_log = logging.getLogger(__name__)
+
+_log_debug = _log.debug
+_log_info = _log.info
+_log_warn = _log.warning
+_log_error = _log.error
+
+ENGINE_LOG_ME_HARDER = False
+
+
+def _log_debug_fsdiff(msg, *args, **kwargs):
+    """A wrapper for fsdiff subsystem debug logs."""
+    _log.debug(msg, *args, extra={"subsystem": SNAPM_SUBSYSTEM_FSDIFF}, **kwargs)
+
+
+def _log_debug_fsdiff_extra(msg, *args, **kwargs):
+    """A wrapper for fsdiff subsystem debug logs."""
+    if ENGINE_LOG_ME_HARDER:  # pragma: no cover
+        _log.debug(msg, *args, extra={"subsystem": SNAPM_SUBSYSTEM_FSDIFF}, **kwargs)
+
+
+class DiffType(Enum):
+    """
+    Enum for different difference types.
+    """
+
+    ADDED = "added"
+    REMOVED = "removed"
+    MODIFIED = "modified"
+    MOVED = "moved"
+    TYPE_CHANGED = "type_changed"
+
+
+class FsDiffRecord:
+    """
+    Diff record compatible with snapm.report system
+    Represents a single file/directory change
+    """
+
+    def __init__(
+        self,
+        path: str,
+        diff_type: DiffType,
+        old_entry: Optional[FsEntry] = None,
+        new_entry: Optional[FsEntry] = None,
+    ):
+        """
+        Initialise a new ``FsDiffRecord`` object.
+
+        :param path: A string describing the path for this diff record.
+        :type path: ``str``
+        :param diff_type: The diff type for this diff record.
+        :type diff_type: ``DiffType``
+        :param old_entry: The original entry for the comparison.
+        :param new_entry: The updated entry for the comparison.
+        """
+        self.path = path
+        self.diff_type = diff_type
+        self.old_entry = old_entry
+        self.new_entry = new_entry
+        self.changes = []  # List of FileChange objects
+        self.content_diff = None  # ContentDiff object
+        self.moved_from = None  # For move operations
+        self.moved_to = None
+
+        # Fields for reporting (compatible with snapm.report)
+        self.file_path = path
+        self.change_type = diff_type
+        self.file_type = self._get_file_type()
+        self.file_category = self._get_file_category()
+        self.size_old = old_entry.size if old_entry else 0
+        self.size_new = new_entry.size if new_entry else 0
+        self.size_delta = self.size_new - self.size_old
+        self.mode_old = oct(old_entry.mode) if old_entry else None
+        self.mode_new = oct(new_entry.mode) if new_entry else None
+        self.owner_old = f"{old_entry.uid}:{old_entry.gid}" if old_entry else None
+        self.owner_new = f"{new_entry.uid}:{new_entry.gid}" if new_entry else None
+        self.mtime_old = old_entry.mtime if old_entry else None
+        self.mtime_new = new_entry.mtime if new_entry else None
+        self.content_changed = False
+        self.metadata_changed = False
+        self.has_content_diff = False
+        self.content_diff_summary = ""
+
+    def __str__(self) -> str:
+        """
+        Return a string representation of this ``FsDiffRecord`` object.
+
+        :returns: A human readable representation of this ``FsDiffRecord``.
+        :rtype: ``str``
+        """
+        fsd_str = (
+            f"Path: {self.path}\n"
+            f"diff_type: {self.diff_type.value}\n"
+            f"old_entry: {self.old_entry}\n"
+            f"new_entry: {self.new_entry}\n"
+            f"changes: {', '.join(str(chg) for chg in self.changes)}\n"
+            f"content_diff: {self.content_diff}\n"
+            f"moved_from: {self.moved_from}\n"
+            f"moved_to: {self.moved_to}\n"
+            f"file_path: {self.file_path}\n"
+            f"file_type: {self.file_type}\n"
+            f"file_category: {self.file_category}\n"
+            f"size_old: {self.size_old}\n"
+            f"size_new: {self.size_new}\n"
+            f"size_delta: {self.size_delta}\n"
+            f"mode_old: {self.mode_old}\n"
+            f"mode_new: {self.mode_new}\n"
+            f"owner_old: {self.owner_old}\n"
+            f"owner_new: {self.owner_new}\n"
+            f"mtime_old: {self.mtime_old}\n"
+            f"mtime_new: {self.mtime_new}\n"
+            f"content_changed: {self.content_changed}\n"
+            f"metadata_changed: {self.metadata_changed}\n"
+            f"has_content_diff: {self.has_content_diff}\n"
+            f"content_diff_summary: {self.content_diff_summary}"
+        )
+        return fsd_str
+
+    def _get_file_type(self) -> str:
+        """
+        Get file type for reporting.
+
+        :returns: A description of the file type for this diff record.
+        :rtype: ``str``
+        """
+        entry = self.new_entry or self.old_entry
+        if not entry:
+            return "unknown"
+        if entry.is_dir:
+            return "directory"
+        if entry.is_symlink:
+            return "symlink"
+        if entry.file_type_info:
+            return entry.file_type_info.mime_type
+        return "file"
+
+    def _get_file_category(self) -> str:
+        """
+        Get file category for reporting
+
+        :returns: The file category for this diff record.
+        :rtype: ``str``
+        """
+        entry = self.new_entry or self.old_entry
+        if not entry or not entry.file_type_info:
+            return "unknown"
+        return entry.file_type_info.category.value
+
+    def add_change(self, change: "FileChange"):
+        """
+        Add a detected change.
+
+        :param change: The file change to record.
+        :type change: ``FileChange``
+        """
+        self.changes.append(change)
+        if change.change_type == ChangeType.CONTENT:
+            self.content_changed = True
+        else:
+            self.metadata_changed = True
+
+    def set_content_diff(self, content_diff: ContentDiff):
+        """
+        Set content-level diff.
+
+        :param content_diff: The content diff for this diff record.
+        :type content_diff: ``ContentDiff``
+        """
+        self.content_diff = content_diff
+        self.has_content_diff = True
+        self.content_diff_summary = content_diff.summary
+
+    def get_change_summary(self) -> str:
+        """
+        Get human-readable change summary
+        """
+        summary = "Modified"
+        if self.diff_type == DiffType.ADDED:
+            summary = f"Added {self.file_type}"
+        elif self.diff_type == DiffType.REMOVED:
+            summary = f"Removed {self.file_type}"
+        elif self.diff_type == DiffType.MOVED:
+            summary = f"Moved from {self.moved_from} to {self.moved_to}"
+        elif self.diff_type == DiffType.TYPE_CHANGED:
+            if not self.old_entry or not self.new_entry:
+                summary = "Type changed"
+            else:
+                summary = (
+                    f"Type changed from {self.old_entry.type_desc} to "
+                    f"{self.new_entry.type_desc}"
+                )
+        elif self.changes:
+            change_types = [c.change_type.value for c in self.changes]
+            summary = f"Changed: {', '.join(set(change_types))}"
+        return summary
+
+
+class DiffEngine:
+    """
+    Core class for generating fsdiff comparisons.
+    """
+
+    def __init__(self):
+        """
+        Initialise a new ``DiffEngine`` instance.
+        """
+        self.change_detector = ChangeDetector()
+        self.content_differ = ContentDifferManager()
+
+    # pylint: disable=too-many-locals,too-many-branches
+    def compute_diff(
+        self,
+        tree_a: Dict[str, FsEntry],
+        tree_b: Dict[str, FsEntry],
+        options: "DiffOptions" = None,
+    ) -> List[FsDiffRecord]:
+        """
+        Main diff computation logic.
+
+        :param tree_a: The first file system tree to compare: a dictionary of
+                       path name -> file system entry mappings.
+        :type tree_a: ``Dict[str, FsEntry]``
+        :param tree_b: The second file system tree to compare: a dictionary of
+                       path name -> file system entry mappings.
+        :type tree_b: ``Dict[str, FsEntry]``
+        :param options: Options to apply to the diff generation.
+        :type options: ``DiffOptions``
+        :returns: A list of file system diff records.
+        :rtype: ``List[FsDiffRecord]``
+        """
+        if options is None:
+            options = DiffOptions()
+
+        diffs = []
+        all_paths = set(tree_a.keys()) | set(tree_b.keys())
+        _log_debug("Starting compute_diff with %d paths", len(all_paths))
+
+        if options.ignore_timestamps:
+            _log_debug("Ignoring timestamp changes")
+        if options.ignore_permissions:
+            _log_debug("Ignoring permission changes")
+        if options.ignore_ownership:
+            _log_debug("Ignoring ownership changes")
+        if options.content_only:
+            _log_debug("Checking content changes only")
+
+        # pylint: disable=too-many-nested-blocks
+        for path in sorted(all_paths):
+            entry_a = tree_a.get(path)
+            entry_b = tree_b.get(path)
+            _log_debug_fsdiff(
+                "Comparing path '%s' (A:%s // B:%s)", path, entry_a, entry_b
+            )
+            if entry_a is None:
+                # File added in tree_b
+                diff_record = FsDiffRecord(path, DiffType.ADDED, new_entry=entry_b)
+                diffs.append(diff_record)
+
+            elif entry_b is None:
+                # File removed from tree_a
+                diff_record = FsDiffRecord(path, DiffType.REMOVED, old_entry=entry_a)
+                diffs.append(diff_record)
+
+            else:
+                # File exists in both; first, detect any type changes.
+                if (
+                    # pylint: disable=too-many-boolean-expressions
+                    entry_a.is_file != entry_b.is_file
+                    or entry_a.is_dir != entry_b.is_dir
+                    or entry_a.is_symlink != entry_b.is_symlink
+                    or entry_a.is_block != entry_b.is_block
+                    or entry_a.is_char != entry_b.is_char
+                    or entry_a.is_sock != entry_b.is_sock
+                    or entry_a.is_fifo != entry_b.is_fifo
+                ):
+                    diffs.append(
+                        FsDiffRecord(path, DiffType.TYPE_CHANGED, entry_a, entry_b)
+                    )
+                    continue
+
+                # Otherwise, check for metadata/content changes.
+                changes = self.change_detector.detect_changes(entry_a, entry_b, options)
+
+                # Optionally restrict to content-only changes.
+                effective_changes = (
+                    [c for c in changes if c.change_type == ChangeType.CONTENT]
+                    if options.content_only
+                    else changes
+                )
+
+                # If there are no effective changes (e.g. only metadata changes in
+                # content-only mode), skip this path entirely.
+                if not effective_changes:
+                    continue
+
+                diff_record = FsDiffRecord(path, DiffType.MODIFIED, entry_a, entry_b)
+                for change in effective_changes:
+                    diff_record.add_change(change)
+
+                has_content_change = any(
+                    change.change_type == ChangeType.CONTENT
+                    for change in effective_changes
+                )
+
+                # Generate content diff if requested, appropriate, and within size limits
+                if (
+                    has_content_change
+                    and options.include_content_diffs
+                    and entry_a.is_file
+                    and entry_b.is_file
+                ):
+                    within_limit = (
+                        options.max_content_diff_size <= 0
+                        or max(entry_a.size, entry_b.size)
+                        <= options.max_content_diff_size
+                    )
+                    if within_limit:
+                        content_diff = self.content_differ.generate_content_diff(
+                            entry_a.path,
+                            entry_b.path,
+                            entry_a,
+                            entry_b,
+                        )
+                        if content_diff:
+                            diff_record.set_content_diff(content_diff)
+
+                diffs.append(diff_record)
+
+        # Detect moves/renames
+        diffs = self._detect_moves(diffs, tree_a, tree_b)
+
+        return diffs
+
+    @staticmethod
+    def _is_move_diff(diff, src_path, dest_path):
+        """
+        Return ``True`` if ``diff`` reflects a move diff type for the
+        current ``path``/``dest_path`` or ``False`` otherwise.
+
+        :param diff: The ``FsDiffRecord`` to inspect.
+        :param src_path: The original path to check.
+        :param dest_path: The destination path to check.
+        """
+        if diff.path == src_path and diff.diff_type == DiffType.REMOVED:
+            return True
+        if diff.path == dest_path and diff.diff_type == DiffType.ADDED:
+            return True
+        return False
+
+    def _detect_moves(
+        self,
+        diffs: List[FsDiffRecord],
+        tree_a: Dict[str, FsEntry],
+        tree_b: Dict[str, FsEntry],
+    ) -> List[FsDiffRecord]:
+        """
+        Detect file moves/renames by matching content hashes
+
+        :param diffs: A list of file system diff records to inspect.
+        :type diffs: ``List[FsDiffRecord]``
+        :param tree_a: The first file system tree to compare: a dictionary of
+                       path name -> file system entry mappings.
+        :type tree_a: ``Dict[str, FsEntry]``
+        :param tree_b: The second file system tree to compare: a dictionary of
+                       path name -> file system entry mappings.
+        :type tree_b: ``Dict[str, FsEntry]``
+        :returns: Updated list of diff records with moves detected.
+        :rtype: ``List[FsDiffRecord]``
+        """
+        # Pre-index existing added/removed records so we only treat genuine
+        # remove+add pairs as moves (and not simple copies).
+        added_paths = {
+            diff.path
+            for diff in diffs
+            if diff.diff_type == DiffType.ADDED
+            and diff.new_entry
+            and diff.new_entry.is_file
+            and diff.new_entry.content_hash
+        }
+        removed_paths = {
+            diff.path
+            for diff in diffs
+            if diff.diff_type == DiffType.REMOVED
+            and diff.old_entry
+            and diff.old_entry.is_file
+            and diff.old_entry.content_hash
+        }
+        changed_paths = {
+            diff.path
+            for diff in diffs
+            if diff.diff_type == DiffType.MODIFIED
+            and diff.old_entry
+            and diff.old_entry.is_file
+            and diff.old_entry.content_hash
+        }
+        _log_debug_fsdiff(
+            "Initialising move detection: "
+            "added_paths=%s, removed_paths=%s, changed_paths=%s",
+            ", ".join(sorted(added_paths)),
+            ", ".join(sorted(removed_paths)),
+            ", ".join(sorted(changed_paths)),
+        )
+        _log_debug_fsdiff_extra(
+            "Diff records: %s", ",\n\n".join(str(diff) for diff in diffs)
+        )
+
+        # Map of paths to their corresponding FileDiff list
+        diff_map = defaultdict(list)
+        for diff in diffs:
+            diff_map[diff.path].append(diff)
+
+        # Set of diff records to be pruned as a result of move detection.
+        to_prune = set()
+
+        # Index destination files by content hash, ignoring entries without a hash.
+        dest_hashes = defaultdict(list)
+        for path, entry in tree_b.items():
+            if entry.is_file and entry.content_hash:
+                dest_hashes[entry.content_hash].append((path, entry))
+
+        for path, entry_a in tree_a.items():
+            _log_debug_fsdiff("Detecting moves for tree_a path '%s'", path)
+            # Only consider files with a valid content hash for move detection.
+            if not (entry_a.is_file and entry_a.content_hash):
+                continue
+
+            candidates = dest_hashes.get(entry_a.content_hash)
+            if not candidates:
+                continue
+
+            _log_debug_fsdiff_extra(
+                "Checking candidate destinations: %s",
+                ", ".join(cand_path for cand_path, entry in candidates),
+            )
+            # If multiple possible move destination candidates exists (i.e.
+            # content with the hash of entry_a now exists at multiple file
+            # system paths) we arbitrarily choose the first entry to be the
+            # "move destination". This could be enhanced in future with more
+            # complex rules, e.g. preferring a dest that is in the same
+            # directory, mount point, etc.
+            dest_path, entry_b = candidates[0]
+
+            _log_debug_fsdiff("Selected candidate %s: %s", dest_path, entry_b)
+            # Only treat as a move if we have the corresponding REMOVED/ADDED
+            # records; otherwise this is more likely a copy/duplicate.
+            if path not in (removed_paths | changed_paths):
+                continue
+            if dest_path not in (added_paths | changed_paths):
+                continue
+            if dest_path == path:
+                continue
+
+            diff_record = FsDiffRecord(path, DiffType.MOVED, entry_a, entry_b)
+
+            prune = [
+                diff
+                for diff in diff_map[path] + diff_map[dest_path]
+                if self._is_move_diff(diff, path, dest_path)
+            ]
+            to_prune.update(prune)
+
+            diff_record.moved_from = path
+            diff_record.moved_to = dest_path
+            diffs.append(diff_record)
+
+        # Prune ADDED/REMOVED diff records for detected moves
+        _log_debug_fsdiff("Pruning %d diff records for detected moves", len(to_prune))
+        diffs = [diff for diff in diffs if diff not in to_prune]
+
+        return diffs
