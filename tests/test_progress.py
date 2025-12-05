@@ -182,6 +182,22 @@ class TestProgress(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot be negative"):
             p.progress(-1)
 
+    def test_end_before_start_raises(self):
+        p = Progress("H", tc=self.mock_tc)
+
+        with self.assertRaisesRegex(ValueError, "called before start"):
+            p.end("2BadMice!")
+
+    def test_progress_after_end_raises(self):
+        p = Progress("P", tc=self.mock_tc)
+
+        p.start(10)
+        p.progress(10, "Stuff")
+        p.end("Done!")
+
+        with self.assertRaisesRegex(ValueError, "called before start"):
+            p.progress(1, "More Stuff!")
+
     def test_done_greater_than_total_raises(self):
         p = Progress("H", tc=self.mock_tc)
 
@@ -214,12 +230,27 @@ class TestSimpleProgress(unittest.TestCase):
             sp.start(-1)
 
     def test_progress_negative_raises(self):
-        mock_stream = StringIO()
-        sp = SimpleProgress("Simple", term_stream=mock_stream, width=50)
+        sp = SimpleProgress("S")
 
         sp.start(100)
         with self.assertRaises(ValueError):
             sp.progress(-1, "working")
+
+    def test_end_before_start_raises(self):
+        sp = SimpleProgress("S")
+
+        with self.assertRaisesRegex(ValueError, "called before start"):
+            sp.end("2BadMice!")
+
+    def test_progress_after_end_raises(self):
+        sp = SimpleProgress("S")
+
+        sp.start(10)
+        sp.progress(10, "Stuff")
+        sp.end("Done!")
+
+        with self.assertRaisesRegex(ValueError, "called before start"):
+            sp.progress(1, "More Stuff!")
 
     def test_progress_before_start_raises(self):
         sp = SimpleProgress("S")
@@ -256,6 +287,22 @@ class TestQuietProgress(unittest.TestCase):
         qp.start(100)
         with self.assertRaises(ValueError):
             qp.progress(-1, "working")
+
+    def test_end_before_start_raises(self):
+        qp = QuietProgress()
+
+        with self.assertRaisesRegex(ValueError, "called before start"):
+            qp.end("2BadMice!")
+
+    def test_progress_after_end_raises(self):
+        qp = QuietProgress()
+
+        qp.start(10)
+        qp.progress(10, "Stuff")
+        qp.end("Done!")
+
+        with self.assertRaisesRegex(ValueError, "called before start"):
+            qp.progress(1, "More Stuff!")
 
     def test_progress_before_start_raises(self):
         qp = QuietProgress()

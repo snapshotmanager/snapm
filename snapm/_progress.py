@@ -211,22 +211,70 @@ class TermControl:
 
 class ProgressBase(ABC):
     """
-    An abstract progress bar class.
+    An abstract progress reporting class.
     """
 
-    @abstractmethod
     def start(self, total: int):
         """
-        Start reporting progress on this ``Progress`` object.
+        Start reporting progress on this ``ProgressBase`` object.
+
+        :param total: The total number of expected progress items.
+        :type total: ``int``
+        """
+        if total <= 0:
+            raise ValueError("total must be positive.")
+
+        self.total = total
+
+        self._do_start()
+
+    @abstractmethod
+    def _do_start(self):
+        """
+        Start reporting progress on this ``ProgressBase`` object. Implements
+        subclass specific start behaviour.
 
         :param total: The total number of expected progress items.
         :type total: ``int``
         """
 
-    @abstractmethod
+    def _check_in_progress(self, done: int):
+        """
+        Validate whether this ``ProgressBase`` instance has been started, and
+        whether ``done`` falls within the permissible range.
+
+        :param done: The number of completed progress items.
+        :type done: ``int``
+        :raises: ``ValueError`` if progress has not been started, has already
+                 ended or ``done`` falls outside the range [0..total].
+        """
+        theclass = self.__class__.__name__
+        if self.total == 0:
+            raise ValueError(f"{theclass}.progress() called before start()")
+
+        if done < 0:
+            raise ValueError(f"{theclass}.progress() done cannot be negative.")
+
+        if done > self.total:
+            raise ValueError(f"{theclass}.progress() done cannot be > total.")
+
     def progress(self, done: int, message: Optional[str] = None):
         """
-        Report progress on this ``Progress`` instance.
+        Report progress on this ``ProgressBase`` instance.
+
+        :param done: The number of completed progress items.
+        :type done: ``int``
+        :param message: An optional progress message.
+        :type message: ``Optional[str]``
+        """
+        self._check_in_progress(done)
+        self._do_progress(done, message)
+
+    @abstractmethod
+    def _do_progress(self, done: int, message: Optional[str] = None):
+        """
+        Report progress on this ``ProgressBase`` child instance. Implements
+        subclass specific progress update behaviour.
 
         :param done: The number of completed progress items.
         :type done: ``int``
@@ -234,10 +282,24 @@ class ProgressBase(ABC):
         :type message: ``Optional[str]``
         """
 
-    @abstractmethod
     def end(self, message: Optional[str] = None):
         """
         End progress reporting on this ``Progress`` instance.
+
+        :param message: An optional completion message.
+        :type message: ``Optional[str]``
+        """
+        self._check_in_progress(self.total)
+        self.progress(self.total, "")
+        self._do_end(message)
+        self.total = 0
+
+    @abstractmethod
+    def _do_end(self, message: Optional[str] = None):
+        """
+        End progress reporting on this ``ProgressBase`` child instance.
+        Implements subclass specific progress update behaviour.
+
 
         :param message: An optional completion message.
         :type message: ``Optional[str]``
@@ -329,17 +391,13 @@ class Progress(ProgressBase):
                 self.did = "="
                 self.todo = "-"
 
-    def start(self, total: int):
+    def _do_start(self):
         """
         Start reporting progress on this ``Progress`` object.
 
         :param total: The total number of expected progress items.
         :type total: ``int``
         """
-        if total <= 0:
-            raise ValueError("total must be positive.")
-
-        self.total = total
         self.pbar = self.term.render(self.BAR)
         self.cleared = 1  #: true if we haven't drawn the bar yet.
 
@@ -353,7 +411,7 @@ class Progress(ProgressBase):
         if hasattr(self.stream, "flush"):
             self.stream.flush()
 
-    def progress(self, done: int, message: Optional[str] = None):
+    def _do_progress(self, done: int, message: Optional[str] = None):
         """
         Report progress on this ``Progress`` instance.
 
@@ -362,15 +420,6 @@ class Progress(ProgressBase):
         :param message: An optional progress message.
         :type message: ``Optional[str]``
         """
-        if self.pbar is None:
-            raise ValueError("Progress.progress() called before start()")
-
-        if done < 0:
-            raise ValueError("Progress.progress() done cannot be negative.")
-
-        if done > self.total:
-            raise ValueError("Progress.progress() done cannot be > total.")
-
         message = message or ""
 
         percent = float(done) / float(self.total)
@@ -397,14 +446,13 @@ class Progress(ProgressBase):
         if hasattr(self.stream, "flush"):
             self.stream.flush()
 
-    def end(self, message: Optional[str] = None):
+    def _do_end(self, message: Optional[str] = None):
         """
         End progress reporting on this ``Progress`` instance.
 
         :param message: An optional completion message.
         :type message: ``Optional[str]``
         """
-        self.progress(self.total, "")
         print(self.term.BOL + self.term.UP + self.term.CLEAR_EOL, file=self.stream)
         print(
             self.term.BOL + self.term.CLEAR_EOL + self.term.UP + self.term.CLEAR_EOL,
@@ -461,19 +509,16 @@ class SimpleProgress(ProgressBase):
             self.width = max(10, round((80 - fixed) * width_frac))
         self.total = 0
 
-    def start(self, total: int):
+    def _do_start(self):
         """
         Start reporting progress on this ``SimpleProgress`` object.
 
         :param total: The total number of expected progress items.
         :type total: ``int``
         """
-        if total <= 0:
-            raise ValueError("total must be positive.")
+        return
 
-        self.total = total
-
-    def progress(self, done: int, message: Optional[str] = None):
+    def _do_progress(self, done: int, message: Optional[str] = None):
         """
         Report progress on this ``SimpleProgress`` instance.
 
@@ -482,15 +527,6 @@ class SimpleProgress(ProgressBase):
         :param message: An optional progress message.
         :type message: ``Optional[str]``
         """
-        if not self.total:
-            raise ValueError("SimpleProgress.progress() called before start()")
-
-        if done < 0:
-            raise ValueError("SimpleProgress.progress() done cannot be negative.")
-
-        if done > self.total:
-            raise ValueError("SimpleProgress.progress() done cannot be > total.")
-
         message = message or ""
 
         percent = float(done) / float(self.total)
@@ -510,18 +546,15 @@ class SimpleProgress(ProgressBase):
         if hasattr(self.stream, "flush"):
             self.stream.flush()
 
-    def end(self, message: Optional[str] = None):
+    def _do_end(self, message: Optional[str] = None):
         """
         End progress reporting on this ``SimpleProgress`` instance.
 
         :param message: An optional completion message.
         :type message: ``Optional[str]``
         """
-        self.progress(self.total, "")
         if message:
             print(message, file=self.stream)
-
-        self.total = 0
 
         if hasattr(self.stream, "flush"):
             self.stream.flush()
@@ -538,19 +571,16 @@ class QuietProgress(ProgressBase):
         """
         self.total = 0
 
-    def start(self, total: int):
+    def _do_start(self):
         """
         Start reporting progress on this ``QuietProgress`` object.
 
         :param total: The total number of expected progress items.
         :type total: ``int``
         """
-        if total <= 0:
-            raise ValueError("total must be positive.")
+        return  # pragma: no cover
 
-        self.total = total
-
-    def progress(self, done: int, _message: Optional[str] = None):
+    def _do_progress(self, done: int, _message: Optional[str] = None):
         """
         Report progress on this ``QuietProgress`` instance.
 
@@ -559,23 +589,16 @@ class QuietProgress(ProgressBase):
         :param _message: An optional progress message (unused).
         :type _message: ``Optional[str]``
         """
-        if not self.total:
-            raise ValueError("QuietProgress.progress() called before start()")
+        return  # pragma: no cover
 
-        if done < 0:
-            raise ValueError("QuietProgress.progress() done cannot be negative.")
-
-        if done > self.total:
-            raise ValueError("QuietProgress.progress() done cannot be > total.")
-
-    def end(self, _message: Optional[str] = None):
+    def _do_end(self, _message: Optional[str] = None):
         """
         End progress reporting on this ``QuietProgress`` instance.
 
         :param _message: An optional completion message (unused).
         :type _message: ``Optional[str]``
         """
-        self.total = 0
+        return  # pragma: no cover
 
 
 class ProgressFactory:
