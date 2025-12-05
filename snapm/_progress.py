@@ -441,7 +441,6 @@ class Progress(ProgressBase):
             raise ValueError("Terminal does not support required control characters.")
         self.width: int = self._calculate_width(width=width, width_frac=width_frac)
         self.pbar: Optional[str] = None
-        self.cleared = 1
         encoding = getattr(self.stream, "encoding", None)
         if not encoding:
             # Stream has no usable encoding; fall back to ASCII bar.
@@ -464,7 +463,6 @@ class Progress(ProgressBase):
         :type total: ``int``
         """
         self.pbar = self.term.render(self.BAR)
-        self.cleared = 1  #: true if we haven't drawn the bar yet.
 
         print(
             self.term.BOL
@@ -524,7 +522,6 @@ class Progress(ProgressBase):
             file=self.stream,
             end="",
         )
-        self.cleared = 1
         if message:
             print(message, file=self.stream)
         self.total = 0
