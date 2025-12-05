@@ -63,7 +63,7 @@ class TestTermControl(unittest.TestCase):
                 b"seq" if x in ["cr", "setf"] else None
             )
             # Return bytes for parameterized strings (colors)
-            mock_curses.tparm.return_value = b"\x1b[32m"
+            mock_curses.tparm.return_value = b"\x1b[30m"
 
             tc = TermControl(term_stream=mock_stream)
 
@@ -71,7 +71,7 @@ class TestTermControl(unittest.TestCase):
             self.assertEqual(tc.lines, 24)
             self.assertEqual(tc.BOL, "seq")
             # Check color initialization logic (depends on tparm)
-            self.assertEqual(tc.BLACK, "\x1b[32m")
+            self.assertEqual(tc.BLACK, "\x1b[30m")
 
     def test_term_control_render(self):
         """Test the render method replaces placeholders."""
