@@ -155,7 +155,7 @@ class TermControl:
         #
         #     Help on class error in module _curses:
         #     class error(builtins.Exception)
-        except Exception:  # pylint: disable=broad-exception-caught
+        except BaseException:  # pylint: disable=broad-exception-caught
             return  # pragma: no cover
 
         # Look up numeric capabilities.
