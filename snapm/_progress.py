@@ -14,6 +14,15 @@ import curses
 import sys
 import re
 
+#: Default number of columns if not detected from terminal.
+DEFAULT_COLUMNS = 80
+
+#: Minimum width of a progress bar.
+PROGRESS_MIN_WIDTH = 10
+
+#: Default width of a progress bar as a fraction of the terminal size.
+DEFAULT_WIDTH_FRAC = 0.5
+
 
 class TermControl:
     """
@@ -214,6 +223,67 @@ class ProgressBase(ABC):
     An abstract progress reporting class.
     """
 
+    FIXED = -1
+
+    def __init__(self):
+        """
+        Initialise a ``ProgressBase`` child instance.
+        """
+        self.total = 0
+        self.header = None
+        self.term = None
+
+    def _calculate_width(
+        self, width: Optional[int] = None, width_frac: Optional[float] = None
+    ) -> int:
+        """
+        Calculate the width for the progress bar using values
+        defined by child classes. The ``header`` and (optionally, for classes
+        that use it) ``term`` members must be initialised before calling this
+        method.
+
+        :param width: An optional width value in characters. If specified
+                      the progress bar will occupy this width. Cannot be used
+                      with ``width_frac``.
+        :type width: ``int``
+        :param width_frac: An optional width fraction between [0..1]. If
+                           specified the terminal width is multiplied by this
+                           value and rounded to the nearest integer to
+                           determine the width of the progress bar. Cannot be
+                           used with ``width``.
+        :type width_frac: ``Optional[float]``
+        :returns: The calculated progress bar width in characters.
+        :rtype: ``int``
+        """
+        if self.FIXED < 0:
+            raise ValueError(
+                f"{self.__class__.__name__}: self.FIXED must be initialised "
+                "before calling self._calculate_width()"
+            )
+
+        if not hasattr(self, "header") or self.header is None:
+            raise ValueError(
+                f"{self.__class__.__name__}: self.header must be initialised "
+                "before calling self._calculate_width()"
+            )
+
+        if width is not None and width_frac is not None:
+            raise ValueError("width and width_frac are mutually exclusive")
+
+        if hasattr(self, "term") and hasattr(self.term, "columns"):
+            columns = self.term.columns
+        else:
+            columns = DEFAULT_COLUMNS
+
+        if width is None:
+            width_frac = width_frac or DEFAULT_WIDTH_FRAC
+            fixed = self.FIXED + len(self.header)
+            width = round((columns - fixed) * width_frac)
+            # Ensure a reasonable minimum width for the bar body.
+            width = max(PROGRESS_MIN_WIDTH, width)
+
+        return width
+
     def start(self, total: int):
         """
         Start reporting progress on this ``ProgressBase`` object.
@@ -325,7 +395,9 @@ class Progress(ProgressBase):
     BAR = (
         "${BOLD}${CYAN}%s${NORMAL}: %3d%% "
         "${GREEN}[${BOLD}%s%s${NORMAL}${GREEN}]${NORMAL}\n"
-    )
+    )  #: Progress bar format string
+
+    FIXED = 9  #: Length of fixed characters in BAR.
 
     def __init__(
         self,
@@ -355,8 +427,7 @@ class Progress(ProgressBase):
                                it will override any ``term_stream`` argument.
         :type tc: ``Optional[TermControl]``
         """
-        if width is not None and width_frac is not None:
-            raise ValueError("width and width_frac are mutually exclusive")
+        super().__init__()
 
         if tc is not None:
             term_stream = tc.term_stream
@@ -366,15 +437,7 @@ class Progress(ProgressBase):
         self.stream = term_stream or sys.stdout
         if not (self.term.CLEAR_EOL and self.term.UP and self.term.BOL):
             raise ValueError("Terminal does not support required control characters.")
-        if width is not None:
-            self.width = width
-        else:
-            width_frac = width_frac or 0.5
-            fixed = 8 + len(header)
-            width = round(((self.term.columns or 80) - fixed) * width_frac)
-            # Ensure a reasonable minimum width for the bar body.
-            self.width = max(10, width)
-        self.total = 0
+        self.width = self._calculate_width(width=width, width_frac=width_frac)
         self.pbar: Optional[str] = None
         self.cleared = 1
         encoding = getattr(self.stream, "encoding", None)
@@ -472,9 +535,10 @@ class SimpleProgress(ProgressBase):
     A simple progress bar that does not rely on terminal capabilities.
     """
 
-    BAR = "%s: %3d%% [%s%s] (%s)"
-    DID = "="
-    TODO = "-"
+    BAR = "%s: %3d%% [%s%s] (%s)"  #: Progress bar format string
+    DID = "="  #: Bar character for completed work.
+    TODO = "-"  #: Bar character for uncompleted work.
+    FIXED = 12  #: Length of fixed characters in BAR.
 
     def __init__(
         self,
@@ -499,15 +563,10 @@ class SimpleProgress(ProgressBase):
                            used with ``width``.
         :type width_frac: ``Optional[float]``
         """
+        super().__init__()
         self.header = header
         self.stream = term_stream or sys.stdout
-        if width is not None:
-            self.width = width
-        else:
-            width_frac = width_frac or 0.5
-            fixed = 10 + len(header)
-            self.width = max(10, round((80 - fixed) * width_frac))
-        self.total = 0
+        self.width = self._calculate_width(width=width, width_frac=width_frac)
 
     def _do_start(self):
         """
@@ -564,12 +623,6 @@ class QuietProgress(ProgressBase):
     """
     A progress class that produces no output.
     """
-
-    def __init__(self):
-        """
-        Initialise a new ``QuietProgress`` object.
-        """
-        self.total = 0
 
     def _do_start(self):
         """
@@ -640,9 +693,6 @@ class ProgressFactory:
                            used with ``width``.
         :type width_frac: ``Optional[float]``
         """
-        if width is not None and width_frac is not None:
-            raise ValueError("width and width_frac are mutually exclusive")
-
         if quiet:
             return QuietProgress()
 

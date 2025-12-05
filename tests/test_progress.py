@@ -13,6 +13,7 @@ import curses
 
 from snapm._progress import (
     TermControl,
+    ProgressBase,
     Progress,
     SimpleProgress,
     QuietProgress,
@@ -58,7 +59,9 @@ class TestTermControl(unittest.TestCase):
             # Mock capabilities
             mock_curses.tigetnum.side_effect = lambda x: 80 if x == "cols" else 24
             # Return bytes for capability strings
-            mock_curses.tigetstr.side_effect = lambda x: b"seq" if x in ["cr", "setf"] else None
+            mock_curses.tigetstr.side_effect = lambda x: (
+                b"seq" if x in ["cr", "setf"] else None
+            )
             # Return bytes for parameterized strings (colors)
             mock_curses.tparm.return_value = b"\x1b[32m"
 
@@ -83,6 +86,47 @@ class TestTermControl(unittest.TestCase):
 
         # Test escaped $
         self.assertEqual(tc.render("Money$$"), "Money$")
+
+
+class TestProgressBase(unittest.TestCase):
+    def test_bad_child_no_FIXED(self):
+        class BadProgress(ProgressBase):
+            FIXED = -1
+
+            def __init__(self):
+                self.header = "Header"
+                self.width = self._calculate_width(width=20)
+
+            def _do_start(self, _total: int):
+                pass
+
+            def _do_progress(self, _done: int, _message: str):
+                pass
+
+            def _do_end(self, _message: str):
+                pass
+
+        with self.assertRaisesRegex(ValueError, r"self\.FIXED must be"):
+            bp = BadProgress()
+
+    def test_bad_child_no_header(self):
+        class BadProgress(ProgressBase):
+            FIXED = 1
+
+            def __init__(self):
+                self.width = self._calculate_width(width=20)
+
+            def _do_start(self, _total: int):
+                pass
+
+            def _do_progress(self, _done: int, _message: str):
+                pass
+
+            def _do_end(self, _message: str):
+                pass
+
+        with self.assertRaisesRegex(ValueError, r"self\.header must be"):
+            bp = BadProgress()
 
 
 class TestProgress(unittest.TestCase):
@@ -215,7 +259,9 @@ class TestSimpleProgress(unittest.TestCase):
         sp.progress(50, "working")
 
         output = mock_stream.getvalue()
-        self.assertIn("Simple:  50% [====================--------------------] (working)", output)
+        self.assertIn(
+            "Simple:  50% [====================--------------------] (working)", output
+        )
 
         sp.end("Finished")
         self.assertIn("Finished", mock_stream.getvalue())
