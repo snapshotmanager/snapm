@@ -130,10 +130,16 @@ class TermControl:
 
     def __init__(self, term_stream: Optional[TextIO] = None):
         """
-        Create a `TermControl` and initialize its attributes with appropriate
-        values for the current terminal.  `term_stream` is the stream that will
-        be used for terminal output; if this stream is not a tty, then the
-        terminal is assumed to be a dumb terminal (i.e., have no capabilities).
+        Initialize terminal capabilities and size information for the provided output stream.
+        
+        If `term_stream` is not a tty or terminal setup fails, the instance will be left with no terminal capabilities (attributes remain empty or defaulted). When capabilities are available this initializer sets:
+        - `columns` and `lines` from the terminal size,
+        - string capability attributes named by `_STRING_CAPABILITIES`,
+        - foreground color attributes named by `_COLORS` and `_ANSI_COLORS`,
+        - background color attributes prefixed with `BG_` for both `_COLORS` and `_ANSI_COLORS`.
+        
+        Parameters:
+            term_stream (TextIO | None): Output stream to probe for terminal capabilities; defaults to stdout.
         """
         # Default to stdout
         if term_stream is None:
@@ -227,7 +233,14 @@ class ProgressBase(ABC):
 
     def __init__(self):
         """
-        Initialise a ``ProgressBase`` child instance.
+        Initialize base attributes used by progress implementations.
+        
+        Sets default state for lifecycle and rendering configuration:
+        - total: number of work items (0 means not started).
+        - header: optional title shown with the progress display.
+        - term: optional terminal control capabilities.
+        - stream: optional output stream for rendering.
+        - width: configured progress bar width (-1 indicates unspecified).
         """
         self.total: int = 0
         self.header: Optional[str] = None
@@ -239,23 +252,17 @@ class ProgressBase(ABC):
         self, width: Optional[int] = None, width_frac: Optional[float] = None
     ) -> int:
         """
-        Calculate the width for the progress bar using values
-        defined by child classes. The ``header`` and (optionally, for classes
-        that use it) ``term`` members must be initialised before calling this
-        method.
-
-        :param width: An optional width value in characters. If specified
-                      the progress bar will occupy this width. Cannot be used
-                      with ``width_frac``.
-        :type width: ``int``
-        :param width_frac: An optional width fraction between [0..1]. If
-                           specified the terminal width is multiplied by this
-                           value and rounded to the nearest integer to
-                           determine the width of the progress bar. Cannot be
-                           used with ``width``.
-        :type width_frac: ``Optional[float]``
-        :returns: The calculated progress bar width in characters.
-        :rtype: ``int``
+        Compute the number of character cells to allocate for the progress bar body.
+        
+        Parameters:
+            width (Optional[int]): Explicit width in characters to use for the bar body. Mutually exclusive with `width_frac`.
+            width_frac (Optional[float]): Fraction of the available terminal space to use (range 0..1). Mutually exclusive with `width`.
+        
+        Returns:
+            int: Calculated width in characters for the progress bar body.
+        
+        Raises:
+            ValueError: If the subclass FIXED value is not initialized (negative), if `header` is not set, or if both `width` and `width_frac` are provided.
         """
         if self.FIXED < 0:
             raise ValueError(
@@ -288,10 +295,13 @@ class ProgressBase(ABC):
 
     def start(self, total: int):
         """
-        Start reporting progress on this ``ProgressBase`` object.
-
-        :param total: The total number of expected progress items.
-        :type total: ``int``
+        Begin a progress run using the specified total number of work items.
+        
+        Parameters:
+            total (int): Total number of work items to complete; must be greater than zero.
+        
+        Raises:
+            ValueError: If `total` is less than or equal to zero.
         """
         if total <= 0:
             raise ValueError("total must be positive.")
@@ -303,22 +313,21 @@ class ProgressBase(ABC):
     @abstractmethod
     def _do_start(self):
         """
-        Start reporting progress on this ``ProgressBase`` object. Implements
-        subclass specific start behaviour.
-
-        :param total: The total number of expected progress items.
-        :type total: ``int``
+        Hook invoked when a progress run begins; subclasses should implement startup behavior.
+        
+        Called by ProgressBase.start(...) after the total has been validated and stored. Implementations may perform any initialization or emit initial output for the progress indicator.
         """
 
     def _check_in_progress(self, done: int):
         """
-        Validate whether this ``ProgressBase`` instance has been started, and
-        whether ``done`` falls within the permissible range.
-
-        :param done: The number of completed progress items.
-        :type done: ``int``
-        :raises: ``ValueError`` if progress has not been started, has already
-                 ended or ``done`` falls outside the range [0..total].
+        Validate that progress has been started and that `done` is within the valid range.
+        
+        Parameters:
+            done (int): Number of completed items.
+        
+        Raises:
+            ValueError: If progress has not been started (total == 0), if `done` is less than 0,
+                        or if `done` is greater than the recorded total.
         """
         theclass = self.__class__.__name__
         if self.total == 0:
@@ -332,12 +341,13 @@ class ProgressBase(ABC):
 
     def progress(self, done: int, message: Optional[str] = None):
         """
-        Report progress on this ``ProgressBase`` instance.
-
-        :param done: The number of completed progress items.
-        :type done: ``int``
-        :param message: An optional progress message.
-        :type message: ``Optional[str]``
+        Advance the progress indicator to the specified completed count.
+        
+        Validates that `done` is within the current progress range and updates the progress display with an optional message.
+        
+        Parameters:
+            done (int): The number of completed items to report.
+            message (Optional[str]): Optional text to include with the progress output.
         """
         self._check_in_progress(done)
         self._do_progress(done, message)
@@ -345,21 +355,21 @@ class ProgressBase(ABC):
     @abstractmethod
     def _do_progress(self, done: int, message: Optional[str] = None):
         """
-        Report progress on this ``ProgressBase`` child instance. Implements
-        subclass specific progress update behaviour.
-
-        :param done: The number of completed progress items.
-        :type done: ``int``
-        :param message: An optional progress message.
-        :type message: ``Optional[str]``
+        Hook for subclasses to update the progress display for the given completed count and optional message.
+        
+        Parameters:
+            done (int): Number of items completed; must be between 0 and the configured total.
+            message (Optional[str]): Optional text to include with the progress update.
         """
 
     def end(self, message: Optional[str] = None):
         """
-        End progress reporting on this ``Progress`` instance.
-
-        :param message: An optional completion message.
-        :type message: ``Optional[str]``
+        End the current progress run, finalize the display, and reset internal state.
+        
+        Validates that progress is active, updates progress to the stored total (with no inline message), calls the subclass-specific end handler with the optional completion message, and resets the stored total to 0.
+        
+        Parameters:
+            message (Optional[str]): Optional completion message forwarded to the progress end handler; implementations may display it.
         """
         self._check_in_progress(self.total)
         self.progress(self.total, "")
@@ -369,12 +379,12 @@ class ProgressBase(ABC):
     @abstractmethod
     def _do_end(self, message: Optional[str] = None):
         """
-        End progress reporting on this ``ProgressBase`` child instance.
-        Implements subclass specific progress update behaviour.
-
-
-        :param message: An optional completion message.
-        :type message: ``Optional[str]``
+        Perform final end-of-progress handling for the progress instance.
+        
+        Subclasses should finalize any output/state for a completed progress run and may display the optional completion message.
+        
+        Parameters:
+            message (Optional[str]): An optional completion message to display or record.
         """
 
 
@@ -411,24 +421,21 @@ class Progress(ProgressBase):
         tc: Optional[TermControl] = None,
     ):
         """
-        Initialise a new ``Progress`` object.
-
-        :param term_stream: The terminal stream to write to.
-        :type term_stream: ``TextIO``
-        :param width: An optional width value in characters. If specified
-                      the progress bar will occupy this width. Cannot be used
-                      with ``width_frac``.
-        :type width: ``int``
-        :param width_frac: An optional width fraction between [0..1]. If
-                           specified the terminal width is multiplied by this
-                           value and rounded to the nearest integer to
-                           determine the width of the progress bar. Cannot be
-                           used with ``width``.
-        :type width_frac: ``Optional[float]``
-        :param tc: An optional ``TermControl`` object already initialised with
-                               a ``term_stream`` value. If this argument is set
-                               it will override any ``term_stream`` argument.
-        :type tc: ``Optional[TermControl]``
+        Create a two-line terminal progress renderer with the given header and sizing.
+        
+        Parameters:
+        	header (str): Header text displayed above the progress bar.
+        	term_stream (Optional[TextIO]): Output stream for rendering; defaults to stdout. Ignored if `tc` is provided.
+        	width (Optional[int]): Exact character width for the progress bar body. Mutually exclusive with `width_frac`.
+        	width_frac (Optional[float]): Fraction of terminal width to use for the bar (0.0–1.0). Mutually exclusive with `width`.
+        	no_clear (bool): When True, avoid clearing the previously rendered bar on completion.
+        	tc (Optional[TermControl]): Preinitialized TermControl to use for terminal capabilities; overrides `term_stream` when set.
+        
+        Raises:
+        	ValueError: If the terminal does not provide required control sequences (clear-to-eol, cursor-up, and beginning-of-line).
+        
+        Notes:
+        	Chooses Unicode block characters for the filled/empty bar when the output stream encoding supports them; falls back to ASCII characters otherwise.
         """
         super().__init__()
 
@@ -462,10 +469,9 @@ class Progress(ProgressBase):
 
     def _do_start(self):
         """
-        Start reporting progress on this ``Progress`` object.
-
-        :param total: The total number of expected progress items.
-        :type total: ``int``
+        Render and output the initial progress bar header and empty bar to the configured stream.
+        
+        Sets `self.pbar` to the rendered BAR template, writes the header with 0% and an empty bar to the stream, clears to the end of the line, and flushes the stream if supported.
         """
         self.pbar = self.term.render(self.BAR)
 
@@ -481,12 +487,11 @@ class Progress(ProgressBase):
 
     def _do_progress(self, done: int, message: Optional[str] = None):
         """
-        Report progress on this ``Progress`` instance.
-
-        :param done: The number of completed progress items.
-        :type done: ``int``
-        :param message: An optional progress message.
-        :type message: ``Optional[str]``
+        Update the on-screen two-line progress bar to reflect the given completed count and optional message.
+        
+        Parameters:
+            done (int): Number of completed items.
+            message (Optional[str]): Optional text to display centered in the progress area.
         """
         message = message or ""
 
@@ -516,10 +521,10 @@ class Progress(ProgressBase):
 
     def _do_end(self, message: Optional[str] = None):
         """
-        End progress reporting on this ``Progress`` instance.
-
-        :param message: An optional completion message.
-        :type message: ``Optional[str]``
+        Finalize the progress display and clear the in-progress bar.
+        
+        Parameters:
+            message (Optional[str]): Optional completion message to print after clearing the progress display.
         """
         if not self.no_clear:
             print(self.term.BOL + self.term.UP + self.term.CLEAR_EOL, file=self.stream)
@@ -558,20 +563,12 @@ class SimpleProgress(ProgressBase):
         width_frac: Optional[float] = None,
     ):
         """
-        Initialise a new ``SimpleProgress`` object.
-
-        :param term_stream: The terminal stream to write to.
-        :type term_stream: ``TextIO``
-        :param width: An optional width value in characters. If specified
-                      the progress bar will occupy this width. Cannot be used
-                      with ``width_frac``.
-        :type width: ``int``
-        :param width_frac: An optional width fraction between [0..1]. If
-                           specified the terminal width is multiplied by this
-                           value and rounded to the nearest integer to
-                           determine the width of the progress bar. Cannot be
-                           used with ``width``.
-        :type width_frac: ``Optional[float]``
+        Create a SimpleProgress configured to render a single-line ASCII progress bar.
+        
+        Parameters:
+        	header (str): Text displayed before the progress bar.
+        	width (int): Explicit bar width in characters. Mutually exclusive with `width_frac`.
+        	width_frac (float): Fraction of terminal width to use for the bar (0.0–1.0). Mutually exclusive with `width`.
         """
         super().__init__()
         self.header: Optional[str] = header
@@ -580,21 +577,21 @@ class SimpleProgress(ProgressBase):
 
     def _do_start(self):
         """
-        Start reporting progress on this ``SimpleProgress`` object.
-
-        :param total: The total number of expected progress items.
-        :type total: ``int``
+        No-op start hook for SimpleProgress that performs no initialization or output.
+        
+        This method is called by the progress lifecycle when starting but intentionally does nothing for SimpleProgress.
         """
         return
 
     def _do_progress(self, done: int, message: Optional[str] = None):
         """
-        Report progress on this ``SimpleProgress`` instance.
-
-        :param done: The number of completed progress items.
-        :type done: ``int``
-        :param message: An optional progress message.
-        :type message: ``Optional[str]``
+        Update the simple, capability-agnostic progress bar to reflect the given completion and optional message.
+        
+        Prints a single-line ASCII progress bar that includes the header, percentage complete, filled and empty segments, and the provided message; flushes the output stream if possible.
+        
+        Parameters:
+            done (int): Number of completed items; used to compute percentage of self.total.
+            message (Optional[str]): Optional text to display alongside the progress bar.
         """
         message = message or ""
 
@@ -617,10 +614,10 @@ class SimpleProgress(ProgressBase):
 
     def _do_end(self, message: Optional[str] = None):
         """
-        End progress reporting on this ``SimpleProgress`` instance.
-
-        :param message: An optional completion message.
-        :type message: ``Optional[str]``
+        Finalize the progress display and optionally print a completion message.
+        
+        Parameters:
+            message (Optional[str]): Optional completion message to print after progress ends.
         """
         if message:
             print(message, file=self.stream)
@@ -636,30 +633,26 @@ class NullProgress(ProgressBase):
 
     def _do_start(self):
         """
-        Start reporting progress on this ``NullProgress`` object.
-
-        :param total: The total number of expected progress items.
-        :type total: ``int``
+        No-op start hook for NullProgress that performs no output or state change.
+        
+        This method exists to satisfy the ProgressBase lifecycle but intentionally does nothing.
         """
         return  # pragma: no cover
 
     def _do_progress(self, done: int, _message: Optional[str] = None):
         """
-        Report progress on this ``NullProgress`` instance.
-
-        :param done: The number of completed progress items.
-        :type done: ``int``
-        :param _message: An optional progress message (unused).
-        :type _message: ``Optional[str]``
+        No-op progress update for NullProgress.
+        
+        This method intentionally does nothing; both `done` and `_message` are ignored.
         """
         return  # pragma: no cover
 
     def _do_end(self, _message: Optional[str] = None):
         """
-        End progress reporting on this ``NullProgress`` instance.
-
-        :param _message: An optional completion message (unused).
-        :type _message: ``Optional[str]``
+        No-op end handler for NullProgress.
+        
+        Parameters:
+            _message (Optional[str]): Optional completion message that is ignored.
         """
         return  # pragma: no cover
 
@@ -680,36 +673,22 @@ class ProgressFactory:
         no_clear: bool = False,
     ) -> ProgressBase:
         """
-        Factory method to construct progress objects derived from
-        ``ProgressBase``.
-
-        :param header: The progress report header.
-        :type header: ``str``
-        :param quiet: Suppress all output.
-        :type quiet: ``bool``
-        :param term_stream: An optional ``TextIO`` output object.
-                            Defaults to ``sys.stdout`` if unspecified.
-        :type term_stream: ``Optional[TextIO]``
-        :param term_control: An optional ``TermControl`` object to use
-                             for the progress report.
-        :type term_control: ``Optional[TermControl]``
-        :param width: An optional width value in characters. If specified
-                      the progress bar will occupy this width. Cannot be used
-                      with ``width_frac``.
-        :type width: ``int``
-        :param width_frac: An optional width fraction between [0..1]. If
-                           specified the terminal width is multiplied by this
-                           value and rounded to the nearest integer to
-                           determine the width of the progress bar. Cannot be
-                           used with ``width``.
-        :type width_frac: ``Optional[float]``
-        :param no_clear: For progress indicators that clear and re-draw the
-                         content on progress, do not erase the progress bar
-                         when ``ProgressBase.end()`` is called, leaving it
-                         on the terminal for the user to refer to. Ignored
-                         by ``ProgressBase`` child classes that do not use
-                         ``TerminalControl``.
-        :type no_clear: ``bool``
+        Return an appropriate ProgressBase instance configured for the environment and options.
+        
+        Parameters:
+            header (str): Text shown as the progress header.
+            quiet (bool): If True, return a NullProgress that emits no output.
+            term_stream (Optional[TextIO]): Output stream to use; defaults to sys.stdout when omitted.
+            term_control (Optional[TermControl]): Optional TermControl to use for terminal-capable progress.
+            width (Optional[int]): Fixed bar width in characters. Mutually exclusive with `width_frac`.
+            width_frac (Optional[float]): Fraction of terminal width to use for the bar (0.0–1.0). Mutually exclusive with `width`.
+            no_clear (bool): When True, do not erase the in-progress bar on end for terminal-capable progress implementations.
+        
+        Returns:
+            ProgressBase: A progress implementation chosen by context:
+                - NullProgress when `quiet` is True,
+                - SimpleProgress when `term_stream` is not a TTY,
+                - Progress when a TTY is available (using `term_control`, `width`/`width_frac`, and `no_clear` as provided).
         """
         if quiet:
             return NullProgress()

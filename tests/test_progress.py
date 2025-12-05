@@ -94,16 +94,46 @@ class TestProgressBase(unittest.TestCase):
             FIXED = -1
 
             def __init__(self):
+                """
+                Initialize the instance with a default header and width.
+                
+                Sets self.header to "Header" and self.width to the value returned by self._calculate_width(width=20).
+                """
                 self.header = "Header"
                 self.width = self._calculate_width(width=20)
 
             def _do_start(self, _total: int):
+                """
+                Begin a progress run tracking the given total number of work units.
+                
+                Parameters:
+                    _total (int): Total number of work units to track; must be greater than zero.
+                
+                Raises:
+                    ValueError: If `_total` is less than or equal to zero.
+                """
                 pass
 
             def _do_progress(self, _done: int, _message: str):
+                """
+                Update the progress state with a new completed count and message, and render the progress output.
+                
+                Parameters:
+                    _done (int): The number of completed units for the current progress (must be >= 0 and <= the started total).
+                    _message (str): Status text to display alongside the progress bar.
+                
+                Raises:
+                    ValueError: If progress is updated before start, after end, with a negative `_done`, or with `_done` greater than the started total.
+                """
                 pass
 
             def _do_end(self, _message: str):
+                """
+                Finalize the progress display and emit the provided end message.
+                
+                Parameters:
+                    _message (str): Final status text to display when the progress is finished; may be an empty string.
+                """
                 pass
 
         with self.assertRaisesRegex(ValueError, r"self\.FIXED must be"):
@@ -114,15 +144,43 @@ class TestProgressBase(unittest.TestCase):
             FIXED = 1
 
             def __init__(self):
+                """
+                Initialize the instance and set its `width` attribute to the calculated value for a default width of 20.
+                """
                 self.width = self._calculate_width(width=20)
 
             def _do_start(self, _total: int):
+                """
+                Begin a progress run tracking the given total number of work units.
+                
+                Parameters:
+                    _total (int): Total number of work units to track; must be greater than zero.
+                
+                Raises:
+                    ValueError: If `_total` is less than or equal to zero.
+                """
                 pass
 
             def _do_progress(self, _done: int, _message: str):
+                """
+                Update the progress state with a new completed count and message, and render the progress output.
+                
+                Parameters:
+                    _done (int): The number of completed units for the current progress (must be >= 0 and <= the started total).
+                    _message (str): Status text to display alongside the progress bar.
+                
+                Raises:
+                    ValueError: If progress is updated before start, after end, with a negative `_done`, or with `_done` greater than the started total.
+                """
                 pass
 
             def _do_end(self, _message: str):
+                """
+                Finalize the progress display and emit the provided end message.
+                
+                Parameters:
+                    _message (str): Final status text to display when the progress is finished; may be an empty string.
+                """
                 pass
 
         with self.assertRaisesRegex(ValueError, r"self\.header must be"):
@@ -132,6 +190,15 @@ class TestProgressBase(unittest.TestCase):
 class TestProgress(unittest.TestCase):
     def setUp(self):
         # Create a mock TermControl with necessary capabilities
+        """
+        Prepare a mock TermControl instance with typical terminal capabilities for use in tests.
+        
+        Configured attributes:
+        - CLEAR_EOL, UP, BOL: control sequences used by progress tests.
+        - columns: 100 (terminal width).
+        - render: passthrough function that returns its input.
+        - term_stream.encoding: "ascii".
+        """
         self.mock_tc = MagicMock(spec=TermControl)
         self.mock_tc.CLEAR_EOL = "<CE>"
         self.mock_tc.UP = "<UP>"
