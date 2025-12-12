@@ -118,11 +118,14 @@ class ReportObj:
     Common report object for snapm reports
     """
 
-    def __init__(self, snapset=None, snapshot=None, plugin=None, schedule=None):
+    def __init__(
+        self, snapset=None, snapshot=None, plugin=None, schedule=None, diff=None
+    ):
         self.snapset = snapset
         self.snapshot = snapshot
         self.plugin = plugin
         self.schedule = schedule
+        self.diff = diff
 
 
 #: Snapshot set report object type
@@ -133,6 +136,8 @@ PR_SNAPSHOT = 2
 PR_PLUGIN = 4
 #: Schedule report object type
 PR_SCHEDULE = 8
+#: DiffRecord report object type
+PR_DIFF = 16
 
 #: Report object types table for ``snapm.command`` reports
 _report_obj_types = [
@@ -140,6 +145,7 @@ _report_obj_types = [
     ReportObjType(PR_SNAPSHOT, "Snapshot", "snapshot_", lambda o: o.snapshot),
     ReportObjType(PR_PLUGIN, "Plugin", "plugin_", lambda o: o.plugin),
     ReportObjType(PR_SCHEDULE, "Schedule", "schedule_", lambda o: o.schedule),
+    ReportObjType(PR_DIFF, "Diff", "diff_", lambda o: o.diff),
 ]
 
 
@@ -564,6 +570,159 @@ _schedule_fields = [
 ]
 
 _DEFAULT_SCHEDULE_FIELDS = "name,sources,sizepolicy,oncalendar,enabled,nextelapse"
+
+_diff_fields = [
+    FieldType(
+        PR_DIFF,
+        "path",
+        "Path",
+        "Diff path",
+        4,
+        REP_STR,
+        lambda f, d: f.report_str(d.path),
+    ),
+    FieldType(
+        PR_DIFF,
+        "type",
+        "Type",
+        "Diff type",
+        4,
+        REP_STR,
+        lambda f, d: f.report_str(d.diff_type.value),
+    ),
+    FieldType(
+        PR_DIFF,
+        "size_delta",
+        "SizeDelta",
+        "Diff size change",
+        9,
+        REP_SIZE,
+        lambda f, d: f.report_size(d.size_delta),
+    ),
+    FieldType(
+        PR_DIFF,
+        "content",
+        "Content",
+        "Content changed",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.content_changed)),
+    ),
+    FieldType(
+        PR_DIFF,
+        "metadata",
+        "Metadata",
+        "Metadata changed",
+        8,
+        REP_STR,
+        lambda f, d: f.report_str(bool_to_yes_no(d.metadata_changed)),
+    ),
+    FieldType(
+        PR_DIFF,
+        "mode_old",
+        "OldMode",
+        "Old path mode",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(oct(d.mode_old)),
+    ),
+    FieldType(
+        PR_DIFF,
+        "mode_new",
+        "NewMode",
+        "New path mode",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(oct(d.mode_new)),
+    ),
+    FieldType(
+        PR_DIFF,
+        "category",
+        "Category",
+        "File category",
+        8,
+        REP_STR,
+        lambda f, d: f.report_str(d.file_category),
+    ),
+    FieldType(
+        PR_DIFF,
+        "movedfrom",
+        "MovedFrom",
+        "Move source",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(d.moved_from if d.moved_from else ""),
+    ),
+    FieldType(
+        PR_DIFF,
+        "movedto",
+        "MovedTo",
+        "Move destination",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(d.moved_to if d.moved_to else ""),
+    ),
+    FieldType(
+        PR_DIFF,
+        "diffsummary",
+        "DiffSummary",
+        "Summary of content differences",
+        11,
+        REP_STR,
+        lambda f, d: f.report_str(d.content_diff_summary),
+    ),
+    FieldType(
+        PR_DIFF,
+        "hash_old",
+        "OldHash",
+        "Old file content hash",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(
+            d.old_entry.content_hash if d.old_entry.content_hash else ""
+        ),
+    ),
+    FieldType(
+        PR_DIFF,
+        "hash_new",
+        "NewHash",
+        "New file content hash",
+        7,
+        REP_STR,
+        lambda f, d: f.report_str(
+            d.new_entry.content_hash if d.new_entry.content_hash else ""
+        ),
+    ),
+    FieldType(
+        PR_DIFF,
+        "filetype",
+        "FileType",
+        "File type",
+        8,
+        REP_STR,
+        lambda f, d: f.report_str(d.file_type),
+    ),
+    FieldType(
+        PR_DIFF,
+        "mtime_old",
+        "OldMtime",
+        "Old modification time",
+        8,
+        REP_TIME,
+        lambda f, d: f.report_time(d.mtime_old),
+    ),
+    FieldType(
+        PR_DIFF,
+        "mtime_new",
+        "NewMtime",
+        "New modification time",
+        8,
+        REP_TIME,
+        lambda f, d: f.report_time(d.mtime_new),
+    ),
+]
+
+_DEFAULT_DIFF_FIELDS = "path,type,size_delta,content,metadata,filetype"
 
 
 def _str_indent(string, indent):
@@ -1186,6 +1345,52 @@ def print_snapsets(
     )
 
 
+def print_diffs(
+    _manager,
+    selection=None,  # pylint: disable=unused-argument
+    output_fields=None,
+    opts=None,
+    sort_keys=None,
+    data: Optional[FsDiffResults] = None,
+):
+    """
+    Print diffs matching selection criteria.
+
+    Format a set of ``snapm.fsdiff.FsDiffRecord`` objects matching
+    the given criteria, and output them as a report to the file
+    given in ``opts.report_file``.
+
+    Selection criteria may be expressed via a Selection object
+    passed to the call using the ``selection`` parameter.
+
+    :param _manager: Manager context (unused).
+    :type _manager: ``Manager``
+    :param _selection: A Selection object giving selection
+                       criteria for the operation (unused).
+    :type _selection: ``Selection``
+    :param output_fields: a comma-separated list of output fields
+    :param opts: output formatting and control options
+    :param sort_keys: a comma-separated list of sort keys
+    :param data: Optional data for report (unused).
+    :type data: ``NoneType``
+    """
+    output_fields = _expand_fields(_DEFAULT_DIFF_FIELDS, output_fields)
+
+    if data and not isinstance(data, FsDiffResults):
+        raise ValueError("print_diffs(): data value must be FsDiffResults")
+
+    selected = [ReportObj(diff=diff) for diff in data] if data else []
+
+    return _do_print_type(
+        _diff_fields,
+        selected,
+        output_fields=output_fields,
+        opts=opts,
+        sort_keys=sort_keys,
+        title="FsDiffs",
+    )
+
+
 def _generic_list_cmd(cmd_args, select, opts, manager, print_fn, data: object = None):
     """
     Generic list command implementation.
@@ -1689,6 +1894,49 @@ def _diff_cmd(cmd_args):
         print(results.diff(color=color))
 
     return 0
+
+
+def _diffreport_cmd(cmd_args):
+    """
+    Diff Report snapshot set command handler.
+
+    Compare between snapshot sets or the running system.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    options = DiffOptions.from_cmd_args(cmd_args)
+    diff_from = cmd_args.diff_from
+    diff_to = cmd_args.diff_to
+
+    if not cmd_args.options or "help" not in cmd_args.options:
+        if not cmd_args.diff_from or not cmd_args.diff_to:
+            _log_error(
+                "snapm snapset diff: error: the following "
+                "arguments are required: FROM, TO (unless -ohelp)"
+            )
+            return 1
+
+        if diff_from == diff_to:
+            _log_error(
+                "Cannot compare %s to itself.",
+                f"'{diff_from}'" if diff_from != "." else "system root",
+            )
+            return 1
+
+    opts = _report_opts_from_args(cmd_args)
+    select = Selection.from_cmd_args(cmd_args)
+
+    manager = Manager()
+
+    if cmd_args.options and "help" in cmd_args.options:
+        results = None
+    else:
+        results = diff_snapsets(manager, diff_from, diff_to, options)
+        if not options.quiet:
+            print(f"Found {results.total_changes} differences")
+
+    return _generic_list_cmd(cmd_args, select, opts, manager, print_diffs, data=results)
 
 
 def _snapshot_activate_cmd(cmd_args):
@@ -2460,6 +2708,7 @@ ACTIVATE_CMD = "activate"
 DEACTIVATE_CMD = "deactivate"
 AUTOACTIVATE_CMD = "autoactivate"
 DIFF_CMD = "diff"
+DIFFREPORT_CMD = "diffreport"
 ENABLE_CMD = "enable"
 DISABLE_CMD = "disable"
 SHOW_CMD = "show"
@@ -2743,6 +2992,18 @@ def _add_snapset_subparser(type_subparser):
     )
     _add_diff_args(snapset_diff_parser)
     snapset_diff_parser.set_defaults(func=_diff_cmd)
+
+    # snapset diffreport subcommand
+    snapset_diffreport_parser = snapset_subparser.add_parser(
+        DIFFREPORT_CMD,
+        help=(
+            "Generate report of differences between snapshot sets or the "
+            "running system"
+        ),
+    )
+    _add_report_args(snapset_diffreport_parser)
+    _add_diff_args(snapset_diffreport_parser)
+    snapset_diffreport_parser.set_defaults(func=_diffreport_cmd)
 
 
 def _add_snapshot_subparser(type_subparser):
