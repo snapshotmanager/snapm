@@ -88,7 +88,9 @@ from snapm.report import (
     FieldType,
     Report,
 )
-from .fsdiff import DiffOptions, FsDiffer, FsDiffRecord
+from .fsdiff import DiffOptions, FsDiffer, FsDiffResults
+
+DIFF_FORMATS = ["paths", "full", "short", "json", "diff", "tree"]
 
 _log = logging.getLogger(__name__)
 
@@ -720,7 +722,7 @@ def prune_snapset(manager, name, sources):
 # pylint: disable=too-many-branches
 def diff_snapsets(
     manager: Manager, diff_from: str, diff_to: str, options: DiffOptions
-) -> List[FsDiffRecord]:
+) -> FsDiffResults:
     """
     Find differences between snapshot sets or the running system.
 
@@ -758,7 +760,7 @@ def diff_snapsets(
         from_root = manager.mounts.get_sys_mount()
     else:
         mounts = manager.mounts.find_mounts(Selection(name=diff_from))
-        if not mounts:
+        if not mounts or not mounts[0].mounted:
             snapsets = manager.find_snapshot_sets(Selection(name=diff_from))
             if not snapsets:
                 raise SnapmNotFoundError(
@@ -774,7 +776,7 @@ def diff_snapsets(
         to_root = manager.mounts.get_sys_mount()
     else:
         mounts = manager.mounts.find_mounts(Selection(name=diff_to))
-        if not mounts:
+        if not mounts or not mounts[0].mounted:
             snapsets = manager.find_snapshot_sets(Selection(name=diff_to))
             if not snapsets:
                 raise SnapmNotFoundError(f"Cannot find snapshot set named '{diff_to}'")
@@ -787,17 +789,12 @@ def diff_snapsets(
     fsd = FsDiffer(manager, options=options)
 
     try:
-        diffs = fsd.compare_roots(from_root, to_root)
-    except (KeyboardInterrupt, SystemExit, BrokenPipeError):
-        _log_info("Interrupted.")
-        raise
-
-    if did_from_mount:
-        manager.mounts.umount(from_snapset)
-    if did_to_mount:
-        manager.mounts.umount(to_snapset)
-
-    return diffs
+        return fsd.compare_roots(from_root, to_root)
+    finally:
+        if did_from_mount:
+            manager.mounts.umount(from_snapset)
+        if did_to_mount:
+            manager.mounts.umount(to_snapset)
 
 
 def show_snapshots(manager, selection=None, json=False):
@@ -1629,6 +1626,71 @@ def _shell_cmd(cmd_args):
     return _exec_cmd(cmd_args)
 
 
+# pylint: disable=too-many-locals
+def _diff_cmd(cmd_args):
+    """
+    Diff snapshot set command handler.
+
+    Compare between snapshot sets or the running system.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    options = DiffOptions.from_cmd_args(cmd_args)
+    diff_from = cmd_args.diff_from
+    diff_to = cmd_args.diff_to
+    output_format = cmd_args.output_format
+    pretty = cmd_args.pretty
+    color = cmd_args.color
+
+    if not cmd_args.diff_from or not cmd_args.diff_to:
+        _log_error(
+            "snapm snapset diff: error: the following "
+            "arguments are required: FROM, TO"
+        )
+        return 1
+
+    if diff_from == diff_to:
+        _log_error(
+            "Cannot compare %s to itself.",
+            f"'{diff_from}'" if diff_from != "." else "system root",
+        )
+        return 1
+
+    if output_format not in DIFF_FORMATS:
+        # Belts and braces: should be unreachable since ArgumentParser validates
+        # that `output_format` is a member of DIFF_FORMATS.
+        _log_error("Unknown diff format: %s", cmd_args.output_format)
+        return 1
+
+    # Scaffolding until all four are implemented: remove before merge.
+    if output_format not in DIFF_FORMATS[0:5]:
+        _log_error("Unsupported diff format: %s", output_format)
+        return 1
+
+    # Initialise Manager context for mounts and snapshot set discover.
+    manager = Manager()
+
+    results = diff_snapsets(manager, diff_from, diff_to, options)
+    if not options.quiet:
+        print(f"Found {results.total_changes} differences")
+
+    if output_format == "paths":
+        print("\n".join(results.paths()))
+    elif output_format == "full":
+        print(results.full())
+    elif output_format == "short":
+        print(results.short())
+    elif output_format == "json":
+        print(results.json(pretty=pretty))
+    elif output_format == "diff":
+        if not options.quiet:
+            print(f"Found {results.content_changes} content differences")
+        print(results.diff(color=color))
+
+    return 0
+
+
 def _snapshot_activate_cmd(cmd_args):
     """
     Activate snapshot command handler.
@@ -2248,6 +2310,143 @@ def _add_schedule_config_arg(parser):
     )
 
 
+def _add_diff_args(parser):
+    parser.add_argument(
+        "-t",
+        "--ignore-timestamps",
+        action="store_true",
+        help="Ignore timestamps when computing diffs",
+    )
+    parser.add_argument(
+        "-p",
+        "--ignore-permissions",
+        action="store_true",
+        help="Ignore permissions when computing diffs",
+    )
+    parser.add_argument(
+        "-w",
+        "--ignore-ownership",
+        action="store_true",
+        help="Ignore ownership when computing diffs",
+    )
+    parser.add_argument(
+        "-c",
+        "--content-only",
+        action="store_true",
+        help="Only consider content changes",
+    )
+    parser.add_argument(
+        "--include-system-dirs",
+        action="store_true",
+        help="Include system directories in diff comparisons",
+    )
+    parser.add_argument(
+        "-C",
+        "--no-content-diff",
+        dest="include_content_diffs",
+        action="store_false",
+        help="Do not generate content diffs for detected file modifications",
+    )
+    parser.add_argument(
+        "-f",
+        "--file-types",
+        dest="include_file_type",
+        action="store_true",
+        help="Generate file type information using libmagic",
+    )
+    parser.add_argument(
+        "-F",
+        "--follow-symlinks",
+        action="store_true",
+        help="Follow symlinks when walking file system trees",
+    )
+    parser.add_argument(
+        "-m",
+        "--max-file-size",
+        type=int,
+        default=0,
+        help="Maximum file size for comparisons (0=unlimited)",
+    )
+    parser.add_argument(
+        "-d",
+        "--max-diff-size",
+        type=int,
+        dest="max_content_diff_size",
+        default=2**20,
+        help="Maximum file size for generating content diffs (default: 1MiB)",
+    )
+    parser.add_argument(
+        "-H",
+        "--max-hash-size",
+        type=int,
+        dest="max_content_hash_size",
+        default=2**20,
+        help="Maximum file size for generating content hashes (default: 1MiB)",
+    )
+    parser.add_argument(
+        "-i",
+        "--include-pattern",
+        type=str,
+        action="append",
+        metavar="PATTERN",
+        dest="file_patterns",
+        default=[],
+        help="File patterns to include (glob notation)",
+    )
+    parser.add_argument(
+        "-x",
+        "--exclude-pattern",
+        type=str,
+        action="append",
+        metavar="PATTERN",
+        dest="exclude_patterns",
+        default=[],
+        help="File patterns to exclude (glob notation)",
+    )
+    parser.add_argument(
+        "-s",
+        "--start-path",
+        type=str,
+        metavar="PATH",
+        dest="from_path",
+        help="Start traversal from PATH",
+    )
+    parser.add_argument(
+        "-P",
+        "--pretty",
+        action="store_true",
+        help="Pretty print output if supported by output format",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Do not output progress or status information",
+    )
+    colors = ["auto", "never", "always"]
+    parser.add_argument(
+        "--color",
+        type=str,
+        choices=colors,
+        default=colors[0],
+        help=f"Enable colored diff output ({', '.join(colors)})",
+    )
+    parser.add_argument(
+        "diff_from",
+        type=str,
+        metavar="FROM",
+        nargs="?",
+        help="Compare from snapshot set name or '.' for running system",
+    )
+    parser.add_argument(
+        "diff_to",
+        type=str,
+        metavar="TO",
+        nargs="?",
+        help="Compare to snapshot set name or '.' for running system",
+    )
+
+
 CREATE_CMD = "create"
 CREATE_SCHEDULED_CMD = "create-scheduled"
 DELETE_CMD = "delete"
@@ -2260,6 +2459,7 @@ PRUNE_CMD = "prune"
 ACTIVATE_CMD = "activate"
 DEACTIVATE_CMD = "deactivate"
 AUTOACTIVATE_CMD = "autoactivate"
+DIFF_CMD = "diff"
 ENABLE_CMD = "enable"
 DISABLE_CMD = "disable"
 SHOW_CMD = "show"
@@ -2526,6 +2726,23 @@ def _add_snapset_subparser(type_subparser):
         help="The name of the snapshot set in which to start the shell",
     )
     snapset_shell_parser.set_defaults(func=_shell_cmd)
+
+    # snapset diff subcommand
+    snapset_diff_parser = snapset_subparser.add_parser(
+        DIFF_CMD,
+        help="Compare between snapshot sets or the running system",
+    )
+    snapset_diff_parser.add_argument(
+        "-o",
+        "--output-format",
+        type=str,
+        metavar="FORMAT",
+        choices=DIFF_FORMATS,
+        default=DIFF_FORMATS[0],
+        help=f"Output format for diff data ({', '.join(DIFF_FORMATS)})",
+    )
+    _add_diff_args(snapset_diff_parser)
+    snapset_diff_parser.set_defaults(func=_diff_cmd)
 
 
 def _add_snapshot_subparser(type_subparser):
