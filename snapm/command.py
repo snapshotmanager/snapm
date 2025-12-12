@@ -1734,6 +1734,27 @@ def _diff_cmd(cmd_args):
     return 0
 
 
+def _diffreport_cmd(cmd_args):
+    """
+    Diff Report snapshot set command handler.
+
+    Compare between snapshot sets or the running system.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    diff_from = cmd_args.diff_from
+    diff_to = cmd_args.diff_to
+    if diff_from == diff_to:
+        _log_error(
+            "Cannot compare %s to itself.",
+            f"'{diff_from}'" if diff_from != "." else "system root",
+        )
+        return 1
+    _log_error("diffreport is not implemented yet.")
+    return 1
+
+
 def _snapshot_activate_cmd(cmd_args):
     """
     Activate snapshot command handler.
@@ -2493,6 +2514,7 @@ ACTIVATE_CMD = "activate"
 DEACTIVATE_CMD = "deactivate"
 AUTOACTIVATE_CMD = "autoactivate"
 DIFF_CMD = "diff"
+DIFFREPORT_CMD = "diffreport"
 ENABLE_CMD = "enable"
 DISABLE_CMD = "disable"
 SHOW_CMD = "show"
@@ -2776,6 +2798,18 @@ def _add_snapset_subparser(type_subparser):
     )
     _add_diff_args(snapset_diff_parser)
     snapset_diff_parser.set_defaults(func=_diff_cmd)
+
+    # snapset diffreport subcommand
+    snapset_diffreport_parser = snapset_subparser.add_parser(
+        DIFFREPORT_CMD,
+        help=(
+            "Generate report of differences between snapshot sets or the "
+            "running system"
+        ),
+    )
+    _add_report_args(snapset_diffreport_parser)
+    _add_diff_args(snapset_diffreport_parser)
+    snapset_diffreport_parser.set_defaults(func=_diffreport_cmd)
 
 
 def _add_snapshot_subparser(type_subparser):
