@@ -88,6 +88,7 @@ from snapm.report import (
     FieldType,
     Report,
 )
+from .fsdiff import DiffOptions, FsDiffer, FsDiffRecord
 
 _log = logging.getLogger(__name__)
 
@@ -714,6 +715,89 @@ def prune_snapset(manager, name, sources):
     :returns: A ``SnapshotSet`` object representing the pruned snapshot set
     """
     return manager.split_snapshot_set(name, None, sources)
+
+
+# pylint: disable=too-many-branches
+def diff_snapsets(
+    manager: Manager, diff_from: str, diff_to: str, options: DiffOptions
+) -> List[FsDiffRecord]:
+    """
+    Find differences between snapshot sets or the running system.
+
+    Use the difference engine to compare two snapshot sets or a snapshot set
+    and the running system.
+
+    The reserved name '.' is used to reference the running system in either
+    ``diff_from`` or ``diff_to``.
+
+    :param manager: The ``Manager`` instance to use.
+    :type manager: ``Manager``
+    :param diff_from: The name of the snapshot set (or '.' for the running
+                      system) to use as the left side of the comparison.
+    :type diff_from: ``str``
+    :param diff_to: The name of the snapshot set (or '.' for the running
+                      system) to use as the right side of the comparison.
+    :type diff_to: ``str``
+    :param options: Options controlling the comparison.
+    :type options: ``DiffOptions``
+    :returns: A list of file system diff records.
+    :rtype: ``FsDiffResults``
+    """
+    if diff_from == diff_to:
+        target = f"'{diff_from}'" if diff_from != "." else "system root"
+        raise SnapmArgumentError(
+            f"Cannot compare {target} to itself.",
+        )
+
+    did_from_mount = False
+    did_to_mount = False
+    from_snapset = None
+    to_snapset = None
+
+    if diff_from == ".":
+        from_root = manager.mounts.get_sys_mount()
+    else:
+        mounts = manager.mounts.find_mounts(Selection(name=diff_from))
+        if not mounts:
+            snapsets = manager.find_snapshot_sets(Selection(name=diff_from))
+            if not snapsets:
+                raise SnapmNotFoundError(
+                    f"Cannot find snapshot set named '{diff_from}'"
+                )
+            from_snapset = snapsets[0]
+            from_root = manager.mounts.mount(from_snapset)
+            did_from_mount = True
+        else:
+            from_root = mounts[0]
+
+    if diff_to == ".":
+        to_root = manager.mounts.get_sys_mount()
+    else:
+        mounts = manager.mounts.find_mounts(Selection(name=diff_to))
+        if not mounts:
+            snapsets = manager.find_snapshot_sets(Selection(name=diff_to))
+            if not snapsets:
+                raise SnapmNotFoundError(f"Cannot find snapshot set named '{diff_to}'")
+            to_snapset = snapsets[0]
+            to_root = manager.mounts.mount(to_snapset)
+            did_to_mount = True
+        else:
+            to_root = mounts[0]
+
+    fsd = FsDiffer(manager, options=options)
+
+    try:
+        diffs = fsd.compare_roots(from_root, to_root)
+    except (KeyboardInterrupt, SystemExit, BrokenPipeError):
+        _log_info("Interrupted.")
+        raise
+
+    if did_from_mount:
+        manager.mounts.umount(from_snapset)
+    if did_to_mount:
+        manager.mounts.umount(to_snapset)
+
+    return diffs
 
 
 def show_snapshots(manager, selection=None, json=False):
