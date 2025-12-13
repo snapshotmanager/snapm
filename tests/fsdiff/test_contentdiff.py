@@ -6,7 +6,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 import unittest
-from unittest.mock import patch, mock_open
+from unittest.mock import patch, mock_open, MagicMock
 import tempfile
 import json
 import os
@@ -120,11 +120,13 @@ class TestContentDiff(unittest.TestCase):
         old_entry = make_entry("/old.txt")
         new_entry = make_entry("/new.txt")
 
-        # Mock open to raise OSError
-        with patch("builtins.open", side_effect=OSError("Read error")):
-            diff = self.manager.generate_content_diff(
-                Path("/old.txt"), Path("/new.txt"), old_entry, new_entry
-            )
+        with patch("pathlib.Path.exists", autospec=True) as mock_exists:
+            mock_exists.return_value = True
+            # Mock open to raise OSError
+            with patch("builtins.open", side_effect=OSError("Read error")):
+                diff = self.manager.generate_content_diff(
+                    Path("/old.txt"), Path("/new.txt"), old_entry, new_entry
+                )
 
         self.assertFalse(diff.has_changes)
         self.assertIn("Error reading text", diff.summary)
@@ -136,15 +138,15 @@ class TestContentDiff(unittest.TestCase):
         new_entry = make_entry("/new.json")
         new_entry.file_type_info = info
 
-        # Mock json.load to raise ValueError (simulating corrupt JSON)
-        # We need to mock open as well to return something valid-ish for the fallback text read
-        with patch("json.load", side_effect=ValueError("Bad JSON")):
-            with patch("builtins.open", mock_open(read_data="bad data")):
-                diff = self.manager.generate_content_diff(
-                    Path("/old.json"), Path("/new.json"), old_entry, new_entry
-                )
+        with patch("pathlib.Path.exists", autospec=True) as mock_exists:
+            # Mock json.load to raise ValueError (simulating corrupt JSON)
+            # We need to mock open as well to return something valid-ish for the fallback text read
+            with patch("json.load", side_effect=ValueError("Bad JSON")):
+                with patch("builtins.open", mock_open(read_data="bad data")):
+                    diff = self.manager.generate_content_diff(
+                        Path("/old.json"), Path("/new.json"), old_entry, new_entry
+                    )
 
-        # Should fall back to unified text diff
         self.assertEqual(diff.diff_type, "unified")
 
     def test_text_diff_encodings(self):
@@ -158,17 +160,25 @@ class TestContentDiff(unittest.TestCase):
         old_entry.file_type_info = None
         new_entry.file_type_info = None
 
-        with patch("builtins.open", mock_open(read_data="content")):
-            diff = differ.generate_diff(Path("/a"), Path("/b"), old_entry, new_entry)
-            self.assertFalse(diff.has_changes)
+        path_a = Path("/a")
+        path_b = Path("/b")
+
+        with patch("pathlib.Path.exists", autospec=True) as mock_exists:
+            mock_exists.return_value = True
+            with patch("builtins.open", mock_open(read_data="content")):
+                diff = differ.generate_diff(path_a, path_b, old_entry, new_entry)
+                self.assertFalse(diff.has_changes)
 
         # Case 2: Explicit encoding in FileTypeInfo
         info = FileTypeInfo("text/plain", "Text", FileTypeCategory.TEXT, encoding="latin-1")
         new_entry.file_type_info = info
 
-        with patch("builtins.open", mock_open(read_data="content")) as m:
-            diff2 = differ.generate_diff(Path("/a"), Path("/b"), old_entry, new_entry)
-            # Verify open was called with encoding
-            m.assert_called_with(Path("/b"), "r", encoding="latin-1", errors="replace")
-        # Optionally verify the diff result
+        with patch("pathlib.Path.exists", autospec=True) as mock_exists:
+            mock_exists.return_value = True
+            with patch("builtins.open", mock_open(read_data="content")) as m:
+                diff2 = differ.generate_diff(Path("/a"), Path("/b"), old_entry, new_entry)
+                # Verify open was called with encoding
+                m.assert_called_with(Path("/b"), "r", encoding="latin-1", errors="replace")
+
+        # Verify the diff result
         self.assertFalse(diff2.has_changes)  # Same content

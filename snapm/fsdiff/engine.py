@@ -354,7 +354,7 @@ class DiffEngine:
             else changes
         )
 
-    # pylint: disable=too-many-locals,too-many-branches
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     def compute_diff(
         self,
         tree_a: Dict[str, FsEntry],
@@ -401,11 +401,60 @@ class DiffEngine:
             if entry_a is None:
                 # File added in tree_b
                 diff_record = FsDiffRecord(path, DiffType.ADDED, new_entry=entry_b)
+                changes = self.change_detector.detect_added(entry_b, options)
+
+                # Optionally restrict to content-only changes.
+                effective_changes = self._effective_changes(changes, options)
+
+                for change in effective_changes:
+                    diff_record.add_change(change)
+
+                # Generate content diff if requested, appropriate, and within size limits
+                if options.include_content_diffs and entry_b.is_file:
+                    within_limit = (
+                        options.max_content_diff_size <= 0
+                        or entry_b.size <= options.max_content_diff_size
+                    )
+                    if within_limit:
+                        content_diff = self.content_differ.generate_content_diff(
+                            None,
+                            entry_b.full_path,
+                            None,
+                            entry_b,
+                        )
+                        if content_diff:
+                            diff_record.set_content_diff(content_diff)
+
                 diffs.append(diff_record)
 
             elif entry_b is None:
                 # File removed from tree_a
                 diff_record = FsDiffRecord(path, DiffType.REMOVED, old_entry=entry_a)
+
+                changes = self.change_detector.detect_removed(entry_a, options)
+
+                # Optionally restrict to content-only changes.
+                effective_changes = self._effective_changes(changes, options)
+
+                for change in effective_changes:
+                    diff_record.add_change(change)
+
+                # Generate content diff if requested, appropriate, and within size limits
+                if options.include_content_diffs and entry_a.is_file:
+                    within_limit = (
+                        options.max_content_diff_size <= 0
+                        or entry_a.size <= options.max_content_diff_size
+                    )
+                    if within_limit:
+                        content_diff = self.content_differ.generate_content_diff(
+                            entry_a.full_path,
+                            None,
+                            entry_a,
+                            None,
+                        )
+                        if content_diff:
+                            diff_record.set_content_diff(content_diff)
+
                 diffs.append(diff_record)
 
             else:

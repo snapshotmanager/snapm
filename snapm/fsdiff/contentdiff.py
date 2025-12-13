@@ -143,19 +143,23 @@ class ContentDifferBase(ABC):
 
     @abstractmethod
     def generate_diff(
-        self, old_path: Path, new_path: Path, old_entry: FsEntry, new_entry: FsEntry
+        self,
+        old_path: Optional[Path],
+        new_path: Optional[Path],
+        old_entry: Optional[FsEntry],
+        new_entry: Optional[FsEntry],
     ) -> ContentDiff:
         """
         Generate content diff between two files.
 
         :param old_path: ``Path`` describing the original path to diff.
-        :type old_path: ``Path``
+        :type old_path: ``Optional[Path]``
         :param new_path: ``Path`` describing the updated path to diff.
-        :type new_path: ``Path``
+        :type new_path: ``Optional[Path]``
         :param old_entry: The original ``FsEntry`` to diff.
-        :type old_entry: ``FsEntry``
+        :type old_entry: ``Optional[FsEntry]``
         :param new_entry: The updated ``FsEntry`` to diff.
-        :type new_entry: ``FsEntry``
+        :type new_entry: ``Optional[FsEntry]``
         :returns: A diff of the two entries.
         :rtype: ``ContentDiff``
         """
@@ -188,38 +192,57 @@ class TextContentDiffer(ContentDifferBase):
         return file_type_info.is_text_like
 
     def generate_diff(
-        self, old_path: Path, new_path: Path, old_entry: FsEntry, new_entry: FsEntry
+        self,
+        old_path: Optional[Path],
+        new_path: Optional[Path],
+        old_entry: Optional[FsEntry],
+        new_entry: Optional[FsEntry],
     ) -> ContentDiff:
         """
         Generate unified diff for text files.
 
         :param old_path: ``Path`` describing the original path to diff.
-        :type old_path: ``Path``
+        :type old_path: ``Optional[Path]``
         :param new_path: ``Path`` describing the updated path to diff.
-        :type new_path: ``Path``
+        :type new_path: ``Optional[Path]``
         :param old_entry: The original ``FsEntry`` to diff.
-        :type old_entry: ``FsEntry``
+        :type old_entry: ``Optional[FsEntry]``
         :param new_entry: The updated ``FsEntry`` to diff.
-        :type new_entry: ``FsEntry``
+        :type new_entry: ``Optional[FsEntry]``
         :returns: A diff of the two entries.
         :rtype: ``ContentDiff``
         """
         try:
-            file_type_info = new_entry.file_type_info or old_entry.file_type_info
-            encoding = (file_type_info.encoding if file_type_info else None) or "utf-8"
+            file_type_info = (
+                new_entry.file_type_info
+                if new_entry
+                else old_entry.file_type_info if old_entry else None
+            )
 
-            with open(old_path, "r", encoding=encoding, errors="replace") as f:
-                old_lines = f.readlines()
-            with open(new_path, "r", encoding=encoding, errors="replace") as f:
-                new_lines = f.readlines()
+            if file_type_info and file_type_info.mime_type != "inode/x-empty":
+                encoding = file_type_info.encoding or "utf8"
+            else:
+                encoding = "utf8"
+
+            if old_path and old_path.exists():
+                with open(old_path, "r", encoding=encoding, errors="replace") as f:
+                    old_lines = f.readlines()
+            else:
+                old_lines = []
+
+            if new_path and new_path.exists():
+                with open(new_path, "r", encoding=encoding, errors="replace") as f:
+                    new_lines = f.readlines()
+            else:
+                new_lines = []
 
             diff_lines = list(
                 difflib.unified_diff(
                     old_lines,
                     new_lines,
-                    fromfile=str(old_path),
-                    tofile=str(new_path),
-                    lineterm="",
+                    fromfile=str(old_path) if old_path else "/dev/null",
+                    tofile=str(new_path) if new_path else "/dev/null",
+                    lineterm="\n",
                 )
             )
 
@@ -297,29 +320,55 @@ class JsonContentDiffer(ContentDifferBase):
         return file_type_info.mime_type.startswith("application/json")
 
     def generate_diff(
-        self, old_path: Path, new_path: Path, old_entry: FsEntry, new_entry: FsEntry
+        self,
+        old_path: Optional[Path],
+        new_path: Optional[Path],
+        old_entry: Optional[FsEntry],
+        new_entry: Optional[FsEntry],
     ) -> ContentDiff:
         """
         Generate structured JSON diff.
 
         :param old_path: ``Path`` describing the original path to diff.
-        :type old_path: ``Path``
+        :type old_path: ``Optional[Path]``
         :param new_path: ``Path`` describing the updated path to diff.
-        :type new_path: ``Path``
+        :type new_path: ``Optional[Path]``
         :param old_entry: The original ``FsEntry`` to diff.
-        :type old_entry: ``FsEntry``
+        :type old_entry: ``Optional[FsEntry]``
         :param new_entry: The updated ``FsEntry`` to diff.
-        :type new_entry: ``FsEntry``
+        :type new_entry: ``Optional[FsEntry]``
         :returns: A diff of the two entries.
         :rtype: ``ContentDiff``
         """
+        if not old_path or not new_path:
+            # Added/removed file - fall back to text diff
+            return TextContentDiffer().generate_diff(
+                old_path, new_path, old_entry, new_entry
+            )
+
         try:
-            file_type_info = new_entry.file_type_info or old_entry.file_type_info
-            encoding = (file_type_info.encoding if file_type_info else None) or "utf-8"
-            with open(old_path, "r", encoding=encoding) as f:
-                old_data = json.load(f)
-            with open(new_path, "r", encoding=encoding) as f:
-                new_data = json.load(f)
+            file_type_info = (
+                new_entry.file_type_info
+                if new_entry
+                else old_entry.file_type_info if old_entry else None
+            )
+
+            if file_type_info and file_type_info.mime_type != "inode/x-empty":
+                encoding = file_type_info.encoding or "utf8"
+            else:
+                encoding = "utf8"
+
+            if old_path and old_path.exists():
+                with open(old_path, "r", encoding=encoding, errors="replace") as f:
+                    old_data = json.load(f)
+            else:
+                old_data = {}
+
+            if new_path and new_path.exists():
+                with open(new_path, "r", encoding=encoding, errors="replace") as f:
+                    new_data = json.load(f)
+            else:
+                new_data = {}
 
             # Use a JSON diff library like jsondiff if available
             # For now, fall back to text diff of pretty-printed JSON
@@ -330,8 +379,8 @@ class JsonContentDiffer(ContentDifferBase):
                 difflib.unified_diff(
                     old_pretty.splitlines(keepends=True),
                     new_pretty.splitlines(keepends=True),
-                    fromfile=str(old_path),
-                    tofile=str(new_path),
+                    fromfile=str(old_path) if old_path else "/dev/null",
+                    tofile=str(new_path) if new_path else "/dev/null",
                     lineterm="",
                 )
             )
@@ -403,29 +452,45 @@ class BinaryContentDiffer(ContentDifferBase):
         return file_type_info.category in self.binary_types
 
     def generate_diff(
-        self, _old_path: Path, _new_path: Path, old_entry: FsEntry, new_entry: FsEntry
+        self,
+        _old_path: Optional[Path],
+        _new_path: Optional[Path],
+        old_entry: Optional[FsEntry],
+        new_entry: Optional[FsEntry],
     ) -> ContentDiff:
         """
         Generate binary diff summary.
 
         :param _old_path: ``Path`` describing the original path to diff
                          (unused).
-        :type _old_path: ``Path``
+        :type _old_path: ``Optional[Path]``
         :param _new_path: ``Path`` describing the updated path to diff
                          (unused).
-        :type _new_path: ``Path``
+        :type _new_path: ``Optional[Path]``
         :param old_entry: The original ``FsEntry`` to diff.
-        :type old_entry: ``FsEntry``
+        :type old_entry: ``Optional[FsEntry]``
         :param new_entry: The updated ``FsEntry`` to diff.
-        :type new_entry: ``FsEntry``
+        :type new_entry: ``Optional[FsEntry]``
         :returns: A diff of the two entries.
         :rtype: ``ContentDiff``
         """
         content_diff = ContentDiff("binary")
 
         # For binary files, just report size differences and hash changes
-        size_diff = new_entry.size - old_entry.size
-        hash_changed = old_entry.content_hash != new_entry.content_hash
+        if new_entry and old_entry:
+            size_diff = new_entry.size - old_entry.size
+        elif new_entry:
+            size_diff = new_entry.size
+        elif old_entry:
+            size_diff = -old_entry.size
+        else:
+            size_diff = 0
+
+        hash_changed = (
+            old_entry.content_hash != new_entry.content_hash
+            if (old_entry and new_entry)
+            else True
+        )
 
         # Consider any size or hash change as a content change.
         has_changes = size_diff != 0 or hash_changed
@@ -496,32 +561,43 @@ class ContentDifferManager:
         return BinaryContentDiffer()
 
     def generate_content_diff(
-        self, old_path: Path, new_path: Path, old_entry: FsEntry, new_entry: FsEntry
+        self,
+        old_path: Optional[Path],
+        new_path: Optional[Path],
+        old_entry: Optional[FsEntry],
+        new_entry: Optional[FsEntry],
     ) -> Optional[ContentDiff]:
         """
         Generate content diff using appropriate differ.
 
         :param old_path: ``Path`` describing the original path to diff.
-        :type old_path: ``Path``
+        :type old_path: ``Optional[Path]``
         :param new_path: ``Path`` describing the updated path to diff.
-        :type new_path: ``Path``
+        :type new_path: ``Optional[Path]``
         :param old_entry: The original ``FsEntry`` to diff.
-        :type old_entry: ``FsEntry``
+        :type old_entry: ``Optional[FsEntry]``
         :param new_entry: The updated ``FsEntry`` to diff.
-        :type new_entry: ``FsEntry``
+        :type new_entry: ``Optional[FsEntry]``
         :returns: A diff of the two entries.
         :rtype: ``Optional[ContentDiff]``
         """
 
         # Only generate content diffs for files
-        if not (old_entry.is_file and new_entry.is_file):
+        if not ((old_entry and old_entry.is_file) or (new_entry and new_entry.is_file)):
             return None
 
         # Skip if no file type info available
-        if not (new_entry.file_type_info or old_entry.file_type_info):
+        if not (
+            (new_entry and new_entry.file_type_info)
+            or (old_entry and old_entry.file_type_info)
+        ):
             return None
 
-        file_type_info = new_entry.file_type_info or old_entry.file_type_info
+        file_type_info = (
+            new_entry.file_type_info
+            if new_entry
+            else old_entry.file_type_info if old_entry else None
+        )
 
         differ = self.get_differ_for_file(file_type_info)
         return differ.generate_diff(old_path, new_path, old_entry, new_entry)
