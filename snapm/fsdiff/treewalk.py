@@ -104,7 +104,7 @@ class FsEntry:
         #: File size returned by ``stat()``
         self.size: int = stat_info.st_size
         #: File modification time returned by ``stat()``
-        self.mtime: int = stat_info.st_mtime
+        self.mtime: float = stat_info.st_mtime
         #: File owner returned by ``stat()``
         self.uid: int = stat_info.st_uid
         #: File group returned by ``stat()``
