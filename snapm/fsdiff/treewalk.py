@@ -124,14 +124,14 @@ class FsEntry:
                     )
                 #: True if symlink target not found
                 self.broken_symlink = not os.path.exists(target_for_check)
-                #: Extended attributes as ``Dict[str, bytearray]``
-                self.xattrs: Dict[str, bytearray] = _get_xattrs(path, False)
+                #: Extended attributes as ``Dict[str, bytes]``
+                self.xattrs: Dict[str, bytes] = _get_xattrs(path, False)
             else:
                 #: The symbolic link target
                 self.symlink_target = None
                 #: True if symlink target not found or link vanished
                 self.broken_symlink = True
-                #: Extended attributes as ``Dict[str, bytearray]``
+                #: Extended attributes as ``Dict[str, bytes]``
                 self.xattrs = {}
         else:
             #: The symbolic link target: ``None`` for non-symlinks
