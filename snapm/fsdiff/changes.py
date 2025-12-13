@@ -109,6 +109,270 @@ class ChangeDetector:
     """
 
     # pylint: disable=too-many-branches
+    def detect_added(
+        self,
+        new_entry: FsEntry,
+        options: DiffOptions,
+    ) -> List[FileChange]:
+        """
+        Detect all changes for a newly added file.
+
+        :param new_entry: The updated file system entry.
+        :type new_entry: ``FsEntry``
+        :param options: Change detection options.
+        :type options: ``DiffOptions``
+        :returns: A list of changes to the file system entry.
+        :rtype: ``List[FileChange]``
+        """
+        changes = []
+
+        _log_debug_fsdiff("Detecting changes for added file B:%s", new_entry.path)
+
+        # If content_only is set, skip all metadata comparisons
+        if options.content_only:
+            # Content changes (for regular files)
+            if new_entry.is_file:
+                _log_debug_fsdiff(
+                    "Detected content-only change (added %s)",
+                    f"{new_entry.content_hash[0:16] if new_entry.content_hash else ''}",
+                )
+                changes.append(
+                    FileChange(
+                        ChangeType.CONTENT,
+                        "",
+                        new_entry.content_hash,
+                        "content hash changed",
+                    )
+                )
+            return changes
+
+        # Content changes (for regular files)
+        if new_entry.is_file:
+            _log_debug_fsdiff(
+                "Detected content change (added %s)",
+                f"{new_entry.content_hash[0:16] if new_entry.content_hash else ''}",
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.CONTENT,
+                    "",
+                    new_entry.content_hash,
+                    "content hash changed",
+                )
+            )
+
+        # Permission changes
+        if not options.ignore_permissions:
+            new_perms = stat.S_IMODE(new_entry.mode)
+            _log_debug_fsdiff(
+                "Detected mode change (added 0o%o)",
+                new_perms,
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.PERMISSIONS,
+                    "0o0",
+                    oct(new_perms),
+                    f"mode changed from 0o0 to {oct(new_perms)}",
+                )
+            )
+
+        # Ownership changes
+        if not options.ignore_ownership:
+            _log_debug_fsdiff(
+                "Detected ownership change (added %d:%d)",
+                new_entry.uid,
+                new_entry.gid,
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.OWNERSHIP,
+                    "none:none",
+                    f"{new_entry.uid}:{new_entry.gid}",
+                    "owner changed",
+                )
+            )
+
+        # Symlink target changes
+        if new_entry.is_symlink:
+            _log_debug_fsdiff(
+                "Detected symlink target change (added '%s')",
+                new_entry.symlink_target,
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.SYMLINK_TARGET,
+                    "",
+                    new_entry.symlink_target,
+                    "symlink target changed",
+                )
+            )
+
+        # Timestamp changes
+        if not options.ignore_timestamps:
+            _log_debug_fsdiff(
+                "Detected mtime change (added '%d')",
+                new_entry.mtime,
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.TIMESTAMPS,
+                    "",
+                    str(new_entry.mtime),
+                    "modification time changed",
+                )
+            )
+
+        # Extended attribute changes
+        if new_entry.xattrs:
+            _log_debug_fsdiff(
+                "Detected xattr change (added '%s')",
+                ", ".join(f"{k}:{v}" for k, v in new_entry.xattrs.items()),
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.XATTRS,
+                    "",
+                    str(new_entry.xattrs),
+                    "extended attributes changed",
+                )
+            )
+
+        return changes
+
+    # pylint: disable=too-many-branches
+    def detect_removed(
+        self,
+        old_entry: FsEntry,
+        options: DiffOptions,
+    ) -> List[FileChange]:
+        """
+        Detect all changes for a removed file.
+
+        :param old_entry: The updated file system entry.
+        :type old_entry: ``FsEntry``
+        :param options: Change detection options.
+        :type options: ``DiffOptions``
+        :returns: A list of changes to the file system entry.
+        :rtype: ``List[FileChange]``
+        """
+        changes = []
+
+        _log_debug_fsdiff("Detecting changes for removed file B:%s", old_entry.path)
+
+        # If content_only is set, skip all metadata comparisons
+        if options.content_only:
+            # Content changes (for regular files)
+            if old_entry.is_file:
+                _log_debug_fsdiff(
+                    "Detected content-only change (removed %s)",
+                    f"{old_entry.content_hash[0:16] if old_entry.content_hash else ''}",
+                )
+                changes.append(
+                    FileChange(
+                        ChangeType.CONTENT,
+                        old_entry.content_hash,
+                        "",
+                        "content hash changed",
+                    )
+                )
+            return changes
+
+        # Content changes (for regular files)
+        if old_entry.is_file:
+            _log_debug_fsdiff(
+                "Detected content change (removed %s)",
+                f"{old_entry.content_hash[0:16] if old_entry.content_hash else ''}",
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.CONTENT,
+                    old_entry.content_hash,
+                    "",
+                    "content hash changed",
+                )
+            )
+
+        # Permission changes
+        if not options.ignore_permissions:
+            old_perms = stat.S_IMODE(old_entry.mode)
+            _log_debug_fsdiff(
+                "Detected mode change (removed 0o%o)",
+                old_perms,
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.PERMISSIONS,
+                    oct(old_perms),
+                    "0o0",
+                    f"mode changed from {oct(old_perms)} to 0o0",
+                )
+            )
+
+        # Ownership changes
+        if not options.ignore_ownership:
+            _log_debug_fsdiff(
+                "Detected ownership change (removed %d:%d)",
+                old_entry.uid,
+                old_entry.gid,
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.OWNERSHIP,
+                    f"{old_entry.uid}:{old_entry.gid}",
+                    "none:none",
+                    "owner changed",
+                )
+            )
+
+        # Symlink target changes
+        if old_entry.is_symlink:
+            _log_debug_fsdiff(
+                "Detected symlink target change (removed '%s')",
+                old_entry.symlink_target,
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.SYMLINK_TARGET,
+                    old_entry.symlink_target,
+                    "",
+                    "symlink target changed",
+                )
+            )
+
+        # Timestamp changes
+        if not options.ignore_timestamps:
+            _log_debug_fsdiff(
+                "Detected mtime change (removed '%d')",
+                old_entry.mtime,
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.TIMESTAMPS,
+                    str(old_entry.mtime),
+                    "",
+                    "modification time changed",
+                )
+            )
+
+        # Extended attribute changes
+        if old_entry.xattrs:
+            _log_debug_fsdiff(
+                "Detected xattr change (removed '%s')",
+                ", ".join(f"{k}:{v}" for k, v in old_entry.xattrs.items()),
+            )
+            changes.append(
+                FileChange(
+                    ChangeType.XATTRS,
+                    str(old_entry.xattrs),
+                    "",
+                    "extended attributes changed",
+                )
+            )
+
+        return changes
+
+    # pylint: disable=too-many-branches
     def detect_changes(
         self,
         old_entry: FsEntry,
