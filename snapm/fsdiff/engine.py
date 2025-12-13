@@ -8,7 +8,7 @@
 """
 File system diff engine
 """
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 from collections import defaultdict
 from datetime import datetime
 from enum import Enum
@@ -16,6 +16,7 @@ import logging
 import json
 
 from snapm import SNAPM_SUBSYSTEM_FSDIFF
+from snapm.progress import TermControl
 
 from .changes import ChangeDetector, ChangeType, FileChange
 from .contentdiff import ContentDiff, ContentDifferManager
@@ -323,6 +324,252 @@ class FsDiffRecord:
         return summary
 
 
+def render_unified_diff(record: FsDiffRecord, tc: Optional[TermControl]) -> str:
+    """
+    Render a unified diff for a modified file.
+
+    :param record: The diff record to render.
+    :type record: ``FsDiffRecord``
+    :param tc: An optional ``TermControl`` instance to use for rendering color
+               output.
+    :type tc: ``Optional[TermControl]``
+    :returns: Rendered unified diff string.
+    :rtype: ``str``
+    """
+
+    def _format_timestamp(timestamp: Optional[float]) -> str:
+        """
+        Format human-readable timestamp.
+
+        :param timestamp: A UNIX epoch timestamp.
+        :type timestamp: ``Optional[float]``
+        :returns: Human readable datetime string.
+        :rtype: ``str``
+        """
+        return str(datetime.fromtimestamp(timestamp)) if timestamp is not None else ""
+
+    if not record.has_content_diff:
+        return ""
+
+    if record.content_diff.diff_type not in ("unified", "json"):
+        return ""
+
+    added = record.new_entry and not record.old_entry
+    deleted = record.old_entry and not record.new_entry
+
+    from_path = f"a{record.file_path}"
+    to_path = f"b{record.file_path}"
+
+    header_lines = [f"diff {from_path} {to_path}"]
+
+    if added:
+        header_lines.append(f"new file mode {record.mode_new}")
+    if deleted:
+        header_lines.append(f"deleted file mode {record.mode_old}")
+
+    from_path = from_path if not added else "/dev/null"
+    to_path = to_path if not deleted else "/dev/null"
+
+    lines = [
+        *header_lines,
+        f"--- {from_path}\t{_format_timestamp(record.mtime_old)}",
+        f"+++ {to_path}\t{_format_timestamp(record.mtime_new)}",
+    ]
+
+    def _rstrip_nl(s: str) -> str:
+        return s[:-1] if s.endswith("\n") else s
+
+    if tc:
+        diff_lines = [
+            (
+                (tc.RED + _rstrip_nl(line) + tc.WHITE)
+                if line.startswith("-")
+                else (
+                    (tc.GREEN + _rstrip_nl(line) + tc.WHITE)
+                    if line.startswith("+")
+                    else _rstrip_nl(line)
+                )
+            )
+            for line in record.content_diff.diff_data[2:]
+        ]
+    else:
+        diff_lines = [_rstrip_nl(line) for line in record.content_diff.diff_data[2:]]
+
+    lines.extend(diff_lines)
+
+    # Preserve content exactly; we already stripped only trailing newlines
+    # from content-diff input via _rstrip_nl().
+    return "\n".join(lines)
+
+
+class FsDiffResults:
+    """Container for filesystem diff results with formatting methods."""
+
+    def __init__(self, records: List[FsDiffRecord]):
+        self._records = records
+
+    # List-like interface
+    def __iter__(self) -> Iterator[FsDiffRecord]:
+        """
+        Implement iter(self).
+        """
+        return iter(self._records)
+
+    def __len__(self):
+        """
+        Implement len(self).
+        """
+        return len(self._records)
+
+    def __getitem__(self, index: int) -> FsDiffRecord:
+        """
+        Return self[index]
+
+        :param index: The index to return.
+        :type index: ``int``
+        """
+        return self._records[index]
+
+    # Summary properties
+    @property
+    def total_changes(self) -> int:
+        """
+        Return the total number of changes in thie ``FsDiffResults` instance:
+        equvalent to ``len(self)``.
+
+        :returns: Count of changes.
+        :rtype: ``int``
+        """
+        return len(self)
+
+    @property
+    def content_changes(self) -> int:
+        """
+        Return the number of content changes in thie ``FsDiffResults` instance.
+
+        :returns: Count of changes with content diff.
+        :rtype: ``int``
+        """
+        return len([r for r in self._records if r.has_content_diff])
+
+    @property
+    def added(self) -> List[FsDiffRecord]:
+        """
+        Return added changes in thie ``FsDiffResults` instance.
+
+        :returns: Changes with ``DiffType.ADDED`` type.
+        :rtype: ``int``
+        """
+        return [r for r in self._records if r.diff_type == DiffType.ADDED]
+
+    @property
+    def removed(self) -> List[FsDiffRecord]:
+        """
+        Return removed changes in thie ``FsDiffResults` instance.
+
+        :returns: Changes with ``DiffType.REMOVED`` type.
+        :rtype: ``int``
+        """
+        return [r for r in self._records if r.diff_type == DiffType.REMOVED]
+
+    @property
+    def modified(self) -> List[FsDiffRecord]:
+        """
+        Return modified changes in thie ``FsDiffResults` instance.
+
+        :returns: Changes with ``DiffType.MODIFIED`` type.
+        :rtype: ``int``
+        """
+        return [r for r in self._records if r.diff_type == DiffType.MODIFIED]
+
+    @property
+    def moved(self) -> List[FsDiffRecord]:
+        """
+        Return moved changes in thie ``FsDiffResults` instance.
+
+        :returns: Changes with ``DiffType.MOVED`` type.
+        :rtype: ``int``
+        """
+        return [r for r in self._records if r.diff_type == DiffType.MOVED]
+
+    # Output formats
+    def paths(self) -> List[str]:
+        """
+        Return a list of paths that changed in this ``FsDiffResults``.
+
+        :returns: Path list.
+        :rtype: ``List[str]``
+        """
+        return [record.path for record in self._records]
+
+    def full(self) -> str:
+        """
+        Return a string with full ``FsDiffRecord`` content for this instance.
+
+        :returns: String description of file system changes.
+        :rtype: ``str``
+        """
+        return "\n\n".join(str(record) for record in self._records)
+
+    def short(self) -> str:
+        """
+        Return brief summary of ``FsDiffRecord`` content for this instance.
+
+        :returns: Brief string description of file system changes.
+        :rtype: ``str``
+        """
+        first = True
+        out = ""
+        for record in self._records:
+            summary = (
+                f"\n  Summary: {record.content_diff_summary}"
+                if record.content_diff_summary
+                else ""
+            )
+
+            change_descs = ", ".join(chg.description for chg in record.changes)
+            description = f"\n  Description: {change_descs}" if change_descs else ""
+
+            sep = "" if first else "\n"
+            out += (
+                f"{sep}"
+                f"Path: {record.path}\n  DiffType: {record.diff_type.value}"
+                f"{description}{summary}"
+            )
+            first = False
+        return out
+
+    def json(self, pretty: bool = False) -> str:
+        """
+        Return JSON representation of ``FsDiffRecord`` content for this
+        instance.
+
+        :returns: JSON string description of file system changes.
+        :rtype: ``str``
+        """
+        dicts = [record.to_dict() for record in self._records]
+        return json.dumps(dicts, indent=4 if pretty else None)
+
+    def diff(self, color: str = "auto") -> str:
+        """
+        Return unified diff representation of content changes for this
+        instance.
+
+        :returns: unified diff string description of file system changes.
+        :rtype: ``str``
+        """
+        tc = (
+            TermControl()
+            if color == "auto"
+            else TermControl(force_ansi=True) if color == "always" else None
+        )
+        content_diffs = [r for r in self._records if r.has_content_diff]
+        diffs = [render_unified_diff(diff, tc) for diff in content_diffs]
+        return "\n".join(diffs)
+
+    # def tree(self) -> str:  # Coming later!
+
+
 class DiffEngine:
     """
     Core class for generating fsdiff comparisons.
@@ -360,7 +607,7 @@ class DiffEngine:
         tree_a: Dict[str, FsEntry],
         tree_b: Dict[str, FsEntry],
         options: "DiffOptions" = None,
-    ) -> List[FsDiffRecord]:
+    ) -> FsDiffResults:
         """
         Main diff computation logic.
 
@@ -521,7 +768,7 @@ class DiffEngine:
         # Detect moves/renames
         diffs = self._detect_moves(diffs, tree_a, tree_b, options)
 
-        return diffs
+        return FsDiffResults(diffs)
 
     @staticmethod
     def _is_move_diff(diff, src_path, dest_path):

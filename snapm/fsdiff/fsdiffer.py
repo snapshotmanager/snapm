@@ -8,11 +8,11 @@
 """
 Top-level fsdiff interface.
 """
-from typing import List, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
 from snapm.progress import ProgressBase, TermControl
 
-from .engine import DiffEngine, FsDiffRecord
+from .engine import DiffEngine, FsDiffResults
 from .options import DiffOptions
 from .treewalk import TreeWalker
 
@@ -41,7 +41,7 @@ class FsDiffer:
         self._progress: Optional[ProgressBase] = progress
         self._term_control: Optional[TermControl] = term_control
 
-    def compare_roots(self, mount_a: "Mount", mount_b: "Mount") -> List[FsDiffRecord]:
+    def compare_roots(self, mount_a: "Mount", mount_b: "Mount") -> FsDiffResults:
         """
         Compare two mounted snapshot sets and return list of diff records
         """
@@ -65,13 +65,13 @@ class FsDiffer:
 
         return self.diff_engine.compute_diff(tree_a, tree_b, self.options)
 
-    def compare_snapshots(self, snapshot_a: str, snapshot_b: str) -> List[FsDiffRecord]:
+    def compare_snapshots(self, snapshot_a: str, snapshot_b: str) -> FsDiffResults:
         """Compare two snapshots by name/timestamp"""
         raise NotImplementedError(
             "compare_snapshots not yet implemented"
         )  # pragma: no cover
 
-    def diff_against_live(self, snapshot_mount: "Mount") -> List[FsDiffRecord]:
+    def diff_against_live(self, snapshot_mount: "Mount") -> FsDiffResults:
         """Compare snapshot against current live filesystem"""
         raise NotImplementedError(
             "diff_against_live not yet implemented"
