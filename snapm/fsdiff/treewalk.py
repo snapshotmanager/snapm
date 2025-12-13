@@ -8,7 +8,7 @@
 """
 Tree walking support for fsdiff.
 """
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from hashlib import md5, sha1, sha256, sha512
 from fnmatch import fnmatch
 from pathlib import Path
@@ -161,6 +161,76 @@ class FsEntry:
                 xattr_strs.append(f"{xattr}={value}")
             fse_str += ", ".join(xattr_strs)
         return fse_str
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert this ``FsEntry`` object into a dictionary representation
+        suitable for encoding as JSON.
+
+        :returns: A dictionary mapping this instance's keys to values.
+        :rtype: ``Dict[str, Any]``
+        """
+
+        def _stat_to_dict(st: os.stat_result) -> Dict[str, Any]:
+            """
+            Convert an `os.stat_result` into a dictionary.
+
+            :param st: The stat result to convert.
+            :type st: ``os.stat_result``
+            :returns: A dictionary mapping stat fields to values.
+            :rtype: ``Dict[str, Any]``
+            """
+            return {
+                "st_atime": st.st_atime,
+                "st_atime_ns": st.st_atime_ns,
+                "st_blksize": st.st_blksize,
+                "st_blocks": st.st_blocks,
+                "st_ctime": st.st_ctime,
+                "st_ctime_ns": st.st_ctime_ns,
+                "st_dev": st.st_dev,
+                "st_gid": st.st_gid,
+                "st_ino": st.st_ino,
+                "st_mode": st.st_mode,
+                "st_mtime": st.st_mtime,
+                "st_mtime_ns": st.st_mtime_ns,
+                "st_nlink": st.st_nlink,
+                "st_rdev": st.st_rdev,
+                "st_size": st.st_size,
+                "st_uid": st.st_uid,
+            }
+
+        def _decode_xattr_value(value: bytes) -> str:
+            """
+            Decode extended attribute value to string.
+
+            Try UTF-8 decode first (most xattrs are text), fall back to hex
+            representation for binary data.
+
+            :param value: Raw xattr value bytes
+            :type value: ``bytes``
+            :returns: Decoded string or hex representation
+            """
+            try:
+                # Try UTF-8 decode, strip trailing nulls (common in SELinux labels)
+                return value.rstrip(b"\x00").decode("utf-8")
+            except UnicodeDecodeError:
+                # Binary data - represent as hex string
+                return value.hex()
+
+        return {
+            "path": str(self.path),
+            "full_path": str(self.full_path),
+            "stat": _stat_to_dict(self.stat),
+            "mode": self.stat.st_mode,
+            "size": self.stat.st_size,
+            "mtime": self.stat.st_mtime,
+            "uid": self.stat.st_uid,
+            "gid": self.stat.st_gid,
+            "content_hash": self.content_hash,
+            "symlink_target": self.symlink_target,
+            "broken_symlink": self.broken_symlink,
+            "xattrs": {k: _decode_xattr_value(v) for k, v in self.xattrs.items()},
+        }
 
     @property
     def is_file(self) -> bool:

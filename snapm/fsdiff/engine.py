@@ -8,7 +8,7 @@
 """
 File system diff engine
 """
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from collections import defaultdict
 from datetime import datetime
 from enum import Enum
@@ -186,6 +186,50 @@ class FsDiffRecord:
             f"  {content_diff_summary}"  # no newline (prefixed if set)
         )
         return fsd_str
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert this ``FsDiffRecord`` object into a dictionary representation
+        suitable for encoding as JSON.
+
+        :returns: A dictionary mapping this instance's keys to values.
+        :rtype: ``Dict[str, Any]``
+        """
+        out = {
+            "path": self.path,
+            "diff_type": self.diff_type.value,
+            "file_path": self.file_path,
+            "file_type": self.file_type,
+            "file_category": self.file_category,
+            "size_old": self.size_old,
+            "size_new": self.size_new,
+            "size_delta": self.size_delta,
+            "mode_old": self.mode_old or "",
+            "mode_new": self.mode_new or "",
+            "owner_old": self.owner_old or "",
+            "owner_new": self.owner_new or "",
+            "mtime_old": self.mtime_old,
+            "mtime_new": self.mtime_new,
+            "content_changed": self.content_changed,
+            "metadata_changed": self.metadata_changed,
+            "has_content_diff": self.has_content_diff,
+        }
+        if self.old_entry:
+            out["old_entry"] = self.old_entry.to_dict()
+        if self.new_entry:
+            out["new_entry"] = self.new_entry.to_dict()
+        if self.changes:
+            out["changes"] = [change.to_dict() for change in self.changes]
+        if self.content_diff is not None:
+            out["content_diff"] = self.content_diff.to_dict()
+        if self.moved_from:
+            out["moved_from"] = self.moved_from
+        if self.moved_to:
+            out["moved_to"] = self.moved_to
+        if self.content_diff_summary:
+            out["content_diff_summary"] = self.content_diff_summary
+
+        return out
 
     def _get_file_type(self) -> str:
         """

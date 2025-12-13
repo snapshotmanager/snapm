@@ -8,7 +8,7 @@
 """
 File system entry change detection and classification.
 """
-from typing import List, Optional
+from typing import Dict, List, Optional
 from enum import Enum
 import logging
 import stat
@@ -86,6 +86,21 @@ class FileChange:
             f"new_value: {self.new_value}, "
             f"description: {self.description}"
         )
+
+    def to_dict(self) -> Dict[str, Optional[str]]:
+        """
+        Convert this ``FileChange`` object into a dictionary representation
+        suitable for encoding as JSON.
+
+        :returns: A dictionary mapping this instance's keys to values.
+        :rtype: ``Dict[str, Optional[str]]``
+        """
+        return {
+            "change_type": self.change_type.value,
+            "old_value": self.old_value,
+            "new_value": self.new_value,
+            "description": self.description,
+        }
 
 
 class ChangeDetector:

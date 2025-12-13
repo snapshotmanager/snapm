@@ -8,8 +8,8 @@
 """
 Content-aware diff support.
 """
+from typing import Any, Dict, Optional
 from abc import ABC, abstractmethod
-from typing import Optional
 from pathlib import Path
 import logging
 import difflib
@@ -105,6 +105,24 @@ class ContentDiff:
             f"has_changes: {self.has_changes}, "
             f"error_message: {self.error_message if self.error_message else ''}"
         )
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert this ``ContentDiff`` object into a dictionary representation
+        suitable for encoding as JSON.
+
+        :returns: A dictionary mapping this instance's keys to values.
+        :rtype: ``Dict[str, Any]``
+        """
+        return {
+            "diff_type": self.diff_type,
+            "old_content": self.old_content,
+            "new_content": self.new_content,
+            "diff_data": self.diff_data,
+            "summary": self.summary,
+            "has_changes": self.has_changes,
+            "error_message": self.error_message,
+        }
 
 
 class ContentDifferBase(ABC):
