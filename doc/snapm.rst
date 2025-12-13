@@ -39,6 +39,17 @@ snapm.command module
     :show-inheritance:
 
 
+snapm.progress module
+---------------------
+
+.. automodule:: snapm.progress
+    :members:
+    :exclude-members: __dict__, __module__, __weakref__, __annotations__, __annotate_func__, __annotations_cache__, __dataclass_fields__, __dataclass_params__, __getnewargs__, __match_args__, __new__, __replace__, __slots__, __firstlineno__, __static_attributes__, __hash__
+    :special-members: __init__, __str__, __repr__
+    :undoc-members:
+    :show-inheritance:
+
+
 snapm.report module
 -------------------
 
