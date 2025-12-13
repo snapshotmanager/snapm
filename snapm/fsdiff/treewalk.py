@@ -136,8 +136,10 @@ class FsEntry:
         else:
             #: The symbolic link target: ``None`` for non-symlinks
             self.symlink_target = None
-            #: Extended attributes as ``Dict[str, bytearray]``
-            self.xattrs: Dict[str, bytearray] = _get_xattrs(path, True)
+            #: Not a broken symlink
+            self.broken_symlink = False
+            #: Extended attributes as ``Dict[str, bytes]``
+            self.xattrs: Dict[str, bytes] = _get_xattrs(path, True)
 
         #: An optional instance of ``FileTypeInfo`` describing this path.
         self.file_type_info = file_type_info
