@@ -13,6 +13,7 @@ from collections import defaultdict
 from datetime import datetime
 from enum import Enum
 import logging
+import json
 
 from snapm import SNAPM_SUBSYSTEM_FSDIFF
 
@@ -230,6 +231,18 @@ class FsDiffRecord:
             out["content_diff_summary"] = self.content_diff_summary
 
         return out
+
+    def json(self, pretty=False) -> str:
+        """
+        Return a string representation of this ``FsDiffRecord`` in JSON
+        notation.
+
+        :param pretty: Indent JSON to be human readable.
+        :type pretty: ``bool``
+        :returns: A JSON representation of this instance.
+        :rtype: ``str``
+        """
+        return json.dumps(self.to_dict(), indent=4 if pretty else None)
 
     def _get_file_type(self) -> str:
         """
