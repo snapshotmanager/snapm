@@ -1,6 +1,6 @@
 # Copyright Red Hat
 #
-# snapm/_fsdiff/fsdiffer.py - Snapshot Manager file system differ
+# snapm/fsdiff/fsdiffer.py - Snapshot Manager file system differ
 #
 # This file is part of the snapm project.
 #
@@ -10,7 +10,7 @@ Top-level fsdiff interface.
 """
 from typing import List, Optional, TYPE_CHECKING
 
-from snapm._progress import ProgressBase, TermControl
+from snapm.progress import ProgressBase, TermControl
 
 from .engine import DiffEngine, FsDiffRecord
 from .options import DiffOptions

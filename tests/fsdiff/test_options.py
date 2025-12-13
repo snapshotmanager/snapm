@@ -7,7 +7,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import unittest
 
-from snapm._fsdiff.options import DiffOptions
+from snapm.fsdiff.options import DiffOptions
 
 
 class TestDiffOptions(unittest.TestCase):

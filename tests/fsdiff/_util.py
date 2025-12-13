@@ -8,8 +8,8 @@
 import os
 import stat
 from pathlib import Path
-from snapm._fsdiff.treewalk import FsEntry
-from snapm._fsdiff.filetypes import FileTypeInfo, FileTypeCategory
+from snapm.fsdiff.treewalk import FsEntry
+from snapm.fsdiff.filetypes import FileTypeInfo, FileTypeCategory
 
 def make_entry(
     path_str,

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from io import StringIO
 import curses
 
-from snapm._progress import (
+from snapm.progress import (
     NullProgress,
     NullThrobber,
     Progress,
@@ -49,7 +49,7 @@ class TestTermControl(unittest.TestCase):
         mock_stream = MagicMock()
         mock_stream.isatty.return_value = True
 
-        with patch("snapm._progress.curses") as mock_curses:
+        with patch("snapm.progress.curses") as mock_curses:
             mock_curses.setupterm.side_effect = curses.error("Curses error")
 
             tc = TermControl(term_stream=mock_stream)
@@ -60,7 +60,7 @@ class TestTermControl(unittest.TestCase):
         mock_stream = MagicMock()
         mock_stream.isatty.return_value = True
 
-        with patch("snapm._progress.curses") as mock_curses:
+        with patch("snapm.progress.curses") as mock_curses:
             # Mock capabilities
             mock_curses.tigetnum.side_effect = lambda x: 80 if x == "cols" else 24
             # Return bytes for capability strings
@@ -98,7 +98,7 @@ class TestTermControl(unittest.TestCase):
         mock_stream = MagicMock()
         mock_stream.isatty.return_value = True
 
-        with patch("snapm._progress.curses") as mock_curses:
+        with patch("snapm.progress.curses") as mock_curses:
             mock_curses.setupterm.side_effect = KeyboardInterrupt()
             with self.assertRaises(KeyboardInterrupt):
                 TermControl(term_stream=mock_stream)
@@ -107,14 +107,14 @@ class TestTermControl(unittest.TestCase):
 class TestFlushGuard(unittest.TestCase):
     def test_flush_guard_broken_pipe(self):
         """Test BrokenPipeError handling in flush guard (Lines 265-272)."""
-        from snapm._progress import _flush_with_broken_pipe_guard
+        from snapm.progress import _flush_with_broken_pipe_guard
 
         mock_stream = MagicMock()
         mock_stream.flush.side_effect = BrokenPipeError()
         # Mock fileno to ensure os.dup2 path is taken
         mock_stream.fileno.return_value = 10
 
-        with patch("snapm._progress.os") as mock_os:
+        with patch("snapm.progress.os") as mock_os:
             mock_os.open.return_value = 999
             mock_os.devnull = "/dev/null"
             mock_os.O_WRONLY = 1
@@ -130,7 +130,7 @@ class TestFlushGuard(unittest.TestCase):
 
     def test_flush_guard_no_flush_attr(self):
         """Test flush guard with stream lacking flush method."""
-        from snapm._progress import _flush_with_broken_pipe_guard
+        from snapm.progress import _flush_with_broken_pipe_guard
         mock_stream = MagicMock()
         del mock_stream.flush
         # Should not raise
@@ -568,7 +568,7 @@ class TestProgressFactory(unittest.TestCase):
         mock_stream.encoding = "utf8"
 
         # Mock TermControl inside factory to avoid real curses checks
-        with patch("snapm._progress.TermControl") as mock_tc_cls:
+        with patch("snapm.progress.TermControl") as mock_tc_cls:
             # Ensure the mock instance has required capabilities
             mock_instance = mock_tc_cls.return_value
             mock_instance.CLEAR_EOL = "yes"
@@ -627,7 +627,7 @@ class TestThrobber(unittest.TestCase):
         t = Throbber("H", style="bouncingball", tc=self.mock_tc)
         self.assertIn("[●     ]", t.frames)
 
-    @patch("snapm._progress.datetime")
+    @patch("snapm.progress.datetime")
     def test_lifecycle_flow(self, mock_dt):
         """Test the start -> throb -> end lifecycle with output verification."""
         # Create a mock TermControl with necessary capabilities
@@ -767,7 +767,7 @@ class TestThrobber(unittest.TestCase):
 
 
 class TestSimpleThrobber(unittest.TestCase):
-    @patch("snapm._progress.datetime")
+    @patch("snapm.progress.datetime")
     def test_simple_flow(self, mock_dt):
         stream = StringIO()
         st = SimpleThrobber("Loading", term_stream=stream)

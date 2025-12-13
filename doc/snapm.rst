@@ -122,10 +122,10 @@ snapm.manager.plugins module
     :show-inheritance:
 
 
-snapm._fsdiff.changes module
+snapm.fsdiff.changes module
 ----------------------------
 
-.. automodule:: snapm._fsdiff.changes
+.. automodule:: snapm.fsdiff.changes
     :members:
     :private-members:
     :exclude-members: __dict__, __module__, __weakref__, __annotations__, __annotate_func__, __annotations_cache__, __dataclass_fields__, __dataclass_params__, __getnewargs__, __match_args__, __new__, __replace__, __slots__, __firstlineno__, __static_attributes__, __hash__
@@ -134,10 +134,10 @@ snapm._fsdiff.changes module
     :show-inheritance:
 
 
-snapm._fsdiff.contentdiff module
+snapm.fsdiff.contentdiff module
 --------------------------------
 
-.. automodule:: snapm._fsdiff.contentdiff
+.. automodule:: snapm.fsdiff.contentdiff
     :members:
     :private-members:
     :exclude-members: __dict__, __module__, __weakref__, __annotations__, __annotate_func__, __annotations_cache__, __dataclass_fields__, __dataclass_params__, __getnewargs__, __match_args__, __new__, __replace__, __slots__, __firstlineno__, __static_attributes__, __hash__
@@ -146,10 +146,10 @@ snapm._fsdiff.contentdiff module
     :show-inheritance:
 
 
-snapm._fsdiff.engine module
+snapm.fsdiff.engine module
 ---------------------------
 
-.. automodule:: snapm._fsdiff.engine
+.. automodule:: snapm.fsdiff.engine
     :members:
     :private-members:
     :exclude-members: __dict__, __module__, __weakref__, __annotations__, __annotate_func__, __annotations_cache__, __dataclass_fields__, __dataclass_params__, __getnewargs__, __match_args__, __new__, __replace__, __slots__, __firstlineno__, __static_attributes__, __hash__
@@ -158,10 +158,10 @@ snapm._fsdiff.engine module
     :show-inheritance:
 
 
-snapm._fsdiff.filetypes module
+snapm.fsdiff.filetypes module
 ------------------------------
 
-.. automodule:: snapm._fsdiff.filetypes
+.. automodule:: snapm.fsdiff.filetypes
     :members:
     :private-members:
     :exclude-members: __dict__, __module__, __weakref__, __annotations__, __annotate_func__, __annotations_cache__, __dataclass_fields__, __dataclass_params__, __getnewargs__, __match_args__, __new__, __replace__, __slots__, __firstlineno__, __static_attributes__, __hash__
@@ -170,10 +170,10 @@ snapm._fsdiff.filetypes module
     :show-inheritance:
 
 
-snapm._fsdiff.fsdiffer module
+snapm.fsdiff.fsdiffer module
 -----------------------------
 
-.. automodule:: snapm._fsdiff.fsdiffer
+.. automodule:: snapm.fsdiff.fsdiffer
     :members:
     :private-members:
     :exclude-members: __dict__, __module__, __weakref__, __annotations__, __annotate_func__, __annotations_cache__, __dataclass_fields__, __dataclass_params__, __getnewargs__, __match_args__, __new__, __replace__, __slots__, __firstlineno__, __static_attributes__, __hash__
@@ -182,10 +182,10 @@ snapm._fsdiff.fsdiffer module
     :show-inheritance:
 
 
-snapm._fsdiff.options module
+snapm.fsdiff.options module
 ----------------------------
 
-.. automodule:: snapm._fsdiff.options
+.. automodule:: snapm.fsdiff.options
     :members:
     :private-members:
     :exclude-members: __dict__, __module__, __weakref__, __annotations__, __annotate_func__, __annotations_cache__, __dataclass_fields__, __dataclass_params__, __getnewargs__, __match_args__, __new__, __replace__, __slots__, __firstlineno__, __static_attributes__, __hash__
@@ -194,10 +194,10 @@ snapm._fsdiff.options module
     :show-inheritance:
 
 
-snapm._fsdiff.treewalk module
+snapm.fsdiff.treewalk module
 -----------------------------
 
-.. automodule:: snapm._fsdiff.treewalk
+.. automodule:: snapm.fsdiff.treewalk
     :members:
     :private-members:
     :exclude-members: __dict__, __module__, __weakref__, __annotations__, __annotate_func__, __annotations_cache__, __dataclass_fields__, __dataclass_params__, __getnewargs__, __match_args__, __new__, __replace__, __slots__, __firstlineno__, __static_attributes__, __hash__

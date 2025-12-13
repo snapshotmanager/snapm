@@ -1,6 +1,6 @@
 # Copyright Red Hat
 #
-# snapm/_fsdiff/treewalk.py - Snapshot Manager fs differ tree walk
+# snapm/fsdiff/treewalk.py - Snapshot Manager fs differ tree walk
 #
 # This file is part of the snapm project.
 #
@@ -20,7 +20,7 @@ import os
 
 from snapm import SNAPM_SUBSYSTEM_FSDIFF
 
-from snapm._progress import (
+from snapm.progress import (
     ProgressBase,
     ProgressFactory,
     TermControl,

@@ -25,7 +25,7 @@ import re
 import os
 
 if TYPE_CHECKING:
-    from ._progress import ProgressBase, ThrobberBase
+    from .progress import ProgressBase, ThrobberBase
 
 _log = logging.getLogger("snapm")
 

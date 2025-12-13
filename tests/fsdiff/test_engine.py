@@ -8,10 +8,10 @@
 import unittest
 from unittest.mock import MagicMock
 
-from snapm._fsdiff.changes import ChangeType, FileChange
-from snapm._fsdiff.contentdiff import ContentDiff
-from snapm._fsdiff.engine import DiffEngine, DiffType, FsDiffRecord
-from snapm._fsdiff.options import DiffOptions
+from snapm.fsdiff.changes import ChangeType, FileChange
+from snapm.fsdiff.contentdiff import ContentDiff
+from snapm.fsdiff.engine import DiffEngine, DiffType, FsDiffRecord
+from snapm.fsdiff.options import DiffOptions
 
 from ._util import make_entry
 

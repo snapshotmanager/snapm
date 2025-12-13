@@ -12,10 +12,10 @@ import os
 from unittest.mock import MagicMock, patch
 from pathlib import Path
 
-from snapm._fsdiff.filetypes import FileTypeInfo, FileTypeCategory
-from snapm._fsdiff.fsdiffer import FsDiffer
-from snapm._fsdiff.options import DiffOptions
-from snapm._fsdiff.treewalk import FsEntry, TreeWalker
+from snapm.fsdiff.filetypes import FileTypeInfo, FileTypeCategory
+from snapm.fsdiff.fsdiffer import FsDiffer
+from snapm.fsdiff.options import DiffOptions
+from snapm.fsdiff.treewalk import FsEntry, TreeWalker
 # Mock Mount for typing/usage
 from snapm.manager._mounts import Mount
 
@@ -96,7 +96,7 @@ class TestFsEntry(unittest.TestCase):
 
     def test_fs_entry_type_desc_standard(self):
         """Cover type_desc branches for standard types in treewalk.py."""
-        # snapm/_fsdiff/treewalk.py: standard type_desc branches
+        # snapm.fsdiff/treewalk.py: standard type_desc branches
         # File
         entry_file = make_entry("/file", mode=stat.S_IFREG)
         self.assertEqual(entry_file.type_desc, "file")

@@ -12,12 +12,12 @@ import json
 import os
 from pathlib import Path
 
-from snapm._fsdiff.contentdiff import (
+from snapm.fsdiff.contentdiff import (
     ContentDiff,
     ContentDifferManager,
     TextContentDiffer,
 )
-from snapm._fsdiff.filetypes import FileTypeInfo, FileTypeCategory
+from snapm.fsdiff.filetypes import FileTypeInfo, FileTypeCategory
 
 from ._util import make_entry
 
@@ -149,7 +149,7 @@ class TestContentDiff(unittest.TestCase):
 
     def test_text_diff_encodings(self):
         """Cover encoding logic in TextContentDiffer."""
-        # snapm/_fsdiff/contentdiff.py: encoding branches
+        # snapm.fsdiff/contentdiff.py: encoding branches
         differ = TextContentDiffer()
         old_entry = make_entry("/a.txt")
         new_entry = make_entry("/b.txt")
