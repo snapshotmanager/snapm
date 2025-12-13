@@ -8,10 +8,10 @@
 import unittest
 from unittest.mock import MagicMock
 
-from snapm._fsdiff.changes import ChangeType, FileChange
-from snapm._fsdiff.contentdiff import ContentDiff
-from snapm._fsdiff.engine import DiffEngine, DiffType, FsDiffRecord
-from snapm._fsdiff.options import DiffOptions
+from snapm.fsdiff.changes import ChangeType, FileChange
+from snapm.fsdiff.contentdiff import ContentDiff
+from snapm.fsdiff.engine import DiffEngine, DiffType, FsDiffRecord
+from snapm.fsdiff.options import DiffOptions
 
 from ._util import make_entry
 
@@ -27,7 +27,8 @@ class TestDiffEngine(unittest.TestCase):
         rec.set_content_diff(ContentDiff("unified"))
         s = str(rec)
         self.assertIn("diff_type: modified", s)
-        self.assertIn("content_diff_summary:", s)
+        self.assertIn("metadata_changed:", s)
+        self.assertNotIn("content_diff_summary:", s)
 
     def test_simple_add_remove(self):
         # Tree A: /file1

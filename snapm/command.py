@@ -16,6 +16,7 @@ in the snapm object API.
 """
 from argparse import ArgumentParser, REMAINDER
 from typing import Union, List, Optional
+from datetime import datetime
 from os.path import basename
 from json import dumps
 from uuid import UUID
@@ -88,6 +89,9 @@ from snapm.report import (
     FieldType,
     Report,
 )
+from .fsdiff import DiffOptions, FsDiffer, FsDiffRecord
+
+DIFF_FORMATS = ["paths", "full", "short", "json", "diff", "tree"]
 
 _log = logging.getLogger(__name__)
 
@@ -714,6 +718,142 @@ def prune_snapset(manager, name, sources):
     :returns: A ``SnapshotSet`` object representing the pruned snapshot set
     """
     return manager.split_snapshot_set(name, None, sources)
+
+
+# pylint: disable=too-many-branches
+def diff_snapsets(
+    manager: Manager, diff_from: str, diff_to: str, options: DiffOptions
+) -> List[FsDiffRecord]:
+    """
+    Find differences between snapshot sets or the running system.
+
+    Use the difference engine to compare two snapshot sets or a snapshot set
+    and the running system.
+
+    The reserved name '.' is used to reference the running system in either
+    ``diff_from`` or ``diff_to``.
+
+    :param manager: The ``Manager`` instance to use.
+    :type manager: ``Manager``
+    :param diff_from: The name of the snapshot set (or '.' for the running
+                      system) to use as the left side of the comparison.
+    :type diff_from: ``str``
+    :param diff_to: The name of the snapshot set (or '.' for the running
+                      system) to use as the right side of the comparison.
+    :type diff_to: ``str``
+    :param options: Options controlling the comparison.
+    :type options: ``DiffOptions``
+    :returns: A list of file system diff records.
+    :rtype: ``List[FsDiffRecord]``
+    """
+    if diff_from == diff_to:
+        target = f"'{diff_from}'" if diff_from != "." else "system root"
+        raise SnapmArgumentError(
+            f"Cannot compare {target} to itself.",
+        )
+
+    did_from_mount = False
+    did_to_mount = False
+    from_snapset = None
+    to_snapset = None
+
+    if diff_from == ".":
+        from_root = manager.mounts.get_sys_mount()
+    else:
+        mounts = manager.mounts.find_mounts(Selection(name=diff_from))
+        if not mounts or not mounts[0].mounted:
+            snapsets = manager.find_snapshot_sets(Selection(name=diff_from))
+            if not snapsets:
+                raise SnapmNotFoundError(
+                    f"Cannot find snapshot set named '{diff_from}'"
+                )
+            from_snapset = snapsets[0]
+            from_root = manager.mounts.mount(from_snapset)
+            did_from_mount = True
+        else:
+            from_root = mounts[0]
+
+    if diff_to == ".":
+        to_root = manager.mounts.get_sys_mount()
+    else:
+        mounts = manager.mounts.find_mounts(Selection(name=diff_to))
+        if not mounts or not mounts[0].mounted:
+            snapsets = manager.find_snapshot_sets(Selection(name=diff_to))
+            if not snapsets:
+                raise SnapmNotFoundError(f"Cannot find snapshot set named '{diff_to}'")
+            to_snapset = snapsets[0]
+            to_root = manager.mounts.mount(to_snapset)
+            did_to_mount = True
+        else:
+            to_root = mounts[0]
+
+    fsd = FsDiffer(manager, options=options)
+
+    try:
+        return fsd.compare_roots(from_root, to_root)
+    except (KeyboardInterrupt, SystemExit, BrokenPipeError):
+        _log_info("Interrupted.")
+        raise
+    finally:
+        if did_from_mount:
+            manager.mounts.umount(from_snapset)
+        if did_to_mount:
+            manager.mounts.umount(to_snapset)
+
+
+def render_unified_diff(record: FsDiffRecord) -> str:
+    """
+    Render a unified diff for a modified file.
+
+    :param record: The diff record to render.
+    :type record: ``FsDiffRecord``
+    :returns: Rendered unified diff string.
+    :rtype: ``str``
+    """
+
+    def _format_timestamp(timestamp: Optional[float]) -> str:
+        """
+        Format human-readable timestamp.
+
+        :param timestamp: A UNIX epoch timestamp.
+        :type timestamp: ``Optional[float]``
+        :returns: Human readable datetime string.
+        :rtype: ``str``
+        """
+        return str(datetime.fromtimestamp(timestamp)) if timestamp is not None else ""
+
+    if not record.has_content_diff:
+        return ""
+
+    if record.content_diff.diff_type not in ("unified", "json"):
+        return ""
+
+    added = record.new_entry and not record.old_entry
+    deleted = record.old_entry and not record.new_entry
+
+    from_path = f"a{record.file_path}"
+    to_path = f"b{record.file_path}"
+
+    header_lines = [f"diff {from_path} {to_path}"]
+
+    if added:
+        header_lines.append(f"new file mode {record.mode_new}")
+    if deleted:
+        header_lines.append(f"deleted file mode {record.mode_old}")
+
+    from_path = from_path if not added else "/dev/null"
+    to_path = to_path if not deleted else "/dev/null"
+
+    lines = header_lines + [
+        f"--- {from_path}\t{_format_timestamp(record.mtime_old)}",
+        f"+++ {to_path}\t{_format_timestamp(record.mtime_new)}",
+    ]
+
+    # cd.diff_data is already the unified diff lines from difflib
+    cd = record.content_diff
+    lines.extend(cd.diff_data[2:])
+
+    return "\n".join(line.rstrip() for line in lines)
 
 
 def show_snapshots(manager, selection=None, json=False):
@@ -1518,6 +1658,103 @@ def _shell_cmd(cmd_args):
     return _exec_cmd(cmd_args)
 
 
+# pylint: disable=too-many-locals
+def _diff_cmd(cmd_args):
+    """
+    Diff snapshot set command handler.
+
+    Compare between snapshot sets or the running system.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    options = DiffOptions.from_cmd_args(cmd_args)
+    diff_from = cmd_args.diff_from
+    diff_to = cmd_args.diff_to
+    output_format = cmd_args.output_format
+    pretty = cmd_args.pretty
+
+    if output_format not in DIFF_FORMATS:
+        # Belts and braces: should be unreachable since ArgumentParser validates
+        # that `output_format` is a member of DIFF_FORMATS.
+        _log_error("Unknown diff format: %s", cmd_args.output_format)
+        return 1
+
+    # Scaffolding until all four are implemented: remove before merge.
+    if output_format not in DIFF_FORMATS[0:5]:
+        _log_error("Unsupported diff format: %s", output_format)
+        return 1
+
+    # Initialise Manager context for mounts and snapshot set discover.
+    manager = Manager()
+
+    diffs = diff_snapsets(manager, diff_from, diff_to, options)
+    if not options.quiet:
+        print(f"Found {len(diffs)} differences")
+
+    if output_format == "paths":
+        for diff in diffs:
+            print(diff.path)
+    elif output_format == "full":
+        first = True
+        for diff in diffs:
+            sep = "" if first else "\n"
+            print(f"{sep}{diff}")
+            first = False
+    elif output_format == "short":
+        first = True
+        for diff in diffs:
+            summary = (
+                f"\n  Summary: {diff.content_diff_summary}"
+                if diff.content_diff_summary
+                else ""
+            )
+
+            change_descs = ", ".join(chg.description for chg in diff.changes)
+            description = f"\n  Description: {change_descs}" if change_descs else ""
+
+            sep = "" if first else "\n"
+            print(
+                f"{sep}"
+                f"Path: {diff.path}\n  DiffType: {diff.diff_type.value}"
+                f"{description}{summary}"
+            )
+            first = False
+    elif output_format == "json":
+        dicts = [diff.to_dict() for diff in diffs]
+        print(dumps(dicts, indent=4 if pretty else None))
+    elif output_format == "diff":
+        content_diffs = [diff for diff in diffs if diff.has_content_diff]
+        if not options.quiet:
+            print(f"Found {len(content_diffs)} content differences")
+        for cdiff in content_diffs:
+            # Render unified diff from record.content_diff.diff_data
+            print(render_unified_diff(cdiff))
+
+    return 0
+
+
+def _diffreport_cmd(cmd_args):
+    """
+    Diff Report snapshot set command handler.
+
+    Compare between snapshot sets or the running system.
+
+    :param cmd_args: Command line arguments for the command
+    :returns: integer status code returned from ``main()``
+    """
+    diff_from = cmd_args.diff_from
+    diff_to = cmd_args.diff_to
+    if diff_from == diff_to:
+        _log_error(
+            "Cannot compare %s to itself.",
+            f"'{diff_from}'" if diff_from != "." else "system root",
+        )
+        return 1
+    _log_error("diffreport is not implemented yet.")
+    return 1
+
+
 def _snapshot_activate_cmd(cmd_args):
     """
     Activate snapshot command handler.
@@ -2137,6 +2374,133 @@ def _add_schedule_config_arg(parser):
     )
 
 
+def _add_diff_args(parser):
+    parser.add_argument(
+        "-t",
+        "--ignore-timestamps",
+        action="store_true",
+        help="Ignore timestamps when computing diffs",
+    )
+    parser.add_argument(
+        "-p",
+        "--ignore-permissions",
+        action="store_true",
+        help="Ignore permissions when computing diffs",
+    )
+    parser.add_argument(
+        "-w",
+        "--ignore-ownership",
+        action="store_true",
+        help="Ignore ownership when computing diffs",
+    )
+    parser.add_argument(
+        "-c",
+        "--content-only",
+        action="store_true",
+        help="Only consider content changes",
+    )
+    parser.add_argument(
+        "--include-system-dirs",
+        action="store_true",
+        help="Include system directories in diff comparisons (unimplemented)",
+    )
+    parser.add_argument(
+        "-C",
+        "--no-content-diff",
+        dest="include_content_diffs",
+        action="store_false",
+        help="Do not generate content diffs for detected file modifications",
+    )
+    parser.add_argument(
+        "-f",
+        "--file-types",
+        dest="include_file_type",
+        action="store_true",
+        help="Generate file type information using libmagic",
+    )
+    parser.add_argument(
+        "-F",
+        "--follow-symlinks",
+        action="store_true",
+        help="Follow symlinks when walking file system trees",
+    )
+    parser.add_argument(
+        "-m",
+        "--max-file-size",
+        type=int,
+        default=0,
+        help="Maximum file size for comparisons (0=unlimited)",
+    )
+    parser.add_argument(
+        "-d",
+        "--max-diff-size",
+        type=int,
+        dest="max_content_diff_size",
+        default=2**20,
+        help="Maximum file size for generating content diffs (default: 1MiB)",
+    )
+    parser.add_argument(
+        "-H",
+        "--max-hash-size",
+        type=int,
+        dest="max_content_hash_size",
+        default=2**20,
+        help="Maximum file size for generating content hashes (default: 1MiB)",
+    )
+    parser.add_argument(
+        "-i",
+        "--include-pattern",
+        type=str,
+        action="append",
+        metavar="PATTERN",
+        dest="file_patterns",
+        default=[],
+        help="File patterns to include (glob notation)",
+    )
+    parser.add_argument(
+        "-x",
+        "--exclude-pattern",
+        type=str,
+        action="append",
+        metavar="PATTERN",
+        dest="exclude_patterns",
+        default=[],
+        help="File patterns to exclude (glob notation)",
+    )
+    parser.add_argument(
+        "-s",
+        "--start-path",
+        type=str,
+        metavar="PATH",
+        dest="from_path",
+        help="Start traversal from PATH",
+    )
+    parser.add_argument(
+        "-P",
+        "--pretty",
+        action="store_true",
+        help="Pretty print output if supported by output format",
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Do not output progress or status information",
+    )
+    parser.add_argument(
+        "diff_from",
+        type=str,
+        metavar="FROM",
+        help="Compare from snapshot set name or '.' for running system",
+    )
+    parser.add_argument(
+        "diff_to",
+        type=str,
+        metavar="TO",
+        help="Compare to snapshot set name or '.' for running system",
+    )
+
+
 CREATE_CMD = "create"
 CREATE_SCHEDULED_CMD = "create-scheduled"
 DELETE_CMD = "delete"
@@ -2149,6 +2513,8 @@ PRUNE_CMD = "prune"
 ACTIVATE_CMD = "activate"
 DEACTIVATE_CMD = "deactivate"
 AUTOACTIVATE_CMD = "autoactivate"
+DIFF_CMD = "diff"
+DIFFREPORT_CMD = "diffreport"
 ENABLE_CMD = "enable"
 DISABLE_CMD = "disable"
 SHOW_CMD = "show"
@@ -2415,6 +2781,35 @@ def _add_snapset_subparser(type_subparser):
         help="The name of the snapshot set in which to start the shell",
     )
     snapset_shell_parser.set_defaults(func=_shell_cmd)
+
+    # snapset diff subcommand
+    snapset_diff_parser = snapset_subparser.add_parser(
+        DIFF_CMD,
+        help="Compare between snapshot sets or the running system",
+    )
+    snapset_diff_parser.add_argument(
+        "-o",
+        "--output-format",
+        type=str,
+        metavar="FORMAT",
+        choices=DIFF_FORMATS,
+        default=DIFF_FORMATS[0],
+        help=f"Output format for diff data ({', '.join(DIFF_FORMATS)})",
+    )
+    _add_diff_args(snapset_diff_parser)
+    snapset_diff_parser.set_defaults(func=_diff_cmd)
+
+    # snapset diffreport subcommand
+    snapset_diffreport_parser = snapset_subparser.add_parser(
+        DIFFREPORT_CMD,
+        help=(
+            "Generate report of differences between snapshot sets or the "
+            "running system"
+        ),
+    )
+    _add_report_args(snapset_diffreport_parser)
+    _add_diff_args(snapset_diffreport_parser)
+    snapset_diffreport_parser.set_defaults(func=_diffreport_cmd)
 
 
 def _add_snapshot_subparser(type_subparser):

@@ -1,6 +1,6 @@
 # Copyright Red Hat
 #
-# snapm/_fsdiff/__init__.py - Snapshot Manager fs differ package
+# snapm/fsdiff/__init__.py - Snapshot Manager fs differ package
 #
 # This file is part of the snapm project.
 #
@@ -12,10 +12,12 @@ Provides snapshot-set comparison facilities including tree walking, change
 detection, content diffing, and move detection. The main entry points are
 ``FsDiffer`` and ``DiffOptions``.
 """
+from .engine import FsDiffRecord
 from .fsdiffer import FsDiffer
 from .options import DiffOptions
 
 __all__ = [
     "DiffOptions",
     "FsDiffer",
+    "FsDiffRecord",
 ]

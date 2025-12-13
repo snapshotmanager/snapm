@@ -7,8 +7,8 @@
 # SPDX-License-Identifier: Apache-2.0
 import unittest
 
-from snapm._fsdiff.changes import ChangeDetector, ChangeType, FileChange
-from snapm._fsdiff.options import DiffOptions
+from snapm.fsdiff.changes import ChangeDetector, ChangeType, FileChange
+from snapm.fsdiff.options import DiffOptions
 
 from ._util import make_entry
 

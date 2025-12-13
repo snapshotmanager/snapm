@@ -1152,6 +1152,8 @@ class Manager:
                 raise SnapmInvalidIdentifierError(
                     f"Snapshot set name cannot include '{char}'"
                 )
+        if name == ".":
+            raise SnapmInvalidIdentifierError("Snapshot set name cannot be '.'")
 
     # pylint: disable=too-many-branches,too-many-locals,too-many-statements
     @suspend_signals

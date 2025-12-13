@@ -1,6 +1,6 @@
 # Copyright Red Hat
 #
-# snapm/_fsdiff/fsdiffer.py - Snapshot Manager file system differ
+# snapm/fsdiff/fsdiffer.py - Snapshot Manager file system differ
 #
 # This file is part of the snapm project.
 #
@@ -10,7 +10,7 @@ Top-level fsdiff interface.
 """
 from typing import List, Optional, TYPE_CHECKING
 
-from snapm._progress import ProgressBase, TermControl
+from snapm.progress import ProgressBase, TermControl
 
 from .engine import DiffEngine, FsDiffRecord
 from .options import DiffOptions
@@ -30,7 +30,6 @@ class FsDiffer:
         self,
         manager: "Manager",
         options: Optional[DiffOptions] = None,
-        quiet: bool = False,
         progress: Optional[ProgressBase] = None,
         term_control: Optional[TermControl] = None,
     ):
@@ -39,7 +38,6 @@ class FsDiffer:
         self.options: DiffOptions = options
         self.tree_walker: TreeWalker = TreeWalker(options)
         self.diff_engine: DiffEngine = DiffEngine()
-        self._quiet = quiet
         self._progress: Optional[ProgressBase] = progress
         self._term_control: Optional[TermControl] = term_control
 
@@ -49,12 +47,20 @@ class FsDiffer:
         """
         strip_prefix_a = "" if mount_a.root == "/" else mount_a.root
         tree_a = self.tree_walker.walk_tree(
-            mount_a, strip_prefix_a, self._quiet, self._progress, self._term_control
+            mount_a,
+            strip_prefix=strip_prefix_a,
+            quiet=self.options.quiet,
+            progress=self._progress,
+            term_control=self._term_control,
         )
 
         strip_prefix_b = "" if mount_b.root == "/" else mount_b.root
         tree_b = self.tree_walker.walk_tree(
-            mount_b, strip_prefix_b, self._quiet, self._progress, self._term_control
+            mount_b,
+            strip_prefix=strip_prefix_b,
+            quiet=self.options.quiet,
+            progress=self._progress,
+            term_control=self._term_control,
         )
 
         return self.diff_engine.compute_diff(tree_a, tree_b, self.options)

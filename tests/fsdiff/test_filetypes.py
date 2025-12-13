@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock
 from pathlib import Path
 import magic
 
-from snapm._fsdiff.filetypes import FileTypeDetector, FileTypeCategory, FileTypeInfo
+from snapm.fsdiff.filetypes import FileTypeDetector, FileTypeCategory, FileTypeInfo
 
 class TestFileTypeDetector(unittest.TestCase):
     def setUp(self):
@@ -21,7 +21,7 @@ class TestFileTypeDetector(unittest.TestCase):
         self.assertIn("MIME type: text/plain", str(fti))
         self.assertIn("Category: text", str(fti))
 
-    @patch("snapm._fsdiff.filetypes.magic.detect_from_filename")
+    @patch("snapm.fsdiff.filetypes.magic.detect_from_filename")
     def test_categorize_log_file(self, mock_magic):
         # magic might say plain text, but filename says .log
         mock_res = MagicMock()
@@ -35,7 +35,7 @@ class TestFileTypeDetector(unittest.TestCase):
 
         self.assertEqual(info.category, FileTypeCategory.LOG)
 
-    @patch("snapm._fsdiff.filetypes.magic.detect_from_filename")
+    @patch("snapm.fsdiff.filetypes.magic.detect_from_filename")
     def test_categorize_json_config(self, mock_magic):
         mock_res = MagicMock()
         mock_res.mime_type = "application/json"
@@ -66,7 +66,7 @@ class TestFileTypeDetector(unittest.TestCase):
 
     # c9s magic does not have magic.error
     @unittest.skipIf(not hasattr(magic, "error"), "magic does not have magic.error")
-    @patch("snapm._fsdiff.filetypes.magic.detect_from_filename")
+    @patch("snapm.fsdiff.filetypes.magic.detect_from_filename")
     def test_detect_file_type_error(self, mock_magic):
         # Simulate magic library error
         mock_magic.side_effect = magic.error("magic failed")

@@ -1,6 +1,6 @@
 # Copyright Red Hat
 #
-# snapm/_fsdiff/engine.py - Snapshot Manager fs diff engine
+# snapm/fsdiff/engine.py - Snapshot Manager fs diff engine
 #
 # This file is part of the snapm project.
 #
@@ -8,10 +8,12 @@
 """
 File system diff engine
 """
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from collections import defaultdict
+from datetime import datetime
 from enum import Enum
 import logging
+import json
 
 from snapm import SNAPM_SUBSYSTEM_FSDIFF
 
@@ -111,33 +113,136 @@ class FsDiffRecord:
         :returns: A human readable representation of this ``FsDiffRecord``.
         :rtype: ``str``
         """
+
+        def _format_mtime(mtime: Optional[float]) -> str:
+            """
+            Format a (possibly ``None``) mtime value.
+
+            :param mtime: The mtime to format.
+            :type mtime: ``Optional[float]``
+            :returns: The formatted value or the empty string.
+            :rtype: ``str``
+            """
+            return f"{'(' + str(mtime) + ')' if mtime is not None else ''}"
+
+        # Possibly empty/missing fields
+        changes = (
+            f"changes: {', '.join(str(chg) for chg in self.changes)}\n"
+            if self.changes
+            else ""
+        )
+
+        moved_from = f"moved_from: {self.moved_from}\n" if self.moved_from else ""
+        moved_to = f"moved_to: {self.moved_to}\n" if self.moved_to else ""
+
+        content_diff = (
+            f"content_diff: {self.content_diff}\n"
+            if self.content_diff is not None
+            else ""
+        )
+
+        content_diff_summary = (
+            f"\ncontent_diff_summary: {self.content_diff_summary}"
+            if self.content_diff_summary
+            else ""
+        )
+
+        # Pre-formatted fields
+        mtime_old = (
+            str(datetime.fromtimestamp(self.mtime_old)) + " "
+            if self.mtime_old is not None
+            else ""
+        )
+
+        mtime_new = (
+            str(datetime.fromtimestamp(self.mtime_new)) + " "
+            if self.mtime_new is not None
+            else ""
+        )
+
         fsd_str = (
             f"Path: {self.path}\n"
-            f"diff_type: {self.diff_type.value}\n"
-            f"old_entry: {self.old_entry}\n"
-            f"new_entry: {self.new_entry}\n"
-            f"changes: {', '.join(str(chg) for chg in self.changes)}\n"
-            f"content_diff: {self.content_diff}\n"
-            f"moved_from: {self.moved_from}\n"
-            f"moved_to: {self.moved_to}\n"
-            f"file_path: {self.file_path}\n"
-            f"file_type: {self.file_type}\n"
-            f"file_category: {self.file_category}\n"
-            f"size_old: {self.size_old}\n"
-            f"size_new: {self.size_new}\n"
-            f"size_delta: {self.size_delta}\n"
-            f"mode_old: {self.mode_old}\n"
-            f"mode_new: {self.mode_new}\n"
-            f"owner_old: {self.owner_old}\n"
-            f"owner_new: {self.owner_new}\n"
-            f"mtime_old: {self.mtime_old}\n"
-            f"mtime_new: {self.mtime_new}\n"
-            f"content_changed: {self.content_changed}\n"
-            f"metadata_changed: {self.metadata_changed}\n"
-            f"has_content_diff: {self.has_content_diff}\n"
-            f"content_diff_summary: {self.content_diff_summary}"
+            f"  diff_type: {self.diff_type.value}\n"
+            f"  old_entry: {self.old_entry if self.old_entry else ''}\n"
+            f"  new_entry: {self.new_entry if self.new_entry else ''}\n"
+            f"  {changes}"  # no newline (embedded if set)
+            f"  {content_diff}"  # no newline (embedded if set)
+            f"  {moved_from}"  # no newline (embedded if set)
+            f"  {moved_to}"  # no newline (embedded if set)
+            f"  file_path: {self.file_path}\n"
+            f"  file_type: {self.file_type}\n"
+            f"  file_category: {self.file_category}\n"
+            f"  size_old: {self.size_old}\n"
+            f"  size_new: {self.size_new}\n"
+            f"  size_delta: {self.size_delta}\n"
+            f"  mode_old: {self.mode_old if self.mode_old else ''}\n"
+            f"  mode_new: {self.mode_new if self.mode_new else ''}\n"
+            f"  owner_old: {self.owner_old if self.owner_old else ''}\n"
+            f"  owner_new: {self.owner_new if self.owner_new else ''}\n"
+            f"  mtime_old: {mtime_old}{_format_mtime(self.mtime_old)}\n"
+            f"  mtime_new: {mtime_new}{_format_mtime(self.mtime_new)}\n"
+            f"  content_changed: {self.content_changed}\n"
+            f"  metadata_changed: {self.metadata_changed}\n"
+            f"  has_content_diff: {self.has_content_diff}"  # no newline: end
+            f"  {content_diff_summary}"  # no newline (prefixed if set)
         )
         return fsd_str
+
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert this ``FsDiffRecord`` object into a dictionary representation
+        suitable for encoding as JSON.
+
+        :returns: A dictionary mapping this instance's keys to values.
+        :rtype: ``Dict[str, Any]``
+        """
+        out = {
+            "path": self.path,
+            "diff_type": self.diff_type.value,
+            "file_path": self.file_path,
+            "file_type": self.file_type,
+            "file_category": self.file_category,
+            "size_old": self.size_old,
+            "size_new": self.size_new,
+            "size_delta": self.size_delta,
+            "mode_old": self.mode_old or "",
+            "mode_new": self.mode_new or "",
+            "owner_old": self.owner_old or "",
+            "owner_new": self.owner_new or "",
+            "mtime_old": self.mtime_old,
+            "mtime_new": self.mtime_new,
+            "content_changed": self.content_changed,
+            "metadata_changed": self.metadata_changed,
+            "has_content_diff": self.has_content_diff,
+        }
+        if self.old_entry:
+            out["old_entry"] = self.old_entry.to_dict()
+        if self.new_entry:
+            out["new_entry"] = self.new_entry.to_dict()
+        if self.changes:
+            out["changes"] = [change.to_dict() for change in self.changes]
+        if self.content_diff is not None:
+            out["content_diff"] = self.content_diff.to_dict()
+        if self.moved_from:
+            out["moved_from"] = self.moved_from
+        if self.moved_to:
+            out["moved_to"] = self.moved_to
+        if self.content_diff_summary:
+            out["content_diff_summary"] = self.content_diff_summary
+
+        return out
+
+    def json(self, pretty=False) -> str:
+        """
+        Return a string representation of this ``FsDiffRecord`` in JSON
+        notation.
+
+        :param pretty: Indent JSON to be human readable.
+        :type pretty: ``bool``
+        :returns: A JSON representation of this instance.
+        :rtype: ``str``
+        """
+        return json.dumps(self.to_dict(), indent=4 if pretty else None)
 
     def _get_file_type(self) -> str:
         """
@@ -249,7 +354,7 @@ class DiffEngine:
             else changes
         )
 
-    # pylint: disable=too-many-locals,too-many-branches
+    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
     def compute_diff(
         self,
         tree_a: Dict[str, FsEntry],
@@ -296,11 +401,60 @@ class DiffEngine:
             if entry_a is None:
                 # File added in tree_b
                 diff_record = FsDiffRecord(path, DiffType.ADDED, new_entry=entry_b)
+                changes = self.change_detector.detect_added(entry_b, options)
+
+                # Optionally restrict to content-only changes.
+                effective_changes = self._effective_changes(changes, options)
+
+                for change in effective_changes:
+                    diff_record.add_change(change)
+
+                # Generate content diff if requested, appropriate, and within size limits
+                if options.include_content_diffs and entry_b.is_file:
+                    within_limit = (
+                        options.max_content_diff_size <= 0
+                        or entry_b.size <= options.max_content_diff_size
+                    )
+                    if within_limit:
+                        content_diff = self.content_differ.generate_content_diff(
+                            None,
+                            entry_b.full_path,
+                            None,
+                            entry_b,
+                        )
+                        if content_diff:
+                            diff_record.set_content_diff(content_diff)
+
                 diffs.append(diff_record)
 
             elif entry_b is None:
                 # File removed from tree_a
                 diff_record = FsDiffRecord(path, DiffType.REMOVED, old_entry=entry_a)
+
+                changes = self.change_detector.detect_removed(entry_a, options)
+
+                # Optionally restrict to content-only changes.
+                effective_changes = self._effective_changes(changes, options)
+
+                for change in effective_changes:
+                    diff_record.add_change(change)
+
+                # Generate content diff if requested, appropriate, and within size limits
+                if options.include_content_diffs and entry_a.is_file:
+                    within_limit = (
+                        options.max_content_diff_size <= 0
+                        or entry_a.size <= options.max_content_diff_size
+                    )
+                    if within_limit:
+                        content_diff = self.content_differ.generate_content_diff(
+                            entry_a.full_path,
+                            None,
+                            entry_a,
+                            None,
+                        )
+                        if content_diff:
+                            diff_record.set_content_diff(content_diff)
+
                 diffs.append(diff_record)
 
             else:

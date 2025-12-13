@@ -7,9 +7,9 @@
 # SPDX-License-Identifier: Apache-2.0
 import unittest
 
-from snapm._fsdiff.engine import DiffEngine
-from snapm._fsdiff.fsdiffer import FsDiffer
-from snapm._fsdiff.treewalk import TreeWalker
+from snapm.fsdiff.engine import DiffEngine
+from snapm.fsdiff.fsdiffer import FsDiffer
+from snapm.fsdiff.treewalk import TreeWalker
 
 
 class MockManager:

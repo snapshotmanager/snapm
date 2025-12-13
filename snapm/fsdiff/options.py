@@ -1,6 +1,6 @@
 # Copyright Red Hat
 #
-# snapm/_fsdiff/options.py - Snapshot Manager fs diff options
+# snapm/fsdiff/options.py - Snapshot Manager fs diff options
 #
 # This file is part of the snapm project.
 #
@@ -8,9 +8,18 @@
 """
 File system diff options and categories.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from typing import List, Optional
+from argparse import Namespace
 from enum import Enum
+import logging
+
+_log = logging.getLogger(__name__)
+
+_log_debug = _log.debug
+_log_info = _log.info
+_log_warn = _log.warning
+_log_error = _log.error
 
 
 @dataclass
@@ -28,11 +37,11 @@ class DiffOptions:
     #: Only consider content changes
     content_only: bool = False
     #: Include system directories in diff comparisons (unimplemented)
-    include_system_dirs: bool = True
+    include_system_dirs: bool = False
     #: Generate content diffs for detected file modifications
     include_content_diffs: bool = True
     #: Generate file type information using magic
-    include_file_type: bool = True
+    include_file_type: bool = False
     #: Follow symlinks when walking file system trees
     follow_symlinks: bool = False
     #: Maximum file size for diff comparisons
@@ -47,6 +56,8 @@ class DiffOptions:
     exclude_patterns: List[str] = field(default_factory=list)
     #: Start path for file system comparison
     from_path: Optional[str] = None
+    #: Do not output progress or status updates
+    quiet: bool = False
 
     def __str__(self):
         """
@@ -74,6 +85,29 @@ class DiffOptions:
             for key, val in self.__dict__.items()
         ]
         return "\n".join(f"{key}={val}" for key, val in items)
+
+    @classmethod
+    def from_cmd_args(cls, cmd_args: Namespace) -> "DiffOptions":
+        """
+        Initialise DiffOptions from command line arguments.
+
+        Construct a new ``DiffOptions`` object from the command line
+        arguments in ``cmd_args``.
+
+        :param cmd_args: The command line selection arguments.
+        :type cmd_args: ``Namespace``
+        :returns: A new ``DiffOptions`` instance
+        :rtype: ``DiffOptions``
+        """
+        field_names = {f.name for f in fields(cls)}
+        kwargs = {
+            name: getattr(cmd_args, name)
+            for name in field_names
+            if hasattr(cmd_args, name)
+        }
+        options = cls(**kwargs)
+        _log_debug("Initialised DiffOptions from arguments:\n%s", options)
+        return options
 
 
 class DiffCategories(Enum):

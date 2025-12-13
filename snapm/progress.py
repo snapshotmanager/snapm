@@ -1,6 +1,6 @@
 # Copyright Red Hat
 #
-# snapm/_progress.py - Snapshot Manager terminal progress indicator
+# snapm/progress.py - Snapshot Manager terminal progress indicator
 #
 # This file is part of the snapm project.
 #
