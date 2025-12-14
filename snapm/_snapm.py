@@ -714,7 +714,7 @@ def size_fmt(value):
     suffixes = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB"]
     if value == 0:
         return "0B"
-    magnitude = int(math.floor(math.log(value, 1024)))
+    magnitude = math.floor(math.log(abs(value), 1024))
     val = value / math.pow(1024, magnitude)
     if magnitude > 7:
         return f"{val:.1f}YiB"
