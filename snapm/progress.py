@@ -1090,7 +1090,10 @@ class Throbber(ThrobberBase):
             header_width = len(self.header) + 2
             # Erase previous throb frame.
             print(
-                self.term.UP + header_width * self.term.RIGHT + self.term.CLEAR_EOL,
+                self.term.BOL
+                + self.term.UP
+                + header_width * self.term.RIGHT
+                + self.term.CLEAR_EOL,
                 end="",
                 file=self.stream,
             )

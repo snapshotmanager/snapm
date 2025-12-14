@@ -726,6 +726,7 @@ class TestThrobber(unittest.TestCase):
         mock_tc.term_stream = StringIO()
         mock_tc.render.side_effect = lambda x: x
         # Mock required caps to enter the logic block
+        mock_tc.BOL = "<BOL>"
         mock_tc.UP = "<UP>"
         mock_tc.RIGHT = "<R>"
         mock_tc.CLEAR_EOL = "<CE>"
@@ -745,7 +746,7 @@ class TestThrobber(unittest.TestCase):
 
         output = mock_tc.term_stream.getvalue()
         # Should contain clearing logic
-        self.assertIn("<UP>" + (len(t.header) + 2) * "<R>" + "<CE>", output)
+        self.assertIn("<BOL><UP>" + (len(t.header) + 2) * "<R>" + "<CE>", output)
         self.assertIn("<SHOW>", output)
         # Should NOT contain "None" string
         self.assertNotIn("None", output)
