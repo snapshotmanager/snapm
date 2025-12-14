@@ -54,6 +54,17 @@ _HASH_TYPES = {
 }
 
 
+_EXCLUDE_SYSTEM_DIRS = [
+    "/proc/*",
+    "/sys/*",
+    "/dev/*",
+    "/tmp/*",
+    "/run/*",
+    "/var/run/*",
+    "/var/lock/*",
+]
+
+
 class FsEntry:
     """
     Representation of a single file system entry for comparison.
@@ -370,15 +381,16 @@ class TreeWalker:
         self.options: DiffOptions = options
         self.hash_algorithm: str = hash_algorithm
         self.file_type_detector: FileTypeDetector = FileTypeDetector()
-        self.exclude_patterns: List[str] = options.exclude_patterns or [
-            "/proc/*",
-            "/sys/*",
-            "/dev/*",
-            "/tmp/*",
-            "/run/*",
-            "/var/run/*",
-            "/var/lock/*",
-        ]
+
+        if options.exclude_patterns and not options.include_system_dirs:
+            self.exclude_patterns: List[str] = (
+                options.exclude_patterns + _EXCLUDE_SYSTEM_DIRS
+            )
+        elif not options.include_system_dirs:
+            self.exclude_patterns: List[str] = _EXCLUDE_SYSTEM_DIRS
+        else:
+            self.exclude_patterns: List[str] = options.exclude_patterns or []
+
         self.file_patterns: Optional[List[str]] = options.file_patterns
 
         self.hasher = _HASH_TYPES[hash_algorithm]

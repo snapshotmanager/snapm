@@ -36,7 +36,7 @@ class DiffOptions:
     ignore_ownership: bool = False
     #: Only consider content changes
     content_only: bool = False
-    #: Include system directories in diff comparisons (unimplemented)
+    #: Include system directories in diff comparisons
     include_system_dirs: bool = False
     #: Generate content diffs for detected file modifications
     include_content_diffs: bool = True
