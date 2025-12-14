@@ -1378,7 +1378,7 @@ def print_diffs(
 
     if data and not isinstance(data, FsDiffResults):
         raise ValueError("print_diffs(): data value must be FsDiffResults")
-
+    print(data)
     selected = [ReportObj(diff=diff) for diff in data] if data else []
 
     return _do_print_type(
@@ -1433,6 +1433,7 @@ def _generic_list_cmd(cmd_args, select, opts, manager, print_fn, data: object = 
                 output_fields=fields,
                 opts=opts,
                 sort_keys=cmd_args.sort,
+                data=data
             )
         except ValueError as err:
             print(err)
