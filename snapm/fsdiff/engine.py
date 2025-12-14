@@ -11,7 +11,6 @@ File system diff engine
 from typing import Any, Dict, Iterator, List, Optional
 from collections import defaultdict
 from datetime import datetime
-from enum import Enum
 import logging
 import json
 
@@ -20,8 +19,10 @@ from snapm.progress import TermControl
 
 from .changes import ChangeDetector, ChangeType, FileChange
 from .contentdiff import ContentDiff, ContentDifferManager
+from .difftypes import DiffType
 from .options import DiffOptions
 from .treewalk import FsEntry
+from .tree import DiffTree
 
 _log = logging.getLogger(__name__)
 
@@ -42,18 +43,6 @@ def _log_debug_fsdiff_extra(msg, *args, **kwargs):
     """A wrapper for fsdiff subsystem debug logs."""
     if ENGINE_LOG_ME_HARDER:  # pragma: no cover
         _log.debug(msg, *args, extra={"subsystem": SNAPM_SUBSYSTEM_FSDIFF}, **kwargs)
-
-
-class DiffType(Enum):
-    """
-    Enum for different difference types.
-    """
-
-    ADDED = "added"
-    REMOVED = "removed"
-    MODIFIED = "modified"
-    MOVED = "moved"
-    TYPE_CHANGED = "type_changed"
 
 
 class FsDiffRecord:
@@ -567,7 +556,17 @@ class FsDiffResults:
         diffs = [render_unified_diff(diff, tc) for diff in content_diffs]
         return "\n".join(diffs)
 
-    # def tree(self) -> str:  # Coming later!
+    def tree(self, term_control: Optional[TermControl] = None) -> str:
+        """
+        Render a ``DiffTree`` of this ``FsDiffResults`` instance.
+
+        :param term_control: An optional ``TermControl`` instance to use for formatting.
+        :type term_control: ``Optional[TermControl]``
+        :returns: A string representation of a difference tree
+        :rtype: ``str``
+        """
+        tree = DiffTree.build_tree(self, term_control=term_control)
+        return tree.render()
 
 
 class DiffEngine:

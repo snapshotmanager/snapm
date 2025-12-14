@@ -15,9 +15,11 @@ detection, content diffing, and move detection. The main entry points are
 from .engine import FsDiffRecord, FsDiffResults
 from .fsdiffer import FsDiffer
 from .options import DiffOptions
+from .tree import DiffTree
 
 __all__ = [
     "DiffOptions",
+    "DiffTree",
     "FsDiffer",
     "FsDiffRecord",
     "FsDiffResults",

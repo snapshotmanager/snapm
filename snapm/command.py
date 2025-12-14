@@ -1868,11 +1868,6 @@ def _diff_cmd(cmd_args):
         _log_error("Unknown diff format: %s", cmd_args.output_format)
         return 1
 
-    # Scaffolding until all four are implemented: remove before merge.
-    if output_format not in DIFF_FORMATS[0:5]:
-        _log_error("Unsupported diff format: %s", output_format)
-        return 1
-
     # Initialise Manager context for mounts and snapshot set discover.
     manager = Manager()
 
@@ -1892,6 +1887,8 @@ def _diff_cmd(cmd_args):
         if not options.quiet:
             print(f"Found {results.content_changes} content differences")
         print(results.diff(color=color))
+    elif output_format == "tree":
+        print(results.tree())
 
     return 0
 
