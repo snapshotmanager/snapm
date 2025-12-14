@@ -586,18 +586,29 @@ class ContentDifferManager:
         if not ((old_entry and old_entry.is_file) or (new_entry and new_entry.is_file)):
             return None
 
-        # Skip if no file type info available
-        if not (
-            (new_entry and new_entry.file_type_info)
-            or (old_entry and old_entry.file_type_info)
-        ):
-            return None
-
         file_type_info = (
             new_entry.file_type_info
-            if new_entry
-            else old_entry.file_type_info if old_entry else None
+            if (new_entry and new_entry.file_type_info)
+            else (
+                old_entry.file_type_info
+                if (old_entry and old_entry.file_type_info)
+                else None
+            )
         )
 
-        differ = self.get_differ_for_file(file_type_info)
-        return differ.generate_diff(old_path, new_path, old_entry, new_entry)
+        try:
+            differ = (
+                self.get_differ_for_file(file_type_info)
+                if file_type_info is not None
+                else TextContentDiffer()
+            )
+            return differ.generate_diff(old_path, new_path, old_entry, new_entry)
+        except (LookupError, OSError, UnicodeError, TypeError) as err:
+            _log_error(
+                "Error generating content diff for %s - %s (mime_type=%s): %s",
+                new_entry.full_path if new_entry else "/dev/null",
+                old_entry.full_path if old_entry else "/dev/null",
+                file_type_info.mime_type if file_type_info else "unknown",
+                err,
+            )
+            return None
