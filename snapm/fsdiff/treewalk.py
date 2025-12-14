@@ -485,7 +485,7 @@ class TreeWalker:
             "Gathering paths to scan from %s (%s)", mount.name, self.options.from_path
         )
 
-        target = f"{mount.name} {self.options.from_path}"
+        target = f"{mount.name} {from_path}"
         throbber = throbber or ProgressFactory.get_throbber(
             f"Gathering paths from {target}",
             style="bouncingball",
