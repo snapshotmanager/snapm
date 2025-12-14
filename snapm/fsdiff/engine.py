@@ -128,7 +128,7 @@ class FsDiffRecord:
 
         # Possibly empty/missing fields
         changes = (
-            f"changes: {', '.join(str(chg) for chg in self.changes)}\n"
+            f"  changes: {', '.join(str(chg) for chg in self.changes)}\n"
             if self.changes
             else ""
         )
@@ -137,13 +137,13 @@ class FsDiffRecord:
         moved_to = f"moved_to: {self.moved_to}\n" if self.moved_to else ""
 
         content_diff = (
-            f"content_diff: {self.content_diff}\n"
+            f"  content_diff: {self.content_diff}\n"
             if self.content_diff is not None
             else ""
         )
 
         content_diff_summary = (
-            f"\ncontent_diff_summary: {self.content_diff_summary}"
+            f"\n  content_diff_summary: {self.content_diff_summary}"
             if self.content_diff_summary
             else ""
         )
@@ -164,12 +164,12 @@ class FsDiffRecord:
         fsd_str = (
             f"Path: {self.path}\n"
             f"  diff_type: {self.diff_type.value}\n"
-            f"  old_entry: {self.old_entry if self.old_entry else ''}\n"
-            f"  new_entry: {self.new_entry if self.new_entry else ''}\n"
-            f"  {changes}"  # no newline (embedded if set)
-            f"  {content_diff}"  # no newline (embedded if set)
-            f"  {moved_from}"  # no newline (embedded if set)
-            f"  {moved_to}"  # no newline (embedded if set)
+            f"  old_entry:\n{self.old_entry if self.old_entry else ''}\n"
+            f"  new_entry:\n{self.new_entry if self.new_entry else ''}\n"
+            f"{changes}"  # no newline (embedded if set)
+            f"{content_diff}"  # no newline (embedded if set)
+            f"{'  ' + moved_from if moved_from else ''}"  # no newline (embedded if set)
+            f"{'  ' + moved_to if moved_to else ''}"  # no newline (embedded if set)
             f"  file_path: {self.file_path}\n"
             f"  file_type: {self.file_type}\n"
             f"  file_category: {self.file_category}\n"
@@ -185,7 +185,7 @@ class FsDiffRecord:
             f"  content_changed: {self.content_changed}\n"
             f"  metadata_changed: {self.metadata_changed}\n"
             f"  has_content_diff: {self.has_content_diff}"  # no newline: end
-            f"  {content_diff_summary}"  # no newline (prefixed if set)
+            f"{content_diff_summary}"  # no newline (prefixed if set)
         )
         return fsd_str
 

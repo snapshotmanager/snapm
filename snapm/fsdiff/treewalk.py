@@ -65,6 +65,35 @@ _EXCLUDE_SYSTEM_DIRS = [
 ]
 
 
+def _stat_to_dict(st: os.stat_result) -> Dict[str, Any]:
+    """
+    Convert an `os.stat_result` into a dictionary.
+
+    :param st: The stat result to convert.
+    :type st: ``os.stat_result``
+    :returns: A dictionary mapping stat fields to values.
+    :rtype: ``Dict[str, Any]``
+    """
+    return {
+        "st_atime": st.st_atime,
+        "st_atime_ns": st.st_atime_ns,
+        "st_blksize": st.st_blksize,
+        "st_blocks": st.st_blocks,
+        "st_ctime": st.st_ctime,
+        "st_ctime_ns": st.st_ctime_ns,
+        "st_dev": st.st_dev,
+        "st_gid": st.st_gid,
+        "st_ino": st.st_ino,
+        "st_mode": st.st_mode,
+        "st_mtime": st.st_mtime,
+        "st_mtime_ns": st.st_mtime_ns,
+        "st_nlink": st.st_nlink,
+        "st_rdev": st.st_rdev,
+        "st_size": st.st_size,
+        "st_uid": st.st_uid,
+    }
+
+
 class FsEntry:
     """
     Representation of a single file system entry for comparison.
@@ -162,15 +191,23 @@ class FsEntry:
         :returns: A human readable representation of this ``FsEntry``.
         :rtype: ``str``
         """
-        fse_str = f"path: {self.path}, stat: {self.stat}, hash: {self.content_hash}"
+        indent = 4 * " "
+        stat_str = "\n".join(
+            f"{indent}  {k}={v}" for k, v in _stat_to_dict(self.stat).items()
+        )
+        fse_str = (
+            f"{indent}path: {self.path}\n"
+            f"{indent}stat: {stat_str}\n"
+            f"{indent}hash: {self.content_hash}"
+        )
         if self.symlink_target:
-            fse_str += f", symlink_target: {self.symlink_target}"
+            fse_str += f"\n{indent}symlink_target: {self.symlink_target}"
         if self.xattrs:
-            fse_str += ", extended_attributes: "
-            xattr_strs = []
-            for xattr, value in self.xattrs.items():
-                xattr_strs.append(f"{xattr}={value}")
-            fse_str += ", ".join(xattr_strs)
+            fse_str += f"\n{indent}extended_attributes:\n"
+            xattr_strs = [
+                f"{indent}  {xattr}={value}" for xattr, value in self.xattrs.items()
+            ]
+            fse_str += "\n".join(xattr_strs)
         return fse_str
 
     def to_dict(self) -> Dict[str, Any]:
@@ -181,34 +218,6 @@ class FsEntry:
         :returns: A dictionary mapping this instance's keys to values.
         :rtype: ``Dict[str, Any]``
         """
-
-        def _stat_to_dict(st: os.stat_result) -> Dict[str, Any]:
-            """
-            Convert an `os.stat_result` into a dictionary.
-
-            :param st: The stat result to convert.
-            :type st: ``os.stat_result``
-            :returns: A dictionary mapping stat fields to values.
-            :rtype: ``Dict[str, Any]``
-            """
-            return {
-                "st_atime": st.st_atime,
-                "st_atime_ns": st.st_atime_ns,
-                "st_blksize": st.st_blksize,
-                "st_blocks": st.st_blocks,
-                "st_ctime": st.st_ctime,
-                "st_ctime_ns": st.st_ctime_ns,
-                "st_dev": st.st_dev,
-                "st_gid": st.st_gid,
-                "st_ino": st.st_ino,
-                "st_mode": st.st_mode,
-                "st_mtime": st.st_mtime,
-                "st_mtime_ns": st.st_mtime_ns,
-                "st_nlink": st.st_nlink,
-                "st_rdev": st.st_rdev,
-                "st_size": st.st_size,
-                "st_uid": st.st_uid,
-            }
 
         def _decode_xattr_value(value: bytes) -> str:
             """
