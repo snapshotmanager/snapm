@@ -128,10 +128,13 @@ class FsEntry:
             checker = os.path.exists if follow_symlinks else os.path.lexists
             if not checker(path):
                 return {}
-            return {
-                xattr: os.getxattr(path, xattr, follow_symlinks=follow_symlinks)
-                for xattr in os.listxattr(path, follow_symlinks=follow_symlinks)
-            }
+            try:
+                return {
+                    xattr: os.getxattr(path, xattr, follow_symlinks=follow_symlinks)
+                    for xattr in os.listxattr(path, follow_symlinks=follow_symlinks)
+                }
+            except OSError:
+                return {}
 
         #: The path relative to this tree's mount point
         self.path: Path = Path(path.removeprefix(strip_prefix))
