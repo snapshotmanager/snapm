@@ -1,7 +1,7 @@
 %global summary A set of tools for managing snapshots
 
 Name:		snapm
-Version:	0.5.1
+Version:	0.6.0
 Release:	1%{?dist}
 Summary:	%{summary}
 
@@ -142,6 +142,169 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_tmpfilesdir}
 %doc doc
 
 %changelog
+* Thu Dec 18 2025 Bryn M. Reeves <bmr@redhat.com> - 0.6.0-1
+- fsdiff: move detector may mis-detect identical files as moves
+- fsdiff: catch EOFError on truncated cache file
+- doc: clarify defaults, links and improve list formatting
+- doc: add missing "summary" to doc/user_guide.rst and tidy up
+- tree: fix docstring typo ("sting" for "string")
+- fsdiff: add progress bar to DiffEngine._detect_moves()
+- progress: limit max FPS in Progress like Throbber
+- doc: expand coverage of difference engine features
+- tests: fix method signatures in tests/test_progress.py
+- fsdiff: change TreeWalker.walk_tree() throbber style to 'braillecircle'
+- progress: fix status clearing for cancel() with no_clear=True
+- fsdiff: clean up unused snapm.fsdiff.fsdiffer interfaces
+- command: add cache control arguments to diff/diffreport
+- fsdiff: add cache support to FsDiffer
+- fsdiff: add a timestamp to FsDiffResults
+- fsdiff: add snapm.fsdiff.cache module
+- fsdiff: make DiffOptions frozen=True and hashable
+- fsdiff: fix orphan parent path in DiffTree.build_tree()
+- dist: add example scripts for snapm.progress and snapm.fsdiff
+- tests: improve snapm.fsdiff coverage
+- command: add --output-format=summary
+- fsdiff: add FsDiffResults.summary()
+- fsdiff: add diffstat to FsDiffResults.diff()
+- fsdiff: add FsDiffResults.type_changed
+- progress: fix exception in NullProgress.end()
+- fsdiff: make colored diff hunk headers cyan
+- fsdiff: fix full formatting
+- fsdiff: wrap all long-running operations in KeyboardInterrupt except blocks
+- progress: make sure to reset the terminal on Progress.end()
+- tests: extend snapm.fsdiff coverage to UI related changes
+- doc: update snapm(8) and doc/user_guide.rst for diff/diffreport
+- command: add snapset diffreport subcommand
+- command: add snapset diff subcommand
+- command: add diff_snapsets() API function
+- command: add optional data arg to reporting functions
+- progress: don't center status header
+- fsdiffer: add top-level color argument
+- fsdiff: drop throbber and progress arguments from FsDiffer and TreeWalker
+- fsdiff: add tree module and DiffTree public interface
+- fsdiff: add progress to DiffEngine.compute_diff()
+- fsdiff: extract DiffTypes from fsdiff.engine to fsdiff.difftypes
+- fsdiff: guard xattr collection against OSError/PermissionError
+- snapm: make size_fmt() work with negative values
+- fsdiff: indent all FsDiffRecord.__str__ members and submembers
+- fsdiff: fix target formatting when !options.from_path
+- fsdiff: preserve default exclude patterns when options.exclude_patterns
+- fsdiff: make generate_content_diff() robust to unexpected encodings
+- progress: fix Throbber erase-at-end cursor movement
+- fsdiff: add an FsDiffResults class to represent diff results
+- progress: extend TermControl to support color={"auto","always","never"}
+- fsdiff: fix snapm.fsdiff.treewalk.FsEntry.mtime type hint
+- fsdiff: support added/removed files in snapm.fsdiff.contentdiff
+- fsdiff: add FsDiffRecord.json()
+- fsdiff: add to_dict() methods to FileChange, ContentDiff, FsDiffRecord
+- fsdiff: fix FsEntry xattr typing (bytes, not bytearray)
+- fsdiff: ensure FsEntry.broken_symlink is always set
+- doc: add missing snapm.progress automodule to snapm.rst
+- snapm: make snapm._progress and snapm._fsdiff public
+- fsdiff: beautify FsDiffRecord.__str__() output
+- fsdiffer: make DiffOptions.include_system_dirs default False
+- fsdiff: plumb quiet through DiffOptions
+- fsdiff: render mtime values as datetime.fromtimestamp()
+- fsdiff: don't output empty FsDiffRecord fields
+- fsdiff: lower case ChangeType.description
+- fsdiff: export FsDiffRecord at package level
+- fsdiff: add DiffOptions.from_cmd_args() class method
+- snapm: forbid snapshot sets named '.'
+- snapm: iterate over copy of _active_progress
+- progress: move registration into .start() and pass register to __init__()
+- progress: fix Throbber._check_started() :raises: docstring
+- progress: output newlines after progress/throbber output and erase
+- command: use ProgressAwareHandler in setup_logging()
+- progress: add reset_position() callbacks
+- snapm: add progress registration and ProgressAwareHandler
+- snapm: don't re-export Progress classes through snapm
+- progress: add comment for _last_frame_width() edge case
+- progress: test cancel() coverage and error message
+- progress: fix ThrobberBase._do_end() docstring
+- progress: add _check_started() callbacks in NullThrobber
+- progress: restore _check_in_progress() in ProgressBase.end()
+- doc: add snapm._fsdiff modules and tidy up
+- tests: add initial unit test coverage for snapm._fsdiff
+- fsdiff: handle non-existent from_path in a/b tree
+- fsdiff: add core comparison classes
+- tests: work around python3-magic/file-magic schism on Ubuntu
+- snapm: add fsdiff debug subsystem
+- fsdiff: establish package structure
+- mounts: fix incorrect SnapshotSet instead of name in name_map
+- progress: support optional Throbber "style" parameter
+- progress: support multi-character throbber frames
+- progress: output a newline before Throbber.end() message if no_clear
+- tests: verify SimpleProgress is returned when stream has no isatty
+- tests: add coverage for re-raising KeyboardInterrupt in TermControl()
+- progress: add flush helper tests
+- progress: raise SystemExit from _flush_with_broken_pipe_guard()
+- progress add cancel() method to progress classes
+- progress: add Throbber classes for unbounded busy work
+- progress: hide cursor while displaying Progress
+- progress: default stream from term_control in get_progress
+- progress: add missing header docstring
+- progress: move _flush_with_broken_pipe_guard() above ProgressBase
+- mounts: refactor Mount into ABC MountBase and system/snapset classes
+- progress: fix BrokenPipeError in progress classes
+- progress: fix bar width formatting for SimpleProgress
+- progress: don't let message overflow the terminal width
+- doc: add missing snapm.manager._mounts to Sphinx docs
+- progress: mark done as unused in NullProgress._do_progress()
+- progress: drop redundant self.total = 0 in Progress._do_end()
+- progress: don't output initial bar in Progress._do_start()
+- progress: drop no-longer existent _do_start total docstrings
+- progress: factor out color init and re-raise system exceptions
+- doc: improve snapm._progress doc strings
+- progress: rename QuietProgress -> NullProgress
+- progress: catch BaseException rather than Exception
+- test: fix test_term_control_init_success BLACK != GREEN
+- progress: fix wrong ANSI foreground color initialisation
+- progress: add no_clear=False arg to not erase progress bar at end
+- progress: drop unused cleared member from Progress
+- progress: add type hints to members
+- progress: build colors with enumerate() rather than zip()
+- progress: factor out width calc via class vars for static content size
+- progress: factor out common code and checks in start(), progress(), end()
+- tests: add test coverage for snapm._progress module
+- doc: expand :exclude-members: to cover more internal names
+- snapm: add terminal control and progress bar abstraction
+- container_tests: fix GcPolicyParamsTimeline.evaluate() tests edge case
+- stratis: re-use initial DBus query for StratisSnapshot cache
+- container_tests: add GcPolicyParamsTimeline progressive test
+- schedule: fix TIMELINE policy retention indexing when keep_x > len(x)
+- schedule: Fix COUNT policy off-by-many when keep_count > len(sets)
+- snapm: make -c|--config mandatory for create-scheduled/gc
+- snapm: report garbage collected snapshot set names
+- schedule: fix timeline classification to allow multiple categories
+- schedule: add gc decision debug logging
+- snapm: add new snapm.schedule debug subsystem
+- snapm: fix renaming of snapshot sets with boot entries
+- tests: fix subprocess.run checks and cleanup order in MountTestsBase
+- boot: hex escape literal ':' in values passed to systemd.{mount,swap}-extra
+- tests: add further test coverage for Mounts and Mount
+- tests: add more paths to cleanup.sh
+- tests: move is_redhat() to tests for re-use in tests/test_mounts.py
+- snapm: ensure stability of Selection.__str__() attribute ordering
+- snapm: allow starting a shell in a snapset chroot
+- snapm: allow invoking an arbitrary command in a snapset chroot
+- mounts: Selectionize Mounts.find_mounts()
+- snapm: move select_snapshot_set and select_snapshot to snapm
+- snapm: add mount status and root to snapm snapset list report
+- snapm: add Mounted OriginMounted and MountRoot to snapm snapset show
+- command: add snapset mount and umount verbs
+- manager: initialise mount manager
+- snapm: add snapm.manager.{Mounts,Mount}
+- snapm: refactor _build_snapset_mount_list() and hoist to snapm
+- snapm: hoist _find_snapset_root() up to snapm
+- boot: expand use of FsTabReader and avoid repeat reads of /etc/fstab
+- snapm: add get_device_fstype() helper
+- snapm: fix get_device_path() argument ordering
+- snapm: fix exit status test in snapm.get_device_path()
+- snapm: hoist get_device_path up to snapm
+- snapm: hoist Fstab up to snapm and rename FsTabReader
+- lvm2: fix _is_lvm_device() for non-device file systems
+- tests: skip test_create_snapshot_set_no_provider if !ismount("/boot")
+
 * Mon Nov 03 2025 Bryn M. Reeves <bmr@redhat.com> - 0.5.1-1
 - dist: don't recursively set SELinux contexts for /run/snapm
 - tests: coverage for Scheduler.edit()
