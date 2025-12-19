@@ -70,5 +70,14 @@ class TestFsDiffer(unittest.TestCase):
         res = fsd.compare_roots(mount_a, mount_b)
 
         self.assertEqual(res, expected_res)
-        mock_load.assert_called_with(mount_a, mount_b, fsd.options, expires=fsd.cache_expires)
-        mock_save.assert_called_with(mount_a, mount_b, expected_res)
+        mock_load.assert_called_with(
+            mount_a,
+            mount_b,
+            fsd.options,
+            expires=fsd.cache_expires,
+            quiet=False,
+            term_control=fsd._term_control,
+        )
+        mock_save.assert_called_with(
+            mount_a, mount_b, expected_res, quiet=False, term_control=fsd._term_control
+        )

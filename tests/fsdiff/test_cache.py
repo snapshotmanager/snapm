@@ -13,6 +13,12 @@ import pickle
 from unittest.mock import MagicMock, patch, mock_open
 from uuid import uuid4
 
+try:
+    import zstandard as zstd
+    _HAVE_ZSTD = True
+except ModuleNotFoundError:
+    _HAVE_ZSTD = False
+
 from snapm import SnapmSystemError, SnapmNotFoundError, SnapmInvalidIdentifierError
 from snapm.fsdiff import cache
 from snapm.fsdiff.options import DiffOptions
@@ -107,25 +113,35 @@ class TestCache(unittest.TestCase):
         with self.assertRaisesRegex(SnapmInvalidIdentifierError, "mount_a == mount_b"):
             cache._cache_name(self.mount_a, self.mount_a, self.results)
 
+    @unittest.skipIf(not _HAVE_ZSTD, "No zstandard module")
     @patch("snapm.fsdiff.cache._check_dirs")
-    @patch("lzma.open")
+    @patch("zstandard.ZstdCompressor")
     @patch("pickle.dump")
-    def test_save_cache(self, mock_dump, mock_lzma, mock_check):
+    def test_save_cache(self, mock_dump, mock_zstd, mock_check):
+        results = self.results
+
+        cache_rec = MagicMock(spec=FsDiffRecord)
+        cache_rec.path = "/some/path"
+        results._records = [cache_rec]
+        results.count = 1
+        results.__len__.return_value = 1
         cache.save_cache(self.mount_a, self.mount_b, self.results)
         mock_check.assert_called_once()
-        mock_lzma.assert_called_once()
+        mock_zstd.assert_called_once()
 
+    @unittest.skipIf(not _HAVE_ZSTD, "No zstandard module")
     @patch("snapm.fsdiff.cache._check_dirs")
     @patch("os.listdir")
-    @patch("lzma.open")
+    @patch("zstandard.ZstdDecompressor")
     @patch("pickle.load")
-    def test_load_cache_success(self, mock_load, mock_lzma, mock_listdir, mock_check):
+    @patch('builtins.open', new_callable=mock_open)
+    def test_load_cache_success(self, mock_file, mock_load, mock_zstd, mock_listdir, mock_check):
         # Setup matching filename
         uuid_a = cache._root_uuid(self.mount_a)
         uuid_b = self.mount_b.snapset.uuid
         # Ensure timestamp is fresh enough
         valid_ts = cache.floor(cache.datetime.now().timestamp())
-        fname = f"{uuid_a}.{uuid_b}.123.{valid_ts}.cache"
+        fname = f"{uuid_a}.{uuid_b}.123.{valid_ts}.cache.zstd"
 
         mock_listdir.return_value = [fname]
 
@@ -133,6 +149,7 @@ class TestCache(unittest.TestCase):
         cached_res = MagicMock(spec=FsDiffResults)
         cached_res.timestamp = 12345678
         cached_res.options = self.results.options
+        cached_res.count = 1
 
         # Set up returned record object
         cached_rec = MagicMock(spec=FsDiffRecord)
@@ -198,15 +215,12 @@ class TestGetDictSize(unittest.TestCase):
     """Test automatic lzma dictionary sizing"""
 
     def setUp(self):
-        # Constants for byte calculations
-        self.KiB = 1024
-        self.MiB = 1024 * 1024
-        self.GiB = 1024 * 1024 * 1024
-
         # Expected return values based on the function's logic
-        self.SIZE_SMALL = 256 * self.MiB
-        self.SIZE_MEDIUM = 512 * self.MiB
-        self.SIZE_LARGE = 1536 * self.MiB
+        self.LIMIT_EXTRA_SMALL = 1000
+        self.LIMIT_SMALL = 10000
+        self.LIMIT_MEDIUM = 50000
+        self.LIMIT_LARGE = 100000
+        self.LIMIT_EXTRA_LARGE = 0
 
     def _create_meminfo_content(self, total_memory_kb):
         """Helper to create fake /proc/meminfo content."""
@@ -220,44 +234,69 @@ class TestGetDictSize(unittest.TestCase):
 
 
     @patch('builtins.open', new_callable=mock_open)
-    def test_small_memory_returns_256mib(self, mock_file):
-        """Test that systems with <= 4GiB memory get the small dict size."""
-        # Case: 2 GiB system
-        mem_kb = 2 * 1024 * 1024 # 2 GiB in kB
+    def test_very_small_memory_returns_1000(self, mock_file):
+        """Test that systems with <= 2GiB memory get the small results max."""
+        # Case: 1 GiB system
+        mem_kb = 1 * 1024 * 1024 # 1 GiB in kB
         mock_file.return_value.readlines.return_value = (
             self._create_meminfo_content(mem_kb)
         )
 
-        # Call the function (assuming it's imported or defined in scope)
-        result = cache._get_dict_size()
+        result = cache._get_max_cache_records()
 
-        self.assertEqual(result, self.SIZE_SMALL, "Should return 256MiB for 2GiB RAM")
+        self.assertEqual(result, self.LIMIT_EXTRA_SMALL, "Should return 1000 for 1GiB RAM")
 
     @patch('builtins.open', new_callable=mock_open)
-    def test_medium_memory_returns_512mib(self, mock_file):
-        """Test that systems with > 4GiB and <= 8GiB memory get the medium dict size."""
+    def test_small_memory_returns_10000(self, mock_file):
+        """Test that systems with <= 4GiB memory get the small results max."""
+        # Case: 3 GiB system
+        mem_kb = 3 * 1024 * 1024 # 2 GiB in kB
+        mock_file.return_value.readlines.return_value = (
+            self._create_meminfo_content(mem_kb)
+        )
+
+        result = cache._get_max_cache_records()
+
+        self.assertEqual(result, self.LIMIT_SMALL, "Should return 10000 for 3GiB RAM")
+
+    @patch('builtins.open', new_callable=mock_open)
+    def test_medium_memory_returns_50000(self, mock_file):
+        """Test that systems with > 4GiB and <= 8GiB memory get the medium results max."""
         # Case: 6 GiB system
         mem_kb = 6 * 1024 * 1024 # 6 GiB in kB
         mock_file.return_value.readlines.return_value = (
             self._create_meminfo_content(mem_kb)
         )
 
-        result = cache._get_dict_size()
+        result = cache._get_max_cache_records()
 
-        self.assertEqual(result, self.SIZE_MEDIUM, "Should return 512MiB for 6GiB RAM")
+        self.assertEqual(result, self.LIMIT_MEDIUM, "Should return 50000 for 6GiB RAM")
 
     @patch('builtins.open', new_callable=mock_open)
-    def test_large_memory_returns_1536mib(self, mock_file):
-        """Test that systems with > 8GiB memory get the large dict size."""
+    def test_large_memory_returns_100000(self, mock_file):
+        """Test that systems with > 8GiB memory get the large results max."""
+        # Case: 10 GiB system
+        mem_kb = 10 * 1024 * 1024 # 10 GiB in kB
+        mock_file.return_value.readlines.return_value = (
+            self._create_meminfo_content(mem_kb)
+        )
+
+        result = cache._get_max_cache_records()
+
+        self.assertEqual(result, self.LIMIT_LARGE, "Should return 100000 for 10GiB RAM")
+
+    @patch('builtins.open', new_callable=mock_open)
+    def test_extra_large_memory_returns_0(self, mock_file):
+        """Test that systems with > 16GiB memory get the extra_large results max."""
         # Case: 32 GiB system
         mem_kb = 32 * 1024 * 1024 # 32 GiB in kB
         mock_file.return_value.readlines.return_value = (
             self._create_meminfo_content(mem_kb)
         )
 
-        result = cache._get_dict_size()
+        result = cache._get_max_cache_records()
 
-        self.assertEqual(result, self.SIZE_LARGE, "Should return 1536MiB for 32GiB RAM")
+        self.assertEqual(result, self.LIMIT_EXTRA_LARGE, "Should return 0 for 32GiB RAM")
 
     @patch('builtins.open', new_callable=mock_open)
     def test_boundary_conditions(self, mock_file):
@@ -274,8 +313,8 @@ class TestGetDictSize(unittest.TestCase):
             self._create_meminfo_content(mem_kb)
         )
 
-        result = cache._get_dict_size()
-        self.assertEqual(result, self.SIZE_MEDIUM, "Exactly 4GiB should trigger Medium size based on loop logic")
+        result = cache._get_max_cache_records()
+        self.assertEqual(result, self.LIMIT_MEDIUM, "Exactly 4GiB should trigger Medium size based on loop logic")
 
     @patch('builtins.open', new_callable=mock_open)
     # We patch the logger to suppress output and prevent NameError if _log_debug is not imported
@@ -285,7 +324,7 @@ class TestGetDictSize(unittest.TestCase):
         # Malformed line (string instead of int)
         mock_file.return_value.readlines.return_value = ["MemTotal:       NotANumber kB\n"]
 
-        result = cache._get_dict_size()
+        result = cache._get_max_cache_records()
 
         # Should default to memtotal = 0, which falls into the 'small' bucket
-        self.assertEqual(result, self.SIZE_SMALL, "Parsing error should fallback to small dict size")
+        self.assertEqual(result, self.LIMIT_EXTRA_SMALL, "Parsing error should fallback to small results max")

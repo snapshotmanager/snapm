@@ -12,12 +12,18 @@ from typing import Optional, TYPE_CHECKING
 from stat import S_ISDIR, S_ISLNK
 from datetime import datetime
 from uuid import UUID, uuid5
+from io import RawIOBase
 from math import floor
 import logging
 import pickle
 import os
 
-import zstandard as zstd
+try:
+    import zstandard as zstd
+
+    _HAVE_ZSTD = True
+except ModuleNotFoundError:
+    _HAVE_ZSTD = False
 
 from snapm import (
     NAMESPACE_SNAPSHOT_SET,
@@ -26,7 +32,7 @@ from snapm import (
     SnapmInvalidIdentifierError,
 )
 
-from snapm.progress import ProgressFactory, TermControl
+from snapm.progress import ProgressBase, ProgressFactory, TermControl
 
 from .engine import FsDiffResults
 from .options import DiffOptions
@@ -66,25 +72,34 @@ _ROOT_TIMESTAMP = 282528000
 _PROC_MEMINFO = "/proc/meminfo"
 
 
-def _get_dict_size() -> int:
+def _get_max_cache_records() -> int:
     """
-    Return an LZMA dictionary size appropriate for the running system:
+    Generate an approximate maximum number of ``FsDiffRecord`` objects
+    to attempt to compress given system memory constraints if the
+    DiffOptions.include_content_diff option is enabled. This is a
+    safety guard to avoid attempting to compress huge results sets on
+    memory constrained systems.
 
-    memtotal <= 4GiB: 256MiB
-    memtotal <= 8GiB: 512MiB
-    else: 1536GiB
+    memtotal <= 4GiB: 10,000
+    memtotal <= 8GiB: 50,000
+    else: unlimited
 
-    :returns: An integer dictionary size value.
+    :returns: The maximum number of records to attempt to compress, or
+              zero for unlimited.
     :rtype: ``int``
     """
-    small = 0  # 0GiB - 4GiB
+    extra_small = 0  # < 2GiB
+    small = 2 * 2**30  # 2GiB - 4GiB
     medium = 4 * 2**30  # 4GiB - 8GiB
-    large = 8 * 2**30  # > 8GIB
+    large = 8 * 2**30  # 8GIB - 16GiB
+    extra_large = 16 * 2**30  # > 16GiB
 
-    dict_sizes = {
-        small: 256 * 2**20,  # 256MiB
-        medium: 512 * 2**20,  # 512MiB
-        large: 1536 * 2**20,  # 1536MiB
+    record_limits = {
+        extra_small: 1000,
+        small: 10000,
+        medium: 50000,
+        large: 100000,
+        extra_large: 0,
     }
 
     memtotal = 0
@@ -100,12 +115,12 @@ def _get_dict_size() -> int:
                         "Could not parse %s line '%s': %s", _PROC_MEMINFO, line, err
                     )
 
-    dict_size = dict_sizes[small]
-    for thresh, size in dict_sizes.items():
+    limit = record_limits[extra_small]
+    for thresh, value in record_limits.items():
         if memtotal >= thresh:
-            dict_size = size
+            limit = value
 
-    return dict_size
+    return limit
 
 
 def _check_cache_dir(dirpath: str, mode: int, name: str) -> str:
@@ -278,11 +293,12 @@ def load_cache(
     term_control = term_control or TermControl(color=color)
 
     for file_name in os.listdir(_DIFF_CACHE_DIR):
-        if not file_name.endswith(".cache"):
+        if not file_name.endswith(".cache") and not file_name.endswith(".cache.zstd"):
             continue
 
         try:
-            (load_uuid_a, load_uuid_b, _, timestamp_str, _) = file_name.split(".")
+            cache_name = file_name.removesuffix(".zstd")
+            (load_uuid_a, load_uuid_b, _, timestamp_str, _) = cache_name.split(".")
         except ValueError:
             _log_debug("Ignoring cache file with malformed name: %s", file_name)
             continue
@@ -302,6 +318,53 @@ def load_cache(
                 _log_error("Error unlinking stale cache file %s: %s", file_name, err)
             continue
 
+        def _read_cache(
+            reader: RawIOBase,
+            progress: ProgressBase,
+            name: str,
+        ) -> Optional[FsDiffResults]:
+            # We trust the files in /var/cache/snapm/diffcache since the
+            # directory is root-owned and has restrictive permissions that
+            # are verified on startup.
+            candidate = pickle.load(reader)
+            _log_debug(
+                "Loaded candidate diffcache pickle from %s with options=%s",
+                name,
+                repr(candidate.options),
+            )
+            if candidate.options != options:
+                _log_debug("Ignoring cache entry with mismatched options")
+                return None
+            records = []
+            start_time = datetime.now()
+            try:
+                progress.start(candidate.count)
+            except AttributeError as attr_err:
+                _log_debug(
+                    "Ignoring mistmatched cache file version: %s",
+                    attr_err,
+                )
+                return None
+            for i in range(0, candidate.count):
+                progress.progress(i, f"Loading record {i}")
+                try:
+                    record = pickle.load(reader)
+                    if record is None:
+                        break
+                    records.append(record)
+                except KeyboardInterrupt:
+                    progress.cancel("Quit!")
+                    raise
+                except EOFError:
+                    progress.end("Done!")
+                    break
+            end_time = datetime.now()
+            progress.end(
+                f"Loaded {candidate.count} records from diffcache "
+                f"in {end_time - start_time}"
+            )
+            return FsDiffResults(records, candidate.options, candidate.timestamp)
+
         if str(uuid_a) == load_uuid_a and str(uuid_b) == load_uuid_b:
             progress = ProgressFactory.get_progress(
                 "Loading cache",
@@ -309,53 +372,19 @@ def load_cache(
                 term_control=term_control,
             )
             try:
-                dctx = zstd.ZstdDecompressor()
-                with open(cache_path, mode="rb") as fp:
-                    with dctx.stream_reader(fp) as reader:
-                        # We trust the files in /var/cache/snapm/diffcache since the
-                        # directory is root-owned and has restrictive permissions that
-                        # are verified on startup.
-                        candidate = pickle.load(reader)
-                        _log_debug(
-                            "Loaded candidate diffcache pickle from %s with options=%s",
-                            file_name,
-                            repr(candidate.options),
-                        )
-                        if candidate.options != options:
-                            _log_debug("Ignoring cache entry with mismatched options")
+                if cache_path.endswith(".zstd"):
+                    dctx = zstd.ZstdDecompressor()
+                    with open(cache_path, mode="rb") as fp:
+                        with dctx.stream_reader(fp) as reader:
+                            results = _read_cache(reader, progress, file_name)
+                            if results is None:
+                                continue
+                else:
+                    with open(cache_path, mode="rb") as reader:
+                        results = _read_cache(reader, progress, file_name)
+                        if results is None:
                             continue
-                        records = []
-                        start_time = datetime.now()
-                        try:
-                            progress.start(candidate.count)
-                        except AttributeError as attr_err:
-                            _log_debug(
-                                "Ignoring mistmatched cache file version: %s",
-                                attr_err,
-                            )
-                            continue
-                        for i in range(0, candidate.count):
-                            progress.progress(i, f"Loading record {i}")
-                            try:
-                                record = pickle.load(reader)
-                                if record is None:
-                                    break
-                                records.append(record)
-                            except KeyboardInterrupt:
-                                progress.cancel("Quit!")
-                                raise
-                            except EOFError:
-                                progress.end("Done!")
-                                break
-                        end_time = datetime.now()
-                        progress.end(
-                            f"Loaded {candidate.count} records from diffcache "
-                            f"in {end_time - start_time}"
-                        )
-                        return FsDiffResults(
-                            records, candidate.options, candidate.timestamp
-                        )
-
+                return results
             except (OSError, EOFError, pickle.UnpicklingError) as err:
                 _log_warn("Deleting unreadable cache file %s: %s", file_name, err)
                 try:
@@ -403,11 +432,6 @@ def save_cache(
     cache_name = _cache_name(mount_a, mount_b, results)
     cache_path = os.path.join(_DIFF_CACHE_DIR, cache_name)
 
-    # Empty version of FsDiffResults to pickle.
-    results_save = FsDiffResults(
-        [], results.options, results.timestamp, count=len(results)
-    )
-
     term_control = term_control or TermControl(color=color)
 
     progress = ProgressFactory.get_progress(
@@ -417,16 +441,53 @@ def save_cache(
     )
 
     count = len(results)
+    limit = _get_max_cache_records()
+    compress = False
+    if limit and count > limit and results.options.include_content_diffs:
+        _log_warn(
+            "Large cache with include_content_diffs detected: "
+            "disabling cache compression (%d > %d)",
+            count,
+            limit,
+        )
+    else:
+        if _HAVE_ZSTD:
+            compress = True
+            cache_path += ".zstd"
+
     start_time = datetime.now()
     progress.start(count)
+
+    def _write_cache(results: FsDiffResults, writer: RawIOBase):
+        """
+        Helper to write pickled cache objects to file.
+
+        :param save: The empty results header to save.
+        :type save: ``FsDiffResults``
+        :param results: The diff results containing records to cache.
+        :type results: ``FsDiffResults``.
+        :param writer: A writeable object to write to.
+        :type writer: ``RawIOBase``
+        """
+        # Empty version of FsDiffResults to pickle.
+        results_save = FsDiffResults(
+            [], results.options, results.timestamp, count=len(results)
+        )
+        pickle.dump(results_save, writer)
+        for i, record in enumerate(results):
+            progress.progress(i, f"Saving record {i}")
+            pickle.dump(record, writer)
+
     try:
-        cctx = zstd.ZstdCompressor()
-        with open(cache_path, "wb") as fc:
-            with cctx.stream_writer(fc) as compressor:
-                pickle.dump(results_save, compressor)
-                for i, record in enumerate(results):
-                    progress.progress(i, f"Saving record {i}")
-                    pickle.dump(record, compressor)
+        if compress:
+            cctx = zstd.ZstdCompressor()
+            with open(cache_path, "wb") as fc:
+                with cctx.stream_writer(fc) as compressor:
+                    _write_cache(results, compressor)
+        else:
+            with open(cache_path, "wb") as fp:
+                _write_cache(results, fp)
+
     except (OSError, pickle.PicklingError) as err:
         _log_error("Error saving cache: %s", err)
         progress.cancel()
