@@ -309,50 +309,52 @@ def load_cache(
                 term_control=term_control,
             )
             try:
-                with zstd.open(cache_path, mode="rb") as fp:
-                    # We trust the files in /var/cache/snapm/diffcache since the
-                    # directory is root-owned and has restrictive permissions that
-                    # are verified on startup.
-                    candidate = pickle.load(fp)
-                    _log_debug(
-                        "Loaded candidate diffcache pickle from %s with options=%s",
-                        file_name,
-                        repr(candidate.options),
-                    )
-                    if candidate.options != options:
-                        _log_debug("Ignoring cache entry with mismatched options")
-                        continue
-                    records = []
-                    start_time = datetime.now()
-                    try:
-                        progress.start(candidate.count)
-                    except AttributeError as attr_err:
+                dctx = zstd.ZstdDecompressor()
+                with open(cache_path, mode="rb") as fp:
+                    with dctx.stream_reader(fp) as reader:
+                        # We trust the files in /var/cache/snapm/diffcache since the
+                        # directory is root-owned and has restrictive permissions that
+                        # are verified on startup.
+                        candidate = pickle.load(reader)
                         _log_debug(
-                            "Ignoring mistmatched cache file version: %s",
-                            attr_err,
+                            "Loaded candidate diffcache pickle from %s with options=%s",
+                            file_name,
+                            repr(candidate.options),
                         )
-                        continue
-                    for i in range(0, candidate.count):
-                        progress.progress(i, f"Loading record {i}")
+                        if candidate.options != options:
+                            _log_debug("Ignoring cache entry with mismatched options")
+                            continue
+                        records = []
+                        start_time = datetime.now()
                         try:
-                            record = pickle.load(fp)
-                            if record is None:
+                            progress.start(candidate.count)
+                        except AttributeError as attr_err:
+                            _log_debug(
+                                "Ignoring mistmatched cache file version: %s",
+                                attr_err,
+                            )
+                            continue
+                        for i in range(0, candidate.count):
+                            progress.progress(i, f"Loading record {i}")
+                            try:
+                                record = pickle.load(reader)
+                                if record is None:
+                                    break
+                                records.append(record)
+                            except KeyboardInterrupt:
+                                progress.cancel("Quit!")
+                                raise
+                            except EOFError:
+                                progress.end("Done!")
                                 break
-                            records.append(record)
-                        except KeyboardInterrupt:
-                            progress.cancel("Quit!")
-                            raise
-                        except EOFError:
-                            progress.end("Done!")
-                            break
-                    end_time = datetime.now()
-                    progress.end(
-                        f"Loaded {candidate.count} records from diffcache "
-                        f"in {end_time - start_time}"
-                    )
-                    return FsDiffResults(
-                        records, candidate.options, candidate.timestamp
-                    )
+                        end_time = datetime.now()
+                        progress.end(
+                            f"Loaded {candidate.count} records from diffcache "
+                            f"in {end_time - start_time}"
+                        )
+                        return FsDiffResults(
+                            records, candidate.options, candidate.timestamp
+                        )
 
             except (OSError, EOFError, pickle.UnpicklingError) as err:
                 _log_warn("Deleting unreadable cache file %s: %s", file_name, err)
@@ -418,14 +420,13 @@ def save_cache(
     start_time = datetime.now()
     progress.start(count)
     try:
-        with zstd.open(cache_path, mode="wb") as fp:
-            pickle.dump(results_save, fp)
-            fp.flush()
-            for i, record in enumerate(results):
-                progress.progress(i, f"Saving record {i}")
-                pickle.dump(record, fp)
-                fp.flush()
-
+        cctx = zstd.ZstdCompressor()
+        with open(cache_path, "wb") as fc:
+            with cctx.stream_writer(fc) as compressor:
+                pickle.dump(results_save, compressor)
+                for i, record in enumerate(results):
+                    progress.progress(i, f"Saving record {i}")
+                    pickle.dump(record, compressor)
     except (OSError, pickle.PicklingError) as err:
         _log_error("Error saving cache: %s", err)
         progress.cancel()
