@@ -15,8 +15,9 @@ from uuid import UUID, uuid5
 from math import floor
 import logging
 import pickle
-import lzma
 import os
+
+import zstandard as zstd
 
 from snapm import (
     NAMESPACE_SNAPSHOT_SET,
@@ -308,7 +309,7 @@ def load_cache(
                 term_control=term_control,
             )
             try:
-                with lzma.open(cache_path, mode="rb") as fp:
+                with zstd.open(cache_path, mode="rb") as fp:
                     # We trust the files in /var/cache/snapm/diffcache since the
                     # directory is root-owned and has restrictive permissions that
                     # are verified on startup.
@@ -353,7 +354,7 @@ def load_cache(
                         records, candidate.options, candidate.timestamp
                     )
 
-            except (OSError, EOFError, lzma.LZMAError, pickle.UnpicklingError) as err:
+            except (OSError, EOFError, pickle.UnpicklingError) as err:
                 _log_warn("Deleting unreadable cache file %s: %s", file_name, err)
                 try:
                     os.unlink(cache_path)
@@ -400,8 +401,6 @@ def save_cache(
     cache_name = _cache_name(mount_a, mount_b, results)
     cache_path = os.path.join(_DIFF_CACHE_DIR, cache_name)
 
-    filters = ({"id": lzma.FILTER_LZMA2, "dict_size": _get_dict_size()},)
-
     # Empty version of FsDiffResults to pickle.
     results_save = FsDiffResults(
         [], results.options, results.timestamp, count=len(results)
@@ -419,7 +418,7 @@ def save_cache(
     start_time = datetime.now()
     progress.start(count)
     try:
-        with lzma.open(cache_path, mode="wb", filters=filters) as fp:
+        with zstd.open(cache_path, mode="wb") as fp:
             pickle.dump(results_save, fp)
             fp.flush()
             for i, record in enumerate(results):
@@ -427,7 +426,7 @@ def save_cache(
                 pickle.dump(record, fp)
                 fp.flush()
 
-    except (OSError, lzma.LZMAError, pickle.PicklingError) as err:
+    except (OSError, pickle.PicklingError) as err:
         _log_error("Error saving cache: %s", err)
         progress.cancel()
         raise
