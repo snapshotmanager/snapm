@@ -8,8 +8,8 @@
 """
 File system diff cache
 """
+from typing import Optional, TYPE_CHECKING
 from stat import S_ISDIR, S_ISLNK
-from typing import TYPE_CHECKING
 from datetime import datetime
 from uuid import UUID, uuid5
 from math import floor
@@ -24,6 +24,8 @@ from snapm import (
     SnapmNotFoundError,
     SnapmInvalidIdentifierError,
 )
+
+from snapm.progress import ProgressFactory, TermControl
 
 from .engine import FsDiffResults
 from .options import DiffOptions
@@ -87,7 +89,6 @@ def _get_dict_size() -> int:
     memtotal = 0
     with open(_PROC_MEMINFO, "r", encoding="utf8") as fp:
         for line in fp.readlines():
-            print(f"Line: {line}")
             if line.startswith("MemTotal"):
                 try:
                     _, memtotal_str, _ = line.split()
@@ -219,6 +220,9 @@ def load_cache(
     mount_b: "Mount",
     options: DiffOptions,
     expires: int = _DEFAULT_EXPIRES,
+    color: str = "auto",
+    quiet: bool = False,
+    term_control: Optional[TermControl] = None,
 ) -> FsDiffResults:
     """
     Attempt to load diff cache for ``mount_a``/``mount_b``.
@@ -230,6 +234,15 @@ def load_cache(
     :param expires: The expiry time for cache entries in seconds (0 to disable
                     expiry).
     :type expires: ``int``
+    :param color: A string to control color diff rendering: "auto",
+                  "always", or "never".
+    :type color: ``str``
+    :param quiet: Suppress progress output.
+    :type quiet: ``bool``
+    :param term_control: An optional ``TermControl`` instance to use for
+                         formatting. The supplied instance overrides any
+                         ``color`` argument if set.
+    :type term_control: ``Optional[TermControl]``
     :returns: The diff results for the comparison.
     :rtype: ``FsDiffResults``
 
@@ -261,6 +274,8 @@ def load_cache(
             "Attempting to load diff results with mount_a == mount_b"
         )
 
+    term_control = term_control or TermControl(color=color)
+
     for file_name in os.listdir(_DIFF_CACHE_DIR):
         if not file_name.endswith(".cache"):
             continue
@@ -287,6 +302,11 @@ def load_cache(
             continue
 
         if str(uuid_a) == load_uuid_a and str(uuid_b) == load_uuid_b:
+            progress = ProgressFactory.get_progress(
+                "Loading cache",
+                quiet=quiet,
+                term_control=term_control,
+            )
             try:
                 with lzma.open(cache_path, mode="rb") as fp:
                     # We trust the files in /var/cache/snapm/diffcache since the
@@ -302,14 +322,33 @@ def load_cache(
                         _log_debug("Ignoring cache entry with mismatched options")
                         continue
                     records = []
-                    while True:
+                    start_time = datetime.now()
+                    try:
+                        progress.start(candidate.count)
+                    except AttributeError as attr_err:
+                        _log_debug(
+                            "Ignoring mistmatched cache file version: %s",
+                            attr_err,
+                        )
+                        continue
+                    for i in range(0, candidate.count):
+                        progress.progress(i, f"Loading record {i}")
                         try:
                             record = pickle.load(fp)
                             if record is None:
                                 break
                             records.append(record)
+                        except KeyboardInterrupt:
+                            progress.cancel("Quit!")
+                            raise
                         except EOFError:
+                            progress.end("Done!")
                             break
+                    end_time = datetime.now()
+                    progress.end(
+                        f"Loaded {candidate.count} records from diffcache "
+                        f"in {end_time - start_time}"
+                    )
                     return FsDiffResults(
                         records, candidate.options, candidate.timestamp
                     )
@@ -323,11 +362,22 @@ def load_cache(
                         "Error unlinking unreadable cache file %s: %s", file_name, err2
                     )
                 continue
+            except KeyboardInterrupt:
+                if progress.total:
+                    progress.cancel("Quit!")
+                raise
 
     raise SnapmNotFoundError("No matching cache file found")
 
 
-def save_cache(mount_a: "Mount", mount_b: "Mount", results: FsDiffResults):
+def save_cache(
+    mount_a: "Mount",
+    mount_b: "Mount",
+    results: FsDiffResults,
+    color: str = "auto",
+    quiet: bool = False,
+    term_control: Optional[TermControl] = None,
+):
     """
     Attempt to save diff cache for ``mount_a``/``mount_b``.
 
@@ -335,6 +385,14 @@ def save_cache(mount_a: "Mount", mount_b: "Mount", results: FsDiffResults):
     :type mount_a: ``Mount``
     :param mount_b: The second (right hand) mount to store.
     :type mount_b: ``Mount``
+    :param color: A string to control color diff rendering: "auto",
+                  "always", or "never".
+    :type color: ``str``
+    :param quiet: Suppress progress output.
+    :type quiet: ``bool``
+    :param term_control: An optional ``TermControl`` instance to use for
+                         formatting. The supplied instance overrides any
+                         ``color`` argument if set.
     :param results: The results to cache.
     :type results: ``FsDiffResults``
     """
@@ -345,12 +403,39 @@ def save_cache(mount_a: "Mount", mount_b: "Mount", results: FsDiffResults):
     filters = ({"id": lzma.FILTER_LZMA2, "dict_size": _get_dict_size()},)
 
     # Empty version of FsDiffResults to pickle.
-    results_save = FsDiffResults([], results.options, results.timestamp)
+    results_save = FsDiffResults(
+        [], results.options, results.timestamp, count=len(results)
+    )
 
-    with lzma.open(cache_path, mode="wb", filters=filters) as fp:
-        pickle.dump(results_save, fp)
-        for record in results:
-            pickle.dump(record, fp)
+    term_control = term_control or TermControl(color=color)
+
+    progress = ProgressFactory.get_progress(
+        "Saving cache",
+        quiet=quiet,
+        term_control=term_control,
+    )
+
+    count = len(results)
+    start_time = datetime.now()
+    progress.start(count)
+    try:
+        with lzma.open(cache_path, mode="wb", filters=filters) as fp:
+            pickle.dump(results_save, fp)
+            fp.flush()
+            for i, record in enumerate(results):
+                progress.progress(i, f"Saving record {i}")
+                pickle.dump(record, fp)
+                fp.flush()
+
+    except (OSError, lzma.LZMAError, pickle.PicklingError) as err:
+        _log_error("Error saving cache: %s", err)
+        progress.cancel()
+        raise
+    except KeyboardInterrupt:
+        progress.cancel("Quit!")
+        raise
+    end_time = datetime.now()
+    progress.end(f"Saved {count} records to diffcache in {end_time - start_time}")
 
 
 __all__ = [

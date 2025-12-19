@@ -101,7 +101,14 @@ class FsDiffer:
                 self.cache_expires,
             )
             cached_results = (
-                load_cache(mount_a, mount_b, self.options, expires=self.cache_expires)
+                load_cache(
+                    mount_a,
+                    mount_b,
+                    self.options,
+                    expires=self.cache_expires,
+                    quiet=self.options.quiet,
+                    term_control=self._term_control,
+                )
                 if self.cache
                 else None
             )
@@ -144,7 +151,13 @@ class FsDiffer:
         )
         if self.cache:
             try:
-                save_cache(mount_a, mount_b, results)
+                save_cache(
+                    mount_a,
+                    mount_b,
+                    results,
+                    quiet=self.options.quiet,
+                    term_control=self._term_control,
+                )
             except (OSError, lzma.LZMAError) as err:
                 _log_info(
                     "Failed to save diff cache for %s/%s: %s",
