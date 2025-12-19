@@ -59,6 +59,52 @@ _DEFAULT_EXPIRES = -1
 #: Magic number for fake root file system timestamp
 _ROOT_TIMESTAMP = 282528000
 
+#: Location of the meminfo file in procfs
+_PROC_MEMINFO = "/proc/meminfo"
+
+
+def _get_dict_size() -> int:
+    """
+    Return an LZMA dictionary size appropriate for the running system:
+
+    memtotal <= 4GiB: 256MiB
+    memtotal <= 8GiB: 512MiB
+    else: 1536GiB
+
+    :returns: An integer dictionary size value.
+    :rtype: ``int``
+    """
+    small = 0  # 0GiB - 4GiB
+    medium = 4 * 2**30  # 4GiB - 8GiB
+    large = 8 * 2**30  # > 8GIB
+
+    dict_sizes = {
+        small: 256 * 2**20,  # 256MiB
+        medium: 512 * 2**20,  # 512MiB
+        large: 1536 * 2**20,  # 1536MiB
+    }
+
+    memtotal = 0
+    with open(_PROC_MEMINFO, "r", encoding="utf8") as fp:
+        for line in fp.readlines():
+            print(f"Line: {line}")
+            if line.startswith("MemTotal"):
+                try:
+                    _, memtotal_str, _ = line.split()
+                    memtotal = int(memtotal_str) * 2**10
+                    break
+                except ValueError as err:
+                    _log_debug(
+                        "Could not parse %s line '%s': %s", _PROC_MEMINFO, line, err
+                    )
+
+    dict_size = dict_sizes[small]
+    for thresh, size in dict_sizes.items():
+        if memtotal >= thresh:
+            dict_size = size
+
+    return dict_size
+
 
 def _check_cache_dir(dirpath: str, mode: int, name: str) -> str:
     """
@@ -240,7 +286,7 @@ def load_cache(
 
         if str(uuid_a) == load_uuid_a and str(uuid_b) == load_uuid_b:
             try:
-                with lzma.open(cache_path, "rb") as fp:
+                with lzma.open(cache_path, mode="rb") as fp:
                     # We trust the files in /var/cache/snapm/diffcache since the
                     # directory is root-owned and has restrictive permissions that
                     # are verified on startup.
@@ -282,7 +328,9 @@ def save_cache(mount_a: "Mount", mount_b: "Mount", results: FsDiffResults):
     cache_name = _cache_name(mount_a, mount_b, results)
     cache_path = os.path.join(_DIFF_CACHE_DIR, cache_name)
 
-    with lzma.open(cache_path, "wb") as fp:
+    filters = ({"id": lzma.FILTER_LZMA2, "dict_size": _get_dict_size()},)
+
+    with lzma.open(cache_path, mode="wb", filters=filters) as fp:
         pickle.dump(results, fp)
 
 

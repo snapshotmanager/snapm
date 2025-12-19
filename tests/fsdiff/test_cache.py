@@ -186,3 +186,100 @@ class TestCache(unittest.TestCase):
 
         with self.assertRaises(SnapmNotFoundError):
             cache.load_cache(self.mount_a, self.mount_b, DiffOptions(content_only=False))
+
+
+class TestGetDictSize(unittest.TestCase):
+    """Test automatic lzma dictionary sizing"""
+
+    def setUp(self):
+        # Constants for byte calculations
+        self.KiB = 1024
+        self.MiB = 1024 * 1024
+        self.GiB = 1024 * 1024 * 1024
+
+        # Expected return values based on the function's logic
+        self.SIZE_SMALL = 256 * self.MiB
+        self.SIZE_MEDIUM = 512 * self.MiB
+        self.SIZE_LARGE = 1536 * self.MiB
+
+    def _create_meminfo_content(self, total_memory_kb):
+        """Helper to create fake /proc/meminfo content."""
+        return [
+            f"MemTotal:       {total_memory_kb} kB\n",
+            "MemFree:         10000 kB\n",
+            "MemAvailable:    2733124 kB\n",
+            "Buffers:           11848 kB\n",
+            "Cached:           930844 kB\n",
+        ]
+
+
+    @patch('builtins.open', new_callable=mock_open)
+    def test_small_memory_returns_256mib(self, mock_file):
+        """Test that systems with <= 4GiB memory get the small dict size."""
+        # Case: 2 GiB system
+        mem_kb = 2 * 1024 * 1024 # 2 GiB in kB
+        mock_file.return_value.readlines.return_value = (
+            self._create_meminfo_content(mem_kb)
+        )
+
+        # Call the function (assuming it's imported or defined in scope)
+        result = cache._get_dict_size()
+
+        self.assertEqual(result, self.SIZE_SMALL, "Should return 256MiB for 2GiB RAM")
+
+    @patch('builtins.open', new_callable=mock_open)
+    def test_medium_memory_returns_512mib(self, mock_file):
+        """Test that systems with > 4GiB and <= 8GiB memory get the medium dict size."""
+        # Case: 6 GiB system
+        mem_kb = 6 * 1024 * 1024 # 6 GiB in kB
+        mock_file.return_value.readlines.return_value = (
+            self._create_meminfo_content(mem_kb)
+        )
+
+        result = cache._get_dict_size()
+
+        self.assertEqual(result, self.SIZE_MEDIUM, "Should return 512MiB for 6GiB RAM")
+
+    @patch('builtins.open', new_callable=mock_open)
+    def test_large_memory_returns_1536mib(self, mock_file):
+        """Test that systems with > 8GiB memory get the large dict size."""
+        # Case: 32 GiB system
+        mem_kb = 32 * 1024 * 1024 # 32 GiB in kB
+        mock_file.return_value.readlines.return_value = (
+            self._create_meminfo_content(mem_kb)
+        )
+
+        result = cache._get_dict_size()
+
+        self.assertEqual(result, self.SIZE_LARGE, "Should return 1536MiB for 32GiB RAM")
+
+    @patch('builtins.open', new_callable=mock_open)
+    def test_boundary_conditions(self, mock_file):
+        """Test the exact boundary of 4GiB (should be small/medium threshold logic)."""
+        # The function logic is: if memtotal >= thresh: dict_size = dict_sizes[thresh]
+        # dict_sizes keys are: 0, 4GiB, 8GiB.
+
+        # Case: Exactly 4 GiB
+        # 4GiB >= 4GiB is True, so it should upgrade to Medium size (512MiB)
+        # *Note: Verify if this matches your intention. Based on your code:
+        # medium = 4 * 2**30. If memtotal == 4GiB, it matches medium key.
+        mem_kb = 4 * 1024 * 1024
+        mock_file.return_value.readlines.return_value = (
+            self._create_meminfo_content(mem_kb)
+        )
+
+        result = cache._get_dict_size()
+        self.assertEqual(result, self.SIZE_MEDIUM, "Exactly 4GiB should trigger Medium size based on loop logic")
+
+    @patch('builtins.open', new_callable=mock_open)
+    # We patch the logger to suppress output and prevent NameError if _log_debug is not imported
+    @patch.dict(globals(), {'_log_debug': MagicMock()})
+    def test_malformed_meminfo_defaults_to_small(self, mock_file):
+        """Test that parsing errors result in the safe default (Small size)."""
+        # Malformed line (string instead of int)
+        mock_file.return_value.readlines.return_value = ["MemTotal:       NotANumber kB\n"]
+
+        result = cache._get_dict_size()
+
+        # Should default to memtotal = 0, which falls into the 'small' bucket
+        self.assertEqual(result, self.SIZE_SMALL, "Parsing error should fallback to small dict size")
