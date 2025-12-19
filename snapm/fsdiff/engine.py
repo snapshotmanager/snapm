@@ -493,11 +493,16 @@ class FsDiffResults:
     ]
 
     def __init__(
-        self, records: List[FsDiffRecord], options: DiffOptions, timestamp: int
+        self,
+        records: List[FsDiffRecord],
+        options: DiffOptions,
+        timestamp: int,
+        count: int = 0,
     ):
         self._records = records
         self.options = options
         self.timestamp = timestamp
+        self.count = count or len(records)
 
     def __repr__(self) -> str:
         """
@@ -675,6 +680,10 @@ class FsDiffResults:
         :param color: A string to control color diff rendering: "auto",
                       "always", or "never".
         :type color: ``str``
+        :param term_control: An optional ``TermControl`` instance to use for
+                             formatting. The supplied instance overrides any
+                             ``color`` argument if set.
+        :type term_control: ``Optional[TermControl]``
         :returns: unified diff string description of file system changes.
         :rtype: ``str``
         """

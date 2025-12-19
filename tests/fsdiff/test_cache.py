@@ -16,7 +16,7 @@ from uuid import uuid4
 from snapm import SnapmSystemError, SnapmNotFoundError, SnapmInvalidIdentifierError
 from snapm.fsdiff import cache
 from snapm.fsdiff.options import DiffOptions
-from snapm.fsdiff.engine import FsDiffResults
+from snapm.fsdiff.engine import FsDiffRecord, FsDiffResults
 
 class TestCache(unittest.TestCase):
     def setUp(self):
@@ -114,7 +114,6 @@ class TestCache(unittest.TestCase):
         cache.save_cache(self.mount_a, self.mount_b, self.results)
         mock_check.assert_called_once()
         mock_lzma.assert_called_once()
-        mock_dump.assert_called_with(self.results, mock_lzma.return_value.__enter__.return_value)
 
     @patch("snapm.fsdiff.cache._check_dirs")
     @patch("os.listdir")
@@ -130,13 +129,20 @@ class TestCache(unittest.TestCase):
 
         mock_listdir.return_value = [fname]
 
-        # Setup returned object with matching options
-        cached_res = MagicMock()
+        # Setup returned results object with matching options
+        cached_res = MagicMock(spec=FsDiffResults)
+        cached_res.timestamp = 12345678
         cached_res.options = self.results.options
-        mock_load.return_value = cached_res
+
+        # Set up returned record object
+        cached_rec = MagicMock(spec=FsDiffRecord)
+        cached_rec.path = "/some/path"
+        mock_load.side_effect = [cached_res, cached_rec, None]
 
         res = cache.load_cache(self.mount_a, self.mount_b, self.results.options)
-        self.assertEqual(res, cached_res)
+        self.assertEqual(res.options, cached_res.options)
+        self.assertEqual(res.timestamp, cached_res.timestamp)
+        self.assertEqual(res[0].path, "/some/path")
 
     @patch("snapm.fsdiff.cache._check_dirs")
     def test_load_cache_identity_error(self, mock_check):

@@ -212,6 +212,8 @@ def _cache_name(mount_a: "Mount", mount_b: "Mount", results: FsDiffResults) -> s
 
 
 # pylint: disable=too-many-locals
+# pylint: disable=too-many-branches
+# pylint: disable=too-many-statements
 def load_cache(
     mount_a: "Mount",
     mount_b: "Mount",
@@ -291,6 +293,27 @@ def load_cache(
                     # directory is root-owned and has restrictive permissions that
                     # are verified on startup.
                     candidate = pickle.load(fp)
+                    _log_debug(
+                        "Loaded candidate diffcache pickle from %s with options=%s",
+                        file_name,
+                        repr(candidate.options),
+                    )
+                    if candidate.options != options:
+                        _log_debug("Ignoring cache entry with mismatched options")
+                        continue
+                    records = []
+                    while True:
+                        try:
+                            record = pickle.load(fp)
+                            if record is None:
+                                break
+                            records.append(record)
+                        except EOFError:
+                            break
+                    return FsDiffResults(
+                        records, candidate.options, candidate.timestamp
+                    )
+
             except (OSError, EOFError, lzma.LZMAError, pickle.UnpicklingError) as err:
                 _log_warn("Deleting unreadable cache file %s: %s", file_name, err)
                 try:
@@ -300,15 +323,6 @@ def load_cache(
                         "Error unlinking unreadable cache file %s: %s", file_name, err2
                     )
                 continue
-
-            _log_debug(
-                "Loaded candidate diffcache pickle from %s with options=%s",
-                file_name,
-                repr(candidate.options),
-            )
-            if candidate.options == options:
-                return candidate
-            _log_debug("Ignoring cache entry with mismatched options")
 
     raise SnapmNotFoundError("No matching cache file found")
 
@@ -330,8 +344,13 @@ def save_cache(mount_a: "Mount", mount_b: "Mount", results: FsDiffResults):
 
     filters = ({"id": lzma.FILTER_LZMA2, "dict_size": _get_dict_size()},)
 
+    # Empty version of FsDiffResults to pickle.
+    results_save = FsDiffResults([], results.options, results.timestamp)
+
     with lzma.open(cache_path, mode="wb", filters=filters) as fp:
-        pickle.dump(results, fp)
+        pickle.dump(results_save, fp)
+        for record in results:
+            pickle.dump(record, fp)
 
 
 __all__ = [
