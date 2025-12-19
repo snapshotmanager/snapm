@@ -149,6 +149,11 @@ class FsDiffer:
         results = self.diff_engine.compute_diff(
             tree_a, tree_b, self.options, self._term_control
         )
+
+        # "We don't need that anymore." -- Praga Khan, 1993.
+        del tree_a
+        del tree_b
+
         if self.cache:
             try:
                 save_cache(
