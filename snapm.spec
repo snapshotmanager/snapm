@@ -1,7 +1,7 @@
 %global summary A set of tools for managing snapshots
 
 Name:		snapm
-Version:	0.6.0
+Version:	0.6.1
 Release:	1%{?dist}
 Summary:	%{summary}
 
@@ -145,6 +145,36 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_tmpfilesdir}
 %doc doc
 
 %changelog
+* Thu Jan 01 2026 Bryn M. Reeves <bmr@redhat.com> - 0.6.1-1
+- snapm: remove --include-system-dirs from snapm.command and snapm(8)
+- fsdiff: disable hash read chunking for /proc paths and add error handling
+- fsdiff: extend _ALWAYS_EXCLUDE_PATTERNS to more /proc and /sys paths
+- fsdiff: ignore FileNotFoundException for magic /proc symlinks
+- fsdiff: fix load_cache()/save_cache() for empty FsDiffResults
+- fsdiff: tolerate missing python magic and work around Magic.close() bug
+- fsdiff: ctrl char glitches when diff -o tree --color=always | less -R
+- fsdiff: extend classification/file type patterns to cover binary logs
+- fsdiff: pass strip_prefix to FileTypeDetector.detect_file_type()
+- fsdiff: extend text-like file type guessing with common text paths
+- progress: fix log message being swallowed by progress bar
+- scripts: add setpaths.sh developer script
+- manager: remove unused _requested_provider argument
+- doc: add plugin priorites to user_guide.rst
+- tests: add coverage for plugin priorities and limits
+- tests: reduce number of volumes used in device-backed tests
+- plugin: make Plugin into an ABC
+- snapm: make Snapshot into an ABC
+- lvm2: relax restrictions on Lvm2Cow.can_snapshot()
+- manager: implement support for plugin priorities
+- plugin: enhance plugin config warn logging with file name
+- snapm: add plugin debug subsystem
+- plugin: set static priorities for LVM2, Stratis
+- plugin: extend Plugin.__init__() to set priority attr from config
+- doc: add mount manager to user_guide.rst
+- doc: mention Larry Ewing and link to archived Tux page
+- doc: add difference engine to README.md
+- doc: add new snapm logo to README.md
+
 * Sun Dec 21 2025 Bryn M. Reeves <bmr@redhat.com> - 0.6.0-1
 - fsdifff: change compressed file extension to xz/zst
 - tests: add command coverage for snapset {diff,diffreport}
