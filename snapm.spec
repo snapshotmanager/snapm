@@ -1,7 +1,7 @@
 %global summary A set of tools for managing snapshots
 
 Name:		snapm
-Version:	0.5.2
+Version:	0.5.3
 Release:	1%{?dist}
 Summary:	%{summary}
 
@@ -141,6 +141,11 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_tmpfilesdir}
 %doc doc
 
 %changelog
+* Mon Jan 05 2026 Bryn M. Reeves <bmr@redhat.com> - 0.5.3-1
+- boot: hex escape literal ':' in values passed to systemd.{mount,swap}-extra
+- container_tests: add GcPolicyParamsTimeline progressive test
+- schedule: fix TIMELINE policy retention indexing when keep_x > len(x)
+
 * Sun Nov 16 2025 Bryn M. Reeves <bmr@redhat.com> - 0.5.2-1
 - schedule: Fix COUNT policy off-by-many when keep_count > len(sets)
 - snapm: make -c|--config mandatory for create-scheduled/gc
