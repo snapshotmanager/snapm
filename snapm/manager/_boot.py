@@ -166,6 +166,17 @@ class Fstab:
         return f"Fstab(path='{self.path}')"
 
 
+def _escape(orig: str) -> str:
+    """
+    Convert literal ':' characters into the hexadecimal escape (\x3a): systemd
+    will decode these when reading systemd.{mount,swap}-extra values.
+
+    :param orig: The original string possibly containing literal ':' characters.
+    :returns: An escaped string with ':' replaced by '\x3a'.
+    """
+    return orig.replace(":", r"\x3a")
+
+
 def _get_uts_release():
     """
     Return the UTS release (kernel version) of the running system.
@@ -348,9 +359,9 @@ def _build_snapset_mount_list(snapset):
                 continue
             if where in snapset_mounts:
                 snapshot = snapset.snapshot_by_mount_point(where)
-                mounts.append(f"{snapshot.devpath}:{where}:{fstype}:{options}")
+                mounts.append(f"{_escape(snapshot.devpath)}:{_escape(where)}:{fstype}:{_escape(options)}")
             else:
-                mounts.append(f"{what}:{where}:{fstype}:{options}")
+                mounts.append(f"{_escape(what)}:{_escape(where)}:{fstype}:{_escape(options)}")
     return mounts
 
 
@@ -372,7 +383,7 @@ def _build_swap_list():
             what, _, fstype, options, _, _ = parts
             if fstype != "swap":
                 continue
-            swaps.append(f"{what}:{options}")
+            swaps.append(f"{_escape(what)}:{_escape(options)}")
     return swaps
 
 

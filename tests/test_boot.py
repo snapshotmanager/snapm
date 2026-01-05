@@ -59,6 +59,30 @@ class BootTestsSimple(unittest.TestCase):
             sys_machine_id = id_file.read().strip()
         self.assertEqual(sys_machine_id, boot._get_machine_id())
 
+    def test__escape(self):
+        esc_strings = {
+            ":": r"\x3a",
+            "nothingtodo": r"nothingtodo",
+            "already\\x3aescaped": r"already\x3aescaped",
+            "192.168.123.123:/foo/bar": r"192.168.123.123\x3a/foo/bar",
+            "x-useropt=bar:baz,quux:foo": r"x-useropt=bar\x3abaz,quux\x3afoo",
+            "defaults:somethingelse": r"defaults\x3asomethingelse",
+            "::::": r"\x3a\x3a\x3a\x3a",
+            "fe80::5052:ff:fe40:18a8/64": r"fe80\x3a\x3a5052\x3aff\x3afe40\x3a18a8/64",
+        }
+        for to_esc in esc_strings:
+            esc = boot._escape(to_esc)
+            self.assertEqual(esc, esc_strings[to_esc])
+            self.assertEqual(boot._escape(esc), esc)  # idempotent
+
+    def test__escape_None(self):
+        with self.assertRaises((AttributeError, TypeError)):
+            boot._escape(None)
+
+    def test__escape_not_a_string(self):
+        with self.assertRaises((AttributeError, TypeError)):
+            boot._escape(1)
+
 
 @unittest.skipIf(not have_root(), "requires root privileges")
 class BootTestsBase(unittest.TestCase):
