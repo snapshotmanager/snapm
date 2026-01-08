@@ -24,7 +24,7 @@ import snapm.manager._mounts as mounts
 import snapm.manager
 from snapm.manager.plugins import format_snapshot_name, encode_mount_point
 
-from tests import have_root, is_redhat
+from tests import have_root, is_redhat, in_rh_ci
 from ._util import LoopBackDevices, LvmLoopBacked
 
 ETC_FSTAB = "/etc/fstab"
@@ -587,6 +587,7 @@ class MountsTests(MountsTestsBase):
         # 4. Check that the mount was still discovered (it's just a warning)
         self.assertEqual(len(new_mounts._mounts), 1)
 
+    @unittest.skipIf(in_rh_ci(), "Tests running in RH CI pipeline")
     def test_discover_incomplete_api_mounts(self):
         """
         Tests that discovery logs warnings for missing API mounts.
@@ -626,6 +627,7 @@ class MountsTestsExec(MountsTestsBase):
     """
     need_exec = True
 
+    @unittest.skipIf(in_rh_ci(), "Tests running in RH CI pipeline")
     def test_mount_exec(self):
         """
         Tests running a command chrooted inside a mounted snapshot set.

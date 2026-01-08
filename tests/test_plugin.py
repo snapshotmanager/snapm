@@ -14,7 +14,7 @@ log = logging.getLogger()
 
 import snapm.manager.plugins as plugins
 
-from tests import MockPlugin
+from tests import MockPlugin, in_rh_ci
 
 
 def _find_device_mounts():
@@ -85,6 +85,7 @@ class PluginTests(unittest.TestCase):
         for name, origin in snapshot_names.items():
             self.assertEqual(None, plugins.parse_snapshot_name(name, origin))
 
+    @unittest.skipIf(in_rh_ci(), "Tests running in RH CI pipeline")
     def test_device_from_mount_point(self):
         mounts = _find_device_mounts()
         for mount in mounts:

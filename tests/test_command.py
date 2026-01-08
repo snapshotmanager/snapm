@@ -18,7 +18,7 @@ from snapm.report import ReportOpts
 import snapm.manager
 import boom
 
-from tests import MockArgs, have_root, BOOT_ROOT_TEST
+from tests import MockArgs, have_root, BOOT_ROOT_TEST, in_rh_ci
 
 from ._util import LvmLoopBacked, StratisLoopBacked
 
@@ -1079,6 +1079,7 @@ class CommandTests(CommandTestsBase):
         args += ["snapset", "delete", "hourly.0"]
         self.assertEqual(command.main(args), 0)
 
+    @unittest.skipIf(in_rh_ci(), "Tests running in RH CI pipeline")
     def test_main_snapset_diff(self):
         """Test 'snapm snapset diff' command."""
         self.manager.create_snapshot_set("testset0", self.mount_points())
@@ -1110,6 +1111,7 @@ class CommandTests(CommandTestsBase):
         self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
         self.manager.delete_snapshot_sets(snapm.Selection(name="testset1"))
 
+    @unittest.skipIf(in_rh_ci(), "Tests running in RH CI pipeline")
     def test_main_snapset_diffreport(self):
         """Test 'snapm snapset diffreport' command."""
         self.manager.create_snapshot_set("testset0", self.mount_points())

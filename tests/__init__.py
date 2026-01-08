@@ -101,3 +101,10 @@ def have_root():
     and ``False`` otherwise.
     """
     return os.geteuid() == 0 and os.getegid() == 0
+
+
+def in_rh_ci():
+    """Return ``True`` if we appear to be running in CentOS/RHEL CI,
+    and ``False`` otherwise.
+    """
+    return os.environ.get("IN_RH_CI", None) is not None
