@@ -142,7 +142,7 @@ jobs:
       matrix:
         firmware: [bios, uefi]
         storage: [lvm, lvm-thin]
-        base_os: [fedora41, fedora42, centos-stream9, centos-stream10]
+        base_os: [fedora42, centos-stream9, centos-stream10]
     steps:
       - uses: actions/checkout@v4
       - name: Install virt dependencies
