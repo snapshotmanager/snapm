@@ -142,7 +142,7 @@ jobs:
       matrix:
         firmware: [bios, uefi]
         storage: [lvm, lvm-thin]
-        base_os: [fedora42, centos-stream9, centos-stream10]
+        base_os: [fedora42, fedora43, centos-stream9, centos-stream10]
     steps:
       - uses: actions/checkout@v4
       - name: Install virt dependencies
@@ -160,13 +160,13 @@ jobs:
           # Log host virtualization capabilities
           sudo virt-host-validate qemu || true
           if [[ "$BASE_OS" == fedora* ]]; then
-            # fedora: add fedora 41/42
-            OSINFO_COMMIT="cd15af7d8746eba99267d5fa1ac99ed9532fcbc4"
-            sudo wget -O /usr/share/osinfo/os/fedoraproject.org/fedora-41.xml https://gitlab.com/libosinfo/osinfo-db/-/raw/${OSINFO_COMMIT}/data/os/fedoraproject.org/fedora-41.xml.in
+            # fedora: add fedora 42/43
+            OSINFO_COMMIT="91fe868553246b6af94df08db678cc4c9adc693f"
             sudo wget -O /usr/share/osinfo/os/fedoraproject.org/fedora-42.xml https://gitlab.com/libosinfo/osinfo-db/-/raw/${OSINFO_COMMIT}/data/os/fedoraproject.org/fedora-42.xml.in
+            sudo wget -O /usr/share/osinfo/os/fedoraproject.org/fedora-43.xml https://gitlab.com/libosinfo/osinfo-db/-/raw/${OSINFO_COMMIT}/data/os/fedoraproject.org/fedora-43.xml.in
             # Sanity-check that osinfo picks up the new definitions
-            osinfo-query os short-id=fedora41 -f short-id || { echo "fedora41 not recognized by osinfo" >&2; exit 1; }
             osinfo-query os short-id=fedora42 -f short-id || { echo "fedora42 not recognized by osinfo" >&2; exit 1; }
+            osinfo-query os short-id=fedora43 -f short-id || { echo "fedora43 not recognized by osinfo" >&2; exit 1; }
           fi
       - name: Install Seabios bios.bin into /usr/share/qemu
         if: ${{ matrix.firmware == 'bios' }}
