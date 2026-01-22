@@ -1162,9 +1162,9 @@ class DiffEngine:
         )
 
         # Map of paths to their corresponding FsDiffRecord list
-        diff_map = defaultdict(list)
+        diff_map = defaultdict(tuple)
         for diff in diffs:
-            diff_map[diff.path].append(diff)
+            diff_map[diff.path] += (diff,)
 
         # Set of diff records to be pruned as a result of move detection.
         to_prune = set()
