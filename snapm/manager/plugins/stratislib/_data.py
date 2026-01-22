@@ -64,9 +64,7 @@ try:
     MODev = managed_object_class("MODev", blockdev_spec)
     devs = mo_query_builder(blockdev_spec)
 
-    Manager = make_class(
-        "Manager", ET.fromstring(SPECS[MANAGER_INTERFACE]), timeout
-    )
+    Manager = make_class("Manager", ET.fromstring(SPECS[MANAGER_INTERFACE]), timeout)
 
     ObjectManager = make_class(
         "ObjectManager",
@@ -85,9 +83,7 @@ try:
         </property>
     </interface>
     """
-    Manager0 = make_class(
-        "Manager0", ET.fromstring(manager_spec), timeout
-    )
+    Manager0 = make_class("Manager0", ET.fromstring(manager_spec), timeout)
 
 # Do not expect to get coverage on Generation errors.
 # These can only occurs if the XML data in _SPECS is ill-formed; we have
