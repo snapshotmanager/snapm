@@ -1207,6 +1207,10 @@ class DiffEngine:
                 if not candidates:
                     continue
 
+                candidates = [c for c in candidates if c[0] not in used_dests]
+                if not candidates:
+                    continue
+
                 _log_debug_fsdiff_extra(
                     "Checking candidate destinations: %s",
                     ", ".join(cand_path for cand_path, entry in candidates),
