@@ -412,8 +412,8 @@ class TestDiffEngine(unittest.TestCase):
 
         This covers "if dest_path == path: continue" in _detect_moves.
 
-        We need a file that is MODIFIED (so it's in changed_paths):
-        If /a(h1) -> /a(h1) (metadata change), it is in changed_paths.
+        We need a file that is MODIFIED (so it's in modified_paths):
+        If /a(h1) -> /a(h1) (metadata change), it is in modified_paths.
         The move detector sees /a(h1) in A, looks up h1 in B, finds /a.
         dest_path (/a) == path (/a), so it continues (NOT a move).
 

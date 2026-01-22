@@ -1171,7 +1171,7 @@ class DiffEngine:
             and diff.old_entry.is_file
             and diff.old_entry.content_hash
         }
-        changed_paths = {
+        modified_paths = {
             diff.path
             for diff in diffs
             if diff.diff_type == DiffType.MODIFIED
@@ -1181,10 +1181,10 @@ class DiffEngine:
         }
         _log_debug_fsdiff(
             "Initialising move detection: "
-            "added_paths=%s, removed_paths=%s, changed_paths=%s",
+            "added_paths=%s, removed_paths=%s, modified_paths=%s",
             ", ".join(sorted(added_paths)),
             ", ".join(sorted(removed_paths)),
-            ", ".join(sorted(changed_paths)),
+            ", ".join(sorted(modified_paths)),
         )
         _log_debug_fsdiff_extra(
             "Diff records: %s", ",\n\n".join(str(diff) for diff in diffs)
@@ -1252,9 +1252,9 @@ class DiffEngine:
                 _log_debug_fsdiff("Selected candidate %s: %s", dest_path, entry_b)
                 # Only treat as a move if we have the corresponding REMOVED/ADDED
                 # records; otherwise this is more likely a copy/duplicate.
-                if path not in (removed_paths | changed_paths):
+                if path not in (removed_paths | modified_paths):
                     continue
-                if dest_path not in (added_paths | changed_paths):
+                if dest_path not in (added_paths | modified_paths):
                     continue
                 if dest_path == path:
                     continue
