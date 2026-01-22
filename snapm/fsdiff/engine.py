@@ -805,25 +805,6 @@ class DiffEngine:
         self.change_detector = ChangeDetector()
         self.content_differ = ContentDifferManager()
 
-    def _effective_changes(
-        self, changes: List[FileChange], options: DiffOptions
-    ) -> List[FileChange]:
-        """
-        Elide ignored change types in ``changes``.
-
-        :param changes: The list of changes to examine.
-        :type changes: ``List[FileChange]``
-        :param options: Effective diff options.
-        :type options: ``DiffOptions``
-        :returns: Changes pruned according to options.
-        :rtype: ``List[FileChange]``
-        """
-        return (
-            [c for c in changes if c.change_type == ChangeType.CONTENT]
-            if options.content_only
-            else changes
-        )
-
     # pylint: disable=too-many-locals
     # pylint: disable=too-many-branches
     # pylint: disable=too-many-statements
@@ -898,10 +879,7 @@ class DiffEngine:
                     diff_record = FsDiffRecord(path, DiffType.ADDED, new_entry=entry_b)
                     changes = self.change_detector.detect_added(entry_b, options)
 
-                    # Optionally restrict to content-only changes.
-                    effective_changes = self._effective_changes(changes, options)
-
-                    for change in effective_changes:
+                    for change in changes:
                         diff_record.add_change(change)
 
                     # Generate content diff if requested, appropriate, and within size limits
@@ -930,10 +908,7 @@ class DiffEngine:
 
                     changes = self.change_detector.detect_removed(entry_a, options)
 
-                    # Optionally restrict to content-only changes.
-                    effective_changes = self._effective_changes(changes, options)
-
-                    for change in effective_changes:
+                    for change in changes:
                         diff_record.add_change(change)
 
                     # Generate content diff if requested, appropriate, and within size limits
@@ -976,23 +951,19 @@ class DiffEngine:
                         entry_a, entry_b, options
                     )
 
-                    # Optionally restrict to content-only changes.
-                    effective_changes = self._effective_changes(changes, options)
-
                     # If there are no effective changes (e.g. only metadata changes in
                     # content-only mode), skip this path entirely.
-                    if not effective_changes:
+                    if not changes:
                         continue
 
                     diff_record = FsDiffRecord(
                         path, DiffType.MODIFIED, entry_a, entry_b
                     )
-                    for change in effective_changes:
+                    for change in changes:
                         diff_record.add_change(change)
 
                     has_content_change = any(
-                        change.change_type == ChangeType.CONTENT
-                        for change in effective_changes
+                        change.change_type == ChangeType.CONTENT for change in changes
                     )
 
                     # Generate content diff if requested, appropriate, and within size limits
@@ -1269,8 +1240,7 @@ class DiffEngine:
 
                 diff_record = FsDiffRecord(path, DiffType.MOVED, entry_a, entry_b)
                 changes = self.change_detector.detect_changes(entry_a, entry_b, options)
-                effective_changes = self._effective_changes(changes, options)
-                for change in effective_changes:
+                for change in changes:
                     diff_record.add_change(change)
 
                 prune = [

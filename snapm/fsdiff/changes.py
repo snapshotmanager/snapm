@@ -108,6 +108,25 @@ class ChangeDetector:
     Class to detect and classify changes in ``FsEntry`` objects.
     """
 
+    def _effective_changes(
+        self, changes: List[FileChange], options: DiffOptions
+    ) -> List[FileChange]:
+        """
+        Elide ignored change types in ``changes``.
+
+        :param changes: The list of changes to examine.
+        :type changes: ``List[FileChange]``
+        :param options: Effective diff options.
+        :type options: ``DiffOptions``
+        :returns: Changes pruned according to options.
+        :rtype: ``List[FileChange]``
+        """
+        return (
+            [c for c in changes if c.change_type == ChangeType.CONTENT]
+            if options.content_only
+            else changes
+        )
+
     # pylint: disable=too-many-branches
     def detect_added(
         self,
@@ -144,7 +163,7 @@ class ChangeDetector:
                         "content hash changed",
                     )
                 )
-            return changes
+            return self._effective_changes(changes, options)
 
         # Content changes (for regular files)
         if new_entry.is_file:
@@ -238,7 +257,7 @@ class ChangeDetector:
                 )
             )
 
-        return changes
+        return self._effective_changes(changes, options)
 
     # pylint: disable=too-many-branches
     def detect_removed(
@@ -276,7 +295,7 @@ class ChangeDetector:
                         "content hash changed",
                     )
                 )
-            return changes
+            return self._effective_changes(changes, options)
 
         # Content changes (for regular files)
         if old_entry.is_file:
@@ -370,7 +389,7 @@ class ChangeDetector:
                 )
             )
 
-        return changes
+        return self._effective_changes(changes, options)
 
     # pylint: disable=too-many-branches
     def detect_changes(
@@ -415,7 +434,7 @@ class ChangeDetector:
                             "content hash changed",
                         )
                     )
-            return changes
+            return self._effective_changes(changes, options)
 
         # Content changes (for regular files)
         if old_entry.is_file and new_entry.is_file:
@@ -522,4 +541,4 @@ class ChangeDetector:
                 )
             )
 
-        return changes
+        return self._effective_changes(changes, options)
