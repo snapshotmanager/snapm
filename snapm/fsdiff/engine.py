@@ -1233,8 +1233,6 @@ class DiffEngine:
                     continue
                 if dest_path == path:
                     continue
-                if dest_path in used_dests:
-                    continue
 
                 # Found a move: count it
                 moves += 1
