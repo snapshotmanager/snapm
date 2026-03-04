@@ -12,7 +12,7 @@ from typing import List, Optional, TextIO, Union, TYPE_CHECKING
 from abc import ABC, abstractmethod
 from uuid import UUID, uuid5
 from datetime import datetime
-from stat import S_ISBLK
+from stat import S_ISBLK, S_ISDIR, S_ISLNK
 from enum import Enum
 import collections
 import subprocess
@@ -2369,6 +2369,61 @@ def build_snapset_mount_list(snapset: SnapshotSet, fstab: FsTabReader):
         else:
             mounts.append((what, where, fstype, options))
     return mounts
+
+
+def _check_snapm_dir(dirpath: str, mode: int, name: str) -> str:
+    """
+    Check for the presence of a snapm runtime directory and create
+    it if necessary.
+
+    :param dirpath: Path to the directory
+    :param mode: Permissions mode for the directory
+    :param name: Human-readable name for error messages
+    :returns: The directory path
+    """
+    # Check if path exists and validate it's a proper directory
+    existed = os.path.exists(dirpath)
+    if existed:
+        try:
+            st = os.lstat(dirpath)
+            if S_ISLNK(st.st_mode):
+                raise SnapmSystemError(f"{name} {dirpath} is a symlink (not secure)")
+            if not S_ISDIR(st.st_mode):
+                raise SnapmSystemError(
+                    f"{name} {dirpath} exists but is not a directory"
+                )
+        except OSError as err:
+            raise SnapmSystemError(f"Failed to stat {name} {dirpath}: {err}") from err
+
+    # Create directory if it doesn't exist
+    try:
+        os.makedirs(dirpath, mode=mode, exist_ok=True)
+    except OSError as err:
+        raise SnapmSystemError(f"Failed to create {name} {dirpath}: {err}") from err
+
+    # Ensure correct permissions (only if directory already existed and differs)
+    if existed:
+        try:
+            st = os.stat(dirpath)
+            if (st.st_mode & 0o777) != mode:
+                os.chmod(dirpath, mode)
+        except OSError as err:
+            raise SnapmSystemError(
+                f"Failed to set permissions on {name} {dirpath}: {err}"
+            ) from err
+
+    # Validate final permissions
+    try:
+        st = os.stat(dirpath)
+        if (st.st_mode & 0o777) != mode:
+            raise SnapmSystemError(
+                f"{name} {dirpath} has incorrect permissions: "
+                f"{st.st_mode & 0o777:04o} (expected {mode:04o})"
+            )
+    except OSError as err:
+        raise SnapmSystemError(f"Failed to verify {name} {dirpath}: {err}") from err
+
+    return dirpath
 
 
 __all__ = [
