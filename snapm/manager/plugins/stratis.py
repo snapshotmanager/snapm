@@ -610,13 +610,7 @@ class Stratis(Plugin):
                  ``False`` otherwise.
         :rtype: ``bool``
         """
-        if not self.limits.snapshots_per_pool:
-            return False
-        if pool not in self.pools:
-            return False
-        if self.pools[pool] + 1 > self.limits.snapshots_per_pool:
-            return True
-        return False
+        return self._check_limit(self.limits.snapshots_per_pool, self.pools, pool)
 
     # pylint: disable=too-many-arguments
     def check_create_snapshot(
