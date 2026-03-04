@@ -21,6 +21,7 @@ except ModuleNotFoundError:
     _HAVE_ZSTD = False
 
 from snapm import SnapmSystemError, SnapmNotFoundError, SnapmInvalidIdentifierError
+from snapm._snapm import _check_snapm_dir
 from snapm.fsdiff import cache
 from snapm.fsdiff.options import DiffOptions
 from snapm.fsdiff.engine import FsDiffRecord, FsDiffResults
@@ -53,14 +54,14 @@ class TestCache(unittest.TestCase):
         # Case 1: Directory does not exist, create it
         mock_exists.return_value = False
         mock_stat.return_value.st_mode = 0o700
-        cache._check_cache_dir("/tmp/cache", 0o700, "test")
+        _check_snapm_dir("/tmp/cache", 0o700, "test")
         mock_makedirs.assert_called_with("/tmp/cache", mode=0o700, exist_ok=True)
 
         # Case 2: Directory exists, permissions are correct
         mock_exists.return_value = True
         mock_lstat.return_value.st_mode = stat.S_IFDIR | 0o700
         mock_stat.return_value.st_mode = stat.S_IFDIR | 0o700
-        cache._check_cache_dir("/tmp/cache", 0o700, "test")
+        _check_snapm_dir("/tmp/cache", 0o700, "test")
         mock_chmod.assert_not_called()
 
         # Case 3: Directory exists, permissions wrong, fix them
@@ -68,7 +69,7 @@ class TestCache(unittest.TestCase):
             os.stat_result((stat.S_IFDIR | 0o755, 0, 0, 0, 0, 0, 0, 0, 0, 0)), # Initial check
             os.stat_result((stat.S_IFDIR | 0o700, 0, 0, 0, 0, 0, 0, 0, 0, 0))  # Post-fix verify
         ]
-        cache._check_cache_dir("/tmp/cache", 0o700, "test")
+        _check_snapm_dir("/tmp/cache", 0o700, "test")
         mock_chmod.assert_called_with("/tmp/cache", 0o700)
 
     @patch("os.path.exists", return_value=True)
@@ -76,20 +77,20 @@ class TestCache(unittest.TestCase):
     def test_check_cache_dir_symlink_error(self, mock_lstat, mock_exists):
         mock_lstat.return_value.st_mode = stat.S_IFLNK
         with self.assertRaisesRegex(SnapmSystemError, "is a symlink"):
-            cache._check_cache_dir("/path", 0o700, "test")
+            _check_snapm_dir("/path", 0o700, "test")
 
     @patch("os.path.exists", return_value=True)
     @patch("os.lstat")
     def test_check_cache_dir_not_dir_error(self, mock_lstat, mock_exists):
         mock_lstat.return_value.st_mode = stat.S_IFREG
         with self.assertRaisesRegex(SnapmSystemError, "is not a directory"):
-            cache._check_cache_dir("/path", 0o700, "test")
+            _check_snapm_dir("/path", 0o700, "test")
 
     @patch("os.makedirs", side_effect=OSError("mkdir failed"))
     @patch("os.path.exists", return_value=False)
     def test_check_cache_dir_create_fail(self, mock_exists, mock_makedirs):
         with self.assertRaisesRegex(SnapmSystemError, "Failed to create"):
-            cache._check_cache_dir("/path", 0o700, "test")
+            _check_snapm_dir("/path", 0o700, "test")
 
     @patch("os.chmod", side_effect=OSError("chmod failed"))
     @patch("os.path.exists", return_value=True)
@@ -100,7 +101,7 @@ class TestCache(unittest.TestCase):
         mock_stat.return_value.st_mode = stat.S_IFDIR | 0o755 # Wrong perms
         with patch("os.makedirs"):
             with self.assertRaisesRegex(SnapmSystemError, "Failed to set permissions"):
-                cache._check_cache_dir("/path", 0o700, "test")
+                _check_snapm_dir("/path", 0o700, "test")
 
     @patch("os.chmod")
     @patch("os.path.exists", return_value=True)
@@ -112,7 +113,7 @@ class TestCache(unittest.TestCase):
         mock_stat.return_value.st_mode = stat.S_IFDIR | 0o755
         with patch("os.makedirs"):
             with self.assertRaisesRegex(SnapmSystemError, "incorrect permissions"):
-                cache._check_cache_dir("/path", 0o700, "test")
+                _check_snapm_dir("/path", 0o700, "test")
 
     def test_cache_name_identity_error(self):
         # mount_a == mount_b
