@@ -339,6 +339,26 @@ class Plugin(ABC):
         :param auto: ``True`` to enable autoactivation or ``False`` otherwise.
         """
 
+    @staticmethod
+    def _check_limit(limit, tracking, key):
+        """
+        Check whether adding a new snapshot would exceed a configured limit.
+
+        :param limit: The configured maximum (0 means unlimited).
+        :param tracking: A dict mapping keys to current snapshot counts.
+        :param key: The key to look up in ``tracking``.
+        :returns: ``True`` if adding a new snapshot would exceed the limit,
+                 or ``False`` otherwise.
+        :rtype: ``bool``
+        """
+        if not limit:
+            return False
+        if key not in tracking:
+            return False
+        if tracking[key] + 1 > limit:
+            return True
+        return False
+
     @abstractmethod
     def origin_from_mount_point(self, mount_point):
         """
