@@ -31,7 +31,7 @@ from snapm import (
     select_snapshot_set,
     FsTabReader,
     get_device_fstype,
-    get_device_path,
+    resolve_device_spec,
     find_snapset_root,
     build_snapset_mount_list,
 )
@@ -213,44 +213,6 @@ def _get_xfs_options(devpath: str) -> str:
     return _merge_options(options, _get_xfs_quota_options(devpath))
 
 
-def _resolve_device(device: str) -> str:
-    """
-    Resolve a device that may be in the form of a LABEL=... or UUID=...
-    expression into a device path. If the device is neither a UUID nor
-    a label reference it is returned unmodified.
-
-    :param device: The device string to evaluate; '/dev/...', 'LABEL=...',
-                   or 'UUID=...'.
-    :returns: The device path.
-    :rtype: ``str``
-    """
-    if device.startswith("UUID="):
-        uuid = device.split("=", maxsplit=1)[1]
-        resolved = get_device_path("uuid", uuid)
-        if resolved is None:
-            raise SnapmNotFoundError(f"Device with UUID '{uuid}' not found")
-        device = resolved
-    elif device.startswith("LABEL="):
-        label = device.split("=", maxsplit=1)[1]
-        resolved = get_device_path("label", label)
-        if resolved is None:
-            raise SnapmNotFoundError(f"Device with label '{label}' not found")
-        device = resolved
-    elif device.startswith("PARTUUID="):
-        ident = device.split("=", maxsplit=1)[1]
-        cand = f"/dev/disk/by-partuuid/{ident}"
-        if not os.path.exists(cand):
-            raise SnapmNotFoundError(f"Device with PARTUUID '{ident}' not found")
-        device = cand
-    elif device.startswith("PARTLABEL="):
-        ident = device.split("=", maxsplit=1)[1]
-        cand = f"/dev/disk/by-partlabel/{ident}"
-        if not os.path.exists(cand):
-            raise SnapmNotFoundError(f"Device with PARTLABEL '{ident}' not found")
-        device = cand
-    return device
-
-
 def _mount(
     what: str,
     where: str,
@@ -281,7 +243,7 @@ def _mount(
         else:
             options = _merge_options(options, "ro")
 
-    what = _resolve_device(what)
+    what = resolve_device_spec(what, raise_on_error=True)
 
     if not rbind and not fstype:
         fstype = get_device_fstype(what)

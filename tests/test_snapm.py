@@ -282,6 +282,56 @@ class SnapmTestsSimple(unittest.TestCase):
         with self.assertRaises(snapm.SnapmCalloutError):
             snapm.get_device_path("uuid", "123")
 
+    @unittest.mock.patch("snapm._snapm.get_device_path")
+    @unittest.mock.patch("os.path.exists")
+    def test_resolve_device_spec(self, mock_path_exists, mock_get_dev):
+        """
+        Tests the _resolve_device helper.
+        """
+        # 1. Test UUID
+        mock_get_dev.return_value = "/dev/sda1"
+        self.assertEqual(snapm.resolve_device_spec("UUID=some-uuid"), "/dev/sda1")
+        mock_get_dev.assert_called_with("uuid", "some-uuid")
+
+        # 2. Test LABEL
+        mock_get_dev.return_value = "/dev/sda2"
+        self.assertEqual(snapm.resolve_device_spec("LABEL=some-label"), "/dev/sda2")
+        mock_get_dev.assert_called_with("label", "some-label")
+
+        # 3. Test PARTUUID
+        mock_path_exists.return_value = True
+        self.assertEqual(snapm.resolve_device_spec("PARTUUID=part-uuid"), "/dev/disk/by-partuuid/part-uuid")
+
+        # 4. Test PARTUUID not found
+        mock_path_exists.return_value = False
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            snapm.resolve_device_spec("PARTUUID=part-uuid-bad", raise_on_error=True)
+
+        # 5. Test plain device path
+        self.assertEqual(snapm.resolve_device_spec("/dev/vda1"), "/dev/vda1")
+
+        # 6. Test UUID not found
+        mock_get_dev.return_value = None
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            snapm.resolve_device_spec("UUID=some-uuid-bad", raise_on_error=True)
+
+        # 7. Test LABEL not found
+        mock_get_dev.return_value = None
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            snapm.resolve_device_spec("LABEL=some-label-bad", raise_on_error=True)
+
+        # 8. Test PARTLABEL
+        mock_path_exists.return_value = True
+        self.assertEqual(
+            snapm.resolve_device_spec("PARTLABEL=part-label", raise_on_error=True),
+            "/dev/disk/by-partlabel/part-label",
+        )
+
+        # 9. Test PARTLABEL not found
+        mock_path_exists.return_value = False
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            snapm.resolve_device_spec("PARTLABEL=part-label-bad", raise_on_error=True)
+
     def test_snapshot_mounted_checks(self):
         """Test Snapshot mounted checks via /proc/self/mounts."""
         # Mock a snapshot
