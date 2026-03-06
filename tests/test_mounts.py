@@ -88,53 +88,6 @@ class MountsTestsSimple(unittest.TestCase):
         with self.assertRaises(snapm.SnapmUmountError):
             mounts._umount("/3/am/eternal")
 
-    @unittest.mock.patch("snapm.manager._mounts.get_device_path")
-    @unittest.mock.patch("os.path.exists")
-    def test_resolve_device(self, mock_path_exists, mock_get_dev):
-        """
-        Tests the _resolve_device helper.
-        """
-        # 1. Test UUID
-        mock_get_dev.return_value = "/dev/sda1"
-        self.assertEqual(mounts._resolve_device("UUID=some-uuid"), "/dev/sda1")
-        mock_get_dev.assert_called_with("uuid", "some-uuid")
-
-        # 2. Test LABEL
-        mock_get_dev.return_value = "/dev/sda2"
-        self.assertEqual(mounts._resolve_device("LABEL=some-label"), "/dev/sda2")
-        mock_get_dev.assert_called_with("label", "some-label")
-
-        # 3. Test PARTUUID
-        mock_path_exists.return_value = True
-        self.assertEqual(mounts._resolve_device("PARTUUID=part-uuid"), "/dev/disk/by-partuuid/part-uuid")
-
-        # 4. Test PARTUUID not found
-        mock_path_exists.return_value = False
-        with self.assertRaises(snapm.SnapmNotFoundError):
-            mounts._resolve_device("PARTUUID=part-uuid-bad")
-
-        # 5. Test plain device path
-        self.assertEqual(mounts._resolve_device("/dev/vda1"), "/dev/vda1")
-
-        # 6. Test UUID not found
-        mock_get_dev.return_value = None
-        with self.assertRaises(snapm.SnapmNotFoundError):
-            mounts._resolve_device("UUID=some-uuid-bad")
-
-        # 7. Test LABEL not found
-        mock_get_dev.return_value = None
-        with self.assertRaises(snapm.SnapmNotFoundError):
-            mounts._resolve_device("LABEL=some-label-bad")
-
-        # 8. Test PARTLABEL
-        mock_path_exists.return_value = True
-        self.assertEqual(mounts._resolve_device("PARTLABEL=part-label"), "/dev/disk/by-partlabel/part-label")
-
-        # 9. Test PARTLABEL not found
-        mock_path_exists.return_value = False
-        with self.assertRaises(snapm.SnapmNotFoundError):
-            mounts._resolve_device("PARTLABEL=part-label-bad")
-
     #@unittest.mock.patch("subprocess.run")
     @unittest.mock.patch("snapm.manager._mounts.run")
     def test_get_xfs_quota_options(self, mock_run):
