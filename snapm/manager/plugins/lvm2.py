@@ -1227,13 +1227,7 @@ class Lvm2Cow(_Lvm2):
                  ``False`` otherwise.
         :rtype: ``bool``
         """
-        if not self.limits.snapshots_per_origin:
-            return False
-        if origin not in self.origins:
-            return False
-        if self.origins[origin] + 1 > self.limits.snapshots_per_origin:
-            return True
-        return False
+        return self._check_limit(self.limits.snapshots_per_origin, self.origins, origin)
 
     def check_create_snapshot(
         self, origin, snapset_name, timestamp, mount_point, size_policy
@@ -1501,13 +1495,7 @@ class Lvm2Thin(_Lvm2):
                  ``False`` otherwise.
         :rtype: ``bool``
         """
-        if not self.limits.snapshots_per_pool:
-            return False
-        if pool not in self.pools:
-            return False
-        if self.pools[pool] + 1 > self.limits.snapshots_per_pool:
-            return True
-        return False
+        return self._check_limit(self.limits.snapshots_per_pool, self.pools, pool)
 
     def check_create_snapshot(
         self, origin, snapset_name, timestamp, mount_point, size_policy

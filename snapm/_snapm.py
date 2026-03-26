@@ -12,7 +12,7 @@ from typing import List, Optional, TextIO, Union, TYPE_CHECKING
 from abc import ABC, abstractmethod
 from uuid import UUID, uuid5
 from datetime import datetime
-from stat import S_ISBLK
+from stat import S_ISBLK, S_ISDIR, S_ISLNK
 from enum import Enum
 import collections
 import subprocess
@@ -2218,6 +2218,64 @@ def get_device_path(by_type: str, identifier: str) -> Optional[str]:
         ) from e
 
 
+def _resolve_device_spec(
+    device_spec: str, raise_on_error: bool = False
+) -> Optional[str]:
+    """
+    Resolve a device specification to a device path.
+
+    Handles device specifications in the form of:
+    - UUID=<uuid> - filesystem UUID
+    - LABEL=<label> - filesystem label
+    - PARTUUID=<partuuid> - partition UUID
+    - PARTLABEL=<partlabel> - partition label
+    - /dev/... - device path (returned as-is)
+
+    Uses get_device_path() for UUID and LABEL resolution, and symlinks
+    in /dev/disk/by-partuuid/ and /dev/disk/by-partlabel/ for partition
+    identifiers.
+
+    :param device_spec: The device specification to resolve.
+    :type device_spec: str
+    :param raise_on_error: If True, raise SnapmNotFoundError when device is not found.
+                          If False, return None when device is not found.
+    :type raise_on_error: bool
+    :returns: The resolved device path, or None if not found and raise_on_error is False.
+    :rtype: Optional[str]
+    :raises SnapmNotFoundError: If the device is not found and raise_on_error is True.
+    """
+    if device_spec.startswith("UUID="):
+        uuid = device_spec.split("=", maxsplit=1)[1]
+        resolved = get_device_path("uuid", uuid)
+        if resolved is None and raise_on_error:
+            raise SnapmNotFoundError(f"Device with UUID '{uuid}' not found")
+        return resolved
+    if device_spec.startswith("LABEL="):
+        label = device_spec.split("=", maxsplit=1)[1]
+        resolved = get_device_path("label", label)
+        if resolved is None and raise_on_error:
+            raise SnapmNotFoundError(f"Device with label '{label}' not found")
+        return resolved
+    if device_spec.startswith("PARTUUID="):
+        ident = device_spec.split("=", maxsplit=1)[1]
+        cand = f"/dev/disk/by-partuuid/{ident}"
+        if os.path.exists(cand):
+            return cand
+        if raise_on_error:
+            raise SnapmNotFoundError(f"Device with PARTUUID '{ident}' not found")
+        return None
+    if device_spec.startswith("PARTLABEL="):
+        ident = device_spec.split("=", maxsplit=1)[1]
+        cand = f"/dev/disk/by-partlabel/{ident}"
+        if os.path.exists(cand):
+            return cand
+        if raise_on_error:
+            raise SnapmNotFoundError(f"Device with PARTLABEL '{ident}' not found")
+        return None
+    # Return the device spec as-is if it doesn't match any known prefix
+    return device_spec
+
+
 def get_device_fstype(devpath: str) -> str:
     """
     Determine the file system type for the device at `devpath`.
@@ -2315,24 +2373,8 @@ def find_snapset_root(snapset, fstab: FsTabReader, origin: bool = False):
     dev_path = None
 
     for entry in fstab.lookup("where", "/"):
-        if entry.what.startswith("UUID="):
-            dev_path = get_device_path("uuid", entry.what.split("=", maxsplit=1)[1])
-            break
-        if entry.what.startswith("LABEL="):
-            dev_path = get_device_path("label", entry.what.split("=", maxsplit=1)[1])
-            break
-        if entry.what.startswith("PARTUUID="):
-            ident = entry.what.split("=", maxsplit=1)[1]
-            cand = f"/dev/disk/by-partuuid/{ident}"
-            dev_path = cand if os.path.exists(cand) else None
-            break
-        if entry.what.startswith("PARTLABEL="):
-            ident = entry.what.split("=", maxsplit=1)[1]
-            cand = f"/dev/disk/by-partlabel/{ident}"
-            dev_path = cand if os.path.exists(cand) else None
-            break
-        if entry.what.startswith("/"):
-            dev_path = entry.what
+        dev_path = _resolve_device_spec(entry.what, raise_on_error=False)
+        if dev_path is not None:
             break
 
     if dev_path:
@@ -2369,6 +2411,61 @@ def build_snapset_mount_list(snapset: SnapshotSet, fstab: FsTabReader):
         else:
             mounts.append((what, where, fstype, options))
     return mounts
+
+
+def _check_snapm_dir(dirpath: str, mode: int, name: str) -> str:
+    """
+    Check for the presence of a snapm runtime directory and create
+    it if necessary.
+
+    :param dirpath: Path to the directory
+    :param mode: Permissions mode for the directory
+    :param name: Human-readable name for error messages
+    :returns: The directory path
+    """
+    # Check if path exists and validate it's a proper directory
+    existed = os.path.exists(dirpath)
+    if existed:
+        try:
+            st = os.lstat(dirpath)
+            if S_ISLNK(st.st_mode):
+                raise SnapmSystemError(f"{name} {dirpath} is a symlink (not secure)")
+            if not S_ISDIR(st.st_mode):
+                raise SnapmSystemError(
+                    f"{name} {dirpath} exists but is not a directory"
+                )
+        except OSError as err:
+            raise SnapmSystemError(f"Failed to stat {name} {dirpath}: {err}") from err
+
+    # Create directory if it doesn't exist
+    try:
+        os.makedirs(dirpath, mode=mode, exist_ok=True)
+    except OSError as err:
+        raise SnapmSystemError(f"Failed to create {name} {dirpath}: {err}") from err
+
+    # Ensure correct permissions (only if directory already existed and differs)
+    if existed:
+        try:
+            st = os.stat(dirpath)
+            if (st.st_mode & 0o777) != mode:
+                os.chmod(dirpath, mode)
+        except OSError as err:
+            raise SnapmSystemError(
+                f"Failed to set permissions on {name} {dirpath}: {err}"
+            ) from err
+
+    # Validate final permissions
+    try:
+        st = os.stat(dirpath)
+        if (st.st_mode & 0o777) != mode:
+            raise SnapmSystemError(
+                f"{name} {dirpath} has incorrect permissions: "
+                f"{st.st_mode & 0o777:04o} (expected {mode:04o})"
+            )
+    except OSError as err:
+        raise SnapmSystemError(f"Failed to verify {name} {dirpath}: {err}") from err
+
+    return dirpath
 
 
 __all__ = [

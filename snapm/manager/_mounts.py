@@ -31,10 +31,10 @@ from snapm import (
     select_snapshot_set,
     FsTabReader,
     get_device_fstype,
-    get_device_path,
     find_snapset_root,
     build_snapset_mount_list,
 )
+from snapm._snapm import _resolve_device_spec
 
 _log = logging.getLogger(__name__)
 
@@ -220,35 +220,11 @@ def _resolve_device(device: str) -> str:
     a label reference it is returned unmodified.
 
     :param device: The device string to evaluate; '/dev/...', 'LABEL=...',
-                   or 'UUID=...'.
+                   'UUID=...', 'PARTUUID=...', or 'PARTLABEL=...'.
     :returns: The device path.
     :rtype: ``str``
     """
-    if device.startswith("UUID="):
-        uuid = device.split("=", maxsplit=1)[1]
-        resolved = get_device_path("uuid", uuid)
-        if resolved is None:
-            raise SnapmNotFoundError(f"Device with UUID '{uuid}' not found")
-        device = resolved
-    elif device.startswith("LABEL="):
-        label = device.split("=", maxsplit=1)[1]
-        resolved = get_device_path("label", label)
-        if resolved is None:
-            raise SnapmNotFoundError(f"Device with label '{label}' not found")
-        device = resolved
-    elif device.startswith("PARTUUID="):
-        ident = device.split("=", maxsplit=1)[1]
-        cand = f"/dev/disk/by-partuuid/{ident}"
-        if not os.path.exists(cand):
-            raise SnapmNotFoundError(f"Device with PARTUUID '{ident}' not found")
-        device = cand
-    elif device.startswith("PARTLABEL="):
-        ident = device.split("=", maxsplit=1)[1]
-        cand = f"/dev/disk/by-partlabel/{ident}"
-        if not os.path.exists(cand):
-            raise SnapmNotFoundError(f"Device with PARTLABEL '{ident}' not found")
-        device = cand
-    return device
+    return _resolve_device_spec(device, raise_on_error=True)
 
 
 def _mount(
