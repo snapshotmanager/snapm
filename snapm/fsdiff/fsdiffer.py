@@ -163,6 +163,11 @@ class FsDiffer:
         if options.no_mem_check:
             _log_warn("RSS memory pressure safety checks disabled")
 
+        if not options.from_path and not options.quiet:
+            _log_warn(
+                "Consider setting -s/--start-path to reduce run time and memory usage"
+            )
+
         #: Manager context for snapshot operations (used by future methods)
         self.manager: "Manager" = manager
         self.options: DiffOptions = options
