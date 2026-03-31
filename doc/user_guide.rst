@@ -219,6 +219,11 @@ changes:
   ownership (UID/GID), and extended attributes (xattrs).
 * **Content Comparison**: Performs deep content comparisons for regular
   files, including generating standard unified diffs for text files.
+* **Start Path Control**: By default difference engine operations proceed from
+  the root directory of snapshot sets (or the system root file system). This
+  can be overridden by specifying one or more start paths for the comparison.
+  This allows the user to focus the operation on areas of interest and lowers
+  run time and memory consumption.
 
 Output Formats and Use Cases
 ----------------------------
@@ -293,6 +298,14 @@ resource-intensive. To improve performance, ``snapm`` implements a
   entirely using the ``--cache-mode={auto,never,always}`` and
   ``--cache-expires=EXPIRES_SECS`` options. These options are mutually
   exclusive.
+
+By default a ``diff`` or ``diffreport`` command will start at the root mount
+of the respective snapshot set (or the system root file system). This can be
+costly both in terms of time and memory consumption. The comparison can be
+narrowed to specific directories of interest by specifying one or more start
+paths using ``-s|--start-path PATH``. If no start path is given the tools
+will warn about the potential resource use. This warning can be suppressed if
+desired using ``--quiet``.
 
 Command Reference
 =================
@@ -479,11 +492,17 @@ ignoring file modification times to focus only on content:
 
 Options are available to control the comparison:
 
+* ``--start-path PATH`` / ``-s PATH``: Begin comparison at ``PATH``
+  (may be specified zero or more times)
 * ``--content-only`` / ``-c``: Only check for file content changes
 * ``--ignore-timestamps`` / ``-t``: Ignore modification times
 * ``--ignore-permissions`` / ``-p``: Ignore permission changes
 * ``--ignore-ownership`` / ``-w``: Ignore ownership changes
 * ``--include-pattern`` / ``--exclude-pattern``: Filter paths using glob patterns
+
+The ``PATH`` value given to ``--start-path PATH`` / ``-s PATH`` is evaluated
+relative to the root directory of the snapshot set (or system root file system
+when using ``.``).
 
 Output Formats
 ~~~~~~~~~~~~~~
