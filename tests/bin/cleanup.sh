@@ -17,6 +17,15 @@ if test -n "$(echo /var/tmp/snapm_mnt_*/)"; then
     umount -R /var/tmp/snapm_mnt_*/ || true
 fi
 
+if test -n "$(echo /var/tmp/*_snapm_top)"; then
+    umount -R /var/tmp/*_snapm_top || true
+fi
+
+if test -n "$(echo /run/snapm/btrfs/top.*)"; then
+    umount -R /run/snapm/btrfs/top.* || true
+    rmdir /run/snapm/btrfs/top.* || true
+fi
+
 if [ -f /tmp/fstab ]; then
     umount /etc/fstab &> /dev/null || true
     rm -f /tmp/fstab
@@ -49,4 +58,5 @@ done
 
 rm -rf /var/tmp/*_snapm_loop_back
 rm -rf /var/tmp/*_snapm_mounts
+rm -rf /var/tmp/*_snapm_top
 rm -rf /var/tmp/*_snapm_boom_dir
