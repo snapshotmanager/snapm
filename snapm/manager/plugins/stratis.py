@@ -466,7 +466,7 @@ class Stratis(Plugin):
         if self.priority == PLUGIN_NO_PRIORITY:
             self.priority = STRATIS_STATIC_PRIORITY
 
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals,too-many-branches
     def discover_snapshots(self):
         """
         Discover snapshots managed by this plugin class.
@@ -487,6 +487,12 @@ class Stratis(Plugin):
             (path, MOPool(info).Name())
             for path, info in pools().search(managed_objects)
         )
+
+        # Initialise pool snapshot counters to 0
+        for pool in path_to_name.values():
+            pool_name = str(pool)
+            if pool_name not in self.pools:
+                self.pools[pool_name] = 0
 
         filesystems_with_props = [
             MOFilesystem(info)
@@ -532,6 +538,7 @@ class Stratis(Plugin):
                     )
                 )
 
+        # Initialise pool snapshot counters (limit checking)
         for snapshot in snapshots:
             if snapshot.pool_name not in self.pools:
                 self.pools[snapshot.pool_name] = 1
@@ -707,6 +714,9 @@ class Stratis(Plugin):
                 f"Stratis daemon reported no change creating snapshot {snapshot_name}"
             )
 
+        # Increment pool snapshot counter
+        self.pools[pool_name] += 1
+
         return StratisSnapshot(
             f"{pool_name}/{snapshot_name}",
             snapset_name,
@@ -792,6 +802,9 @@ class Stratis(Plugin):
                     f"requested"
                 )
             )
+
+        # Decrement pool snapshot counter
+        self.pools[pool_name] -= 1
 
     # pylint: disable=too-many-arguments
     def rename_snapshot(self, old_name, origin, snapset_name, timestamp, mount_point):
