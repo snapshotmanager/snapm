@@ -14,7 +14,7 @@ and may be used by application programs, or interactively in the
 Python shell by users who do not require all the features present
 in the snapm object API.
 """
-from argparse import ArgumentParser, REMAINDER
+from argparse import ArgumentParser, Namespace, REMAINDER
 from typing import Union, List, Optional
 from datetime import datetime
 from os.path import basename
@@ -111,6 +111,24 @@ def _log_debug_command(msg, *args, **kwargs):
 
 _DEFAULT_LOG_LEVEL = logging.WARNING
 _CONSOLE_HANDLER = None
+
+
+def _debug_manager(cmd_args: Namespace):
+    """
+    Return ``True`` if "manager" subsystem debugging is enabled in the
+    supplied ``cmd_args`` and ``False`` otherwise.
+
+    :param cmd_args: A ``Namespace`` instance resulting from parsing command
+                     line arguments. This function assumes that the supplied
+                     object has a ``debug` property.
+    :type cmd_args: ``Namespace``.
+    :returns: ``True`` if manager subsystem debugging is enabled.
+    :rtype: ``bool``
+    """
+    if not cmd_args.debug:
+        return False
+    return "all" in cmd_args.debug or "manager" in cmd_args.debug
+
 
 #
 # Reporting object types
@@ -1515,7 +1533,7 @@ def _create_cmd(cmd_args):
     :param cmd_args: command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
 
     if hasattr(cmd_args, "config") and cmd_args.config:
         schedules = manager.scheduler.find_schedules(
@@ -1579,7 +1597,7 @@ def _delete_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection.from_cmd_args(cmd_args)
     count = delete_snapset(manager, select)
     _log_info("Deleted %d snapshot set%s", count, "s" if count > 1 else "")
@@ -1595,7 +1613,7 @@ def _rename_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     rename_snapset(manager, cmd_args.old_name, cmd_args.new_name)
     _log_info("Renamed snapshot set '%s' to '%s'", cmd_args.old_name, cmd_args.new_name)
     return 0
@@ -1611,7 +1629,7 @@ def _resize_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     name = None
     uuid = None
 
@@ -1644,7 +1662,7 @@ def _revert_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     name = None
     uuid = None
 
@@ -1673,7 +1691,7 @@ def _split_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command.
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
 
     snapset = split_snapset(manager, cmd_args.name, cmd_args.new_name, cmd_args.sources)
     _log_info(
@@ -1695,7 +1713,7 @@ def _prune_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command.
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
 
     snapset = prune_snapset(manager, cmd_args.name, cmd_args.sources)
     _log_info(
@@ -1717,7 +1735,7 @@ def _activate_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection.from_cmd_args(cmd_args)
     count = manager.activate_snapshot_sets(select)
     _log_info("Activated %d snapshot sets", count)
@@ -1734,7 +1752,7 @@ def _deactivate_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection.from_cmd_args(cmd_args)
     count = manager.deactivate_snapshot_sets(select)
     _log_info("Deactivated %d snapshot sets", count)
@@ -1751,7 +1769,7 @@ def _autoactivate_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection.from_cmd_args(cmd_args)
     auto = cmd_args.autoactivate
     count = manager.set_autoactivate(select, auto=auto)
@@ -1769,7 +1787,7 @@ def _list_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     opts = _report_opts_from_args(cmd_args)
     select = Selection.from_cmd_args(cmd_args)
     return _generic_list_cmd(cmd_args, select, opts, manager, print_snapsets)
@@ -1785,7 +1803,7 @@ def _show_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection.from_cmd_args(cmd_args)
     show_snapsets(
         manager, selection=select, members=cmd_args.members, json=cmd_args.json
@@ -1803,7 +1821,7 @@ def _mount_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection(name=cmd_args.name)
     matches = manager.find_snapshot_sets(selection=select)
     if len(matches) != 1:
@@ -1824,7 +1842,7 @@ def _umount_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection(name=cmd_args.name)
     matches = manager.find_snapshot_sets(selection=select)
     if len(matches) != 1:
@@ -1851,7 +1869,7 @@ def _exec_cmd(cmd_args):
         _log_error("the following arguments are required: COMMAND")
         return 1
 
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection(name=cmd_args.name)
     matches = manager.find_snapshot_sets(selection=select)
     if len(matches) != 1:
@@ -1994,7 +2012,7 @@ def _diff_cmd(cmd_args):
         return 1
 
     # Initialise Manager context for mounts and snapshot set discover.
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
 
     results = diff_snapsets(
         manager,
@@ -2067,7 +2085,7 @@ def _diffreport_cmd(cmd_args):
     opts = _report_opts_from_args(cmd_args)
     select = Selection.from_cmd_args(cmd_args)
 
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
 
     if cmd_args.options and "help" in cmd_args.options:
         results = None
@@ -2095,7 +2113,7 @@ def _snapshot_activate_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection.from_cmd_args(cmd_args)
     snapshots = manager.find_snapshots(select)
     if not snapshots:
@@ -2119,7 +2137,7 @@ def _snapshot_deactivate_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection.from_cmd_args(cmd_args)
     snapshots = manager.find_snapshots(select)
     if not snapshots:
@@ -2143,7 +2161,7 @@ def _snapshot_autoactivate_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection.from_cmd_args(cmd_args)
     snapshots = manager.find_snapshots(select)
     if not snapshots:
@@ -2168,7 +2186,7 @@ def _snapshot_list_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     opts = _report_opts_from_args(cmd_args)
     select = Selection.from_cmd_args(cmd_args)
     return _generic_list_cmd(cmd_args, select, opts, manager, print_snapshots)
@@ -2184,7 +2202,7 @@ def _snapshot_show_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     select = Selection.from_cmd_args(cmd_args)
     show_snapshots(manager, selection=select, json=cmd_args.json)
     return 0
@@ -2197,7 +2215,7 @@ def _plugin_list_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     opts = _report_opts_from_args(cmd_args)
     return _generic_list_cmd(cmd_args, None, opts, manager, print_plugins)
 
@@ -2209,7 +2227,7 @@ def _schedule_create_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     # Note: validate policy arguments!
     policy = GcPolicy.from_cmd_args(cmd_args)
     schedule = create_schedule(
@@ -2243,7 +2261,7 @@ def _schedule_delete_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command.
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     manager.scheduler.delete(cmd_args.schedule_name)
     return 0
 
@@ -2255,7 +2273,7 @@ def _schedule_edit_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     policy = (
         GcPolicy.from_cmd_args(cmd_args)
         if getattr(cmd_args, "policy_type", None)
@@ -2292,7 +2310,7 @@ def _schedule_enable_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command.
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     schedule = enable_schedule(manager, cmd_args.schedule_name, cmd_args.start)
     print(schedule)
     return 0
@@ -2305,7 +2323,7 @@ def _schedule_disable_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command.
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     schedule = disable_schedule(manager, cmd_args.schedule_name)
     print(schedule)
     return 0
@@ -2318,7 +2336,7 @@ def _schedule_gc_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command.
     :returns: integer status code returned from ``main()``.
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     garbage = gc_schedule(manager, cmd_args.config)
     if garbage:
         names = ", ".join(garbage)
@@ -2333,7 +2351,7 @@ def _schedule_list_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     opts = _report_opts_from_args(cmd_args)
     return _generic_list_cmd(cmd_args, None, opts, manager, print_schedules)
 
@@ -2345,7 +2363,7 @@ def _schedule_show_cmd(cmd_args):
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
     """
-    manager = Manager()
+    manager = Manager(debug=_debug_manager(cmd_args))
     selection = Selection.from_cmd_args(cmd_args)
     show_schedules(manager, selection, json=cmd_args.json)
     return 0
