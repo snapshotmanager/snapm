@@ -17,9 +17,12 @@ log = logging.getLogger()
 import snapm.manager.plugins.lvm2 as lvm2
 from snapm import SnapmCalloutError
 
+from tests import have_root
+from ._util import LvmLoopBacked
 
-class Lvm2Tests(unittest.TestCase):
-    """Test lvm2 plugin functions"""
+
+class Lvm2TestsSimple(unittest.TestCase):
+    """Unit test lvm2 plugin functions with mock tool output"""
 
     _old_path = None
 
@@ -197,3 +200,70 @@ class Lvm2Tests(unittest.TestCase):
         snapshots = lvm2thin.discover_snapshots()
         # FIXME: hardcoded value based on test data
         self.assertEqual(len(snapshots), 5)
+
+
+@unittest.skipIf(not have_root(), "requires root privileges")
+class Lvm2Tests(unittest.TestCase):
+    """
+    Test command interfaces with devices
+    """
+
+    volumes = ["root"]
+    thin_volumes = ["opt"]
+
+    def setUp(self):
+        log.debug("Preparing %s", self._testMethodName)
+        def cleanup_lvm():
+            log.debug("Cleaning up LVM (%s)", self._testMethodName)
+            if hasattr(self, "_lvm"):
+                self._lvm.destroy()
+
+        self.addCleanup(cleanup_lvm)
+
+        self._lvm = LvmLoopBacked(self.volumes, thin_volumes=self.thin_volumes)
+
+    def test_lvm2cow_create_delete_origin_accounting(self):
+        # Verify that origin snapshot counters are properly updated around
+        # create/delete operations.
+
+        # Plugin setup
+        lvm2cow_plugin = lvm2.Lvm2Cow(log, ConfigParser())
+        snapshots = lvm2cow_plugin.discover_snapshots()
+
+        # Create snapshot via Plugin.create_snapshot()
+        lvm2cow_plugin.start_transaction()
+        lvm2cow_plugin.check_create_snapshot("test_vg0/root", "test", 1721136677, "/", "1%SIZE")
+        lvm2cow_plugin.create_snapshot("test_vg0/root", "test", 1721136677, "/", "1%SIZE")
+        lvm2cow_plugin.end_transaction()
+
+        # Verify counter set to one
+        origin_count = lvm2cow_plugin.origins["/dev/test_vg0/root"]
+        self.assertEqual(origin_count, 1)
+
+        # Delete snapshot & verify decrement
+        lvm2cow_plugin.delete_snapshot("test_vg0/root-snapset_test_1721136677_-")
+        origin_count = lvm2cow_plugin.origins["/dev/test_vg0/root"]
+        self.assertEqual(origin_count, 0)
+
+    def test_lvm2thin_create_delete_pool_accounting(self):
+        # Verify that pool snapshot counters are properly updated around
+        # create/delete operations.
+
+        # Plugin setup
+        lvm2thin_plugin = lvm2.Lvm2Thin(log, ConfigParser())
+        snapshots = lvm2thin_plugin.discover_snapshots()
+
+        # Create snapshot via Plugin.create_snapshot()
+        lvm2thin_plugin.start_transaction()
+        lvm2thin_plugin.check_create_snapshot("test_vg0/opt", "test", 1721136677, "/opt", "1%SIZE")
+        lvm2thin_plugin.create_snapshot("test_vg0/opt", "test", 1721136677, "/opt", "1%SIZE")
+        lvm2thin_plugin.end_transaction()
+
+        # Verify counter incremented
+        pool0_count = lvm2thin_plugin.pools["test_vg0/pool0"]
+        self.assertEqual(pool0_count, 1)
+
+        # Delete snapshot & verify decrement
+        lvm2thin_plugin.delete_snapshot("test_vg0/opt-snapset_test_1721136677_-opt")
+        pool0_count = lvm2thin_plugin.pools["test_vg0/pool0"]
+        self.assertEqual(pool0_count, 0)
