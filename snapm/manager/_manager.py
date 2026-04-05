@@ -901,11 +901,18 @@ class Manager:
     """
 
     @suspend_signals
-    def __init__(self):
+    def __init__(self, debug: bool = False):
+        """
+        Initialise a new ``Manager`` instance.
+
+        :param debug: Raise exceptions in plugin operations for debugging.
+        :type debug: ``bool``
+        """
         self.plugins = []
         self.snapshot_sets = []
         self.by_name = {}
         self.by_uuid = {}
+        self._debug = debug
 
         # Verify presence and permissions for SNAPM_RUNTIME_DIR
         _check_snapm_runtime_dir()
@@ -1143,6 +1150,8 @@ class Manager:
                 _log_warn(
                     "Snapshot discovery failed for plugin '%s': %s", plugin.name, err
                 )
+                if self._debug:
+                    raise
                 continue
         _log_debug("Discovered %s managed snapshots", len(snapshots))
         for snapshot in snapshots:
