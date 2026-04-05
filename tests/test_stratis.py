@@ -186,6 +186,28 @@ class StratisTests(unittest.TestCase):
         snapshots = stratis_plugin.discover_snapshots()
         self.assertEqual(len(snapshots), 2)
 
+    def test_stratis_create_delete_pool_accounting(self):
+        # Verify that pool snapshot counters are properly updated around
+        # create/delete operations.
+
+        # Plugin setup
+        stratis_plugin = stratis.Stratis(log, ConfigParser())
+        snapshots = stratis_plugin.discover_snapshots()
+        pool1_count = stratis_plugin.pools["pool1"]
+
+        # Create snapshot via Plugin.create_snapshot()
+        stratis_plugin.start_transaction()
+        stratis_plugin.check_create_snapshot("pool1/fs1", "test", 1721136677, "/opt", "1%SIZE")
+        stratis_plugin.create_snapshot("pool1/fs1", "test", 1721136677, "/opt", "1%SIZE")
+        stratis_plugin.end_transaction()
+
+        # Verify counter incremented
+        self.assertEqual(stratis_plugin.pools["pool1"], pool1_count + 1)
+
+        # Delete snapshot & verify decrement
+        stratis_plugin.delete_snapshot("pool1/fs1-snapset_test_1721136677_-opt")
+        self.assertEqual(stratis_plugin.pools["pool1"], pool1_count)
+
     def test_stratis_can_snapshot_no_stratisd(self):
         systemctl_stop_args = _systemctl_args("stop")
         run(systemctl_stop_args, check=True)
