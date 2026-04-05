@@ -466,7 +466,7 @@ class Stratis(Plugin):
         if self.priority == PLUGIN_NO_PRIORITY:
             self.priority = STRATIS_STATIC_PRIORITY
 
-    # pylint: disable=too-many-locals
+    # pylint: disable=too-many-locals,too-many-branches
     def discover_snapshots(self):
         """
         Discover snapshots managed by this plugin class.
@@ -487,6 +487,12 @@ class Stratis(Plugin):
             (path, MOPool(info).Name())
             for path, info in pools().search(managed_objects)
         )
+
+        # Initialise pool snapshot counters to 0
+        for pool in path_to_name.values():
+            pool_name = str(pool)
+            if pool_name not in self.pools:
+                self.pools[pool_name] = 0
 
         filesystems_with_props = [
             MOFilesystem(info)
@@ -532,11 +538,9 @@ class Stratis(Plugin):
                     )
                 )
 
+        # Set or update pool snapshot counters (limit checking)
         for snapshot in snapshots:
-            if snapshot.pool_name not in self.pools:
-                self.pools[snapshot.pool_name] = 1
-            else:
-                self.pools[snapshot.pool_name] += 1
+            self.pools[snapshot.pool_name] += 1
 
         if self.limits.snapshots_per_pool > 0:
             for pool, count in self.pools.items():
@@ -707,6 +711,12 @@ class Stratis(Plugin):
                 f"Stratis daemon reported no change creating snapshot {snapshot_name}"
             )
 
+        # Increment or set pool snapshot counter
+        if pool_name in self.pools:
+            self.pools[pool_name] += 1
+        else:
+            self.pools[pool_name] = 1
+
         return StratisSnapshot(
             f"{pool_name}/{snapshot_name}",
             snapset_name,
@@ -791,6 +801,15 @@ class Stratis(Plugin):
                     f"actually destroy some or all of the filesystems "
                     f"requested"
                 )
+            )
+
+        # Decrement pool snapshot counter
+        if pool_name in self.pools:
+            self.pools[pool_name] -= 1
+        else:
+            # This is harmless but indicates a bug (plugin methods called out-of-sequence).
+            self._log_warn(
+                "Deleted untracked snapshot set member: %s/%s", pool_name, fs_name
             )
 
     # pylint: disable=too-many-arguments
