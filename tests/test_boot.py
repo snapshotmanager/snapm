@@ -193,6 +193,7 @@ class BootTestsNonRoot(BootTestsBase):
         self.manager.delete_snapshot_sets(snapm.Selection(name=self.snapset_name))
 
 
+# This is a test.
 @unittest.skipIf(not have_root(), "requires root privileges")
 class BootTestsWithRoot(BootTestsBase):
 
