@@ -240,12 +240,16 @@ class StratisTests(unittest.TestCase):
         proxy = get_object(TOP_OBJECT)
         managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
 
+        stratis_plugin = stratis.Stratis(log, ConfigParser())
+
         (pool, fs) = stratis._get_pool_filesystem(managed_objects, "pool1", "fs1-snapset_test_1721136677_-opt")
-        self.assertEqual(True, stratis.filter_stratis_snapshot(fs))
+        self.assertEqual(True, stratis_plugin._filter_stratis_snapshot(fs))
 
     def test_filter_stratis_snapshot_nonsnapshot(self):
         proxy = get_object(TOP_OBJECT)
         managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
 
+        stratis_plugin = stratis.Stratis(log, ConfigParser())
+
         (pool, fs) = stratis._get_pool_filesystem(managed_objects, "pool1", "fs1")
-        self.assertEqual(False, stratis.filter_stratis_snapshot(fs))
+        self.assertEqual(False, stratis_plugin._filter_stratis_snapshot(fs))
