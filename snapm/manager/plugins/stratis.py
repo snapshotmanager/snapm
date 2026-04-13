@@ -19,6 +19,7 @@ from dbus.exceptions import DBusException
 
 from dbus_client_gen import (
     DbusClientMissingPropertyError,
+    DbusClientMissingSearchPropertiesError,
 )
 
 from dbus_python_client_gen import (
@@ -425,10 +426,19 @@ def _find_in_progress_merge(managed_objects, pool_object_path, origin_uuid):
         "MergeScheduled": True,
     }
 
-    return [
-        MOFilesystem(info)
-        for objpath, info in filesystems(props=fs_props).search(managed_objects)
-    ]
+    try:
+        return [
+            MOFilesystem(info)
+            for objpath, info in filesystems(props=fs_props).search(managed_objects)
+        ]
+    # Outside a bug in stratisd this is exceedingly unlikely, but handle it
+    # by returning an empty list if we are unable to access the Origin or
+    # MergeScheduled properties for any reason. In the worst case we will end
+    # up returning a SnapmPluginError with a D-Bus error in the case that we
+    # fail to detect an in-progress merge and then on that basis attempt to
+    # start a revert operation on the same device.
+    except DbusClientMissingSearchPropertiesError:  # pragma: no cover
+        return []
 
 
 def _pool_free_space_bytes(managed_objects, pool_name):
