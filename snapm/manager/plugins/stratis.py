@@ -324,20 +324,6 @@ class StratisSnapshot(Snapshot):
         return (self._pool, self._filesystem)
 
 
-def filter_stratis_snapshot(filesystem):
-    """
-    Filter Stratis snapshots.
-
-    Return ``True`` if the filesystem epresented by ``filesystem`` is a stratis
-    snapshot or ``False`` otherwise. The ``filesystem`` argument must be a
-    DBus managed object corresponding to a Stratis filesystem.
-    """
-    try:
-        return filesystem.Origin()[0]
-    except DbusClientMissingPropertyError:
-        return False
-
-
 def _snapshot_min_size(policy_size):
     """
     Return the minimum snapshot size given the space used by the snapshot
@@ -510,6 +496,21 @@ class Stratis(Plugin):
         if self.priority == PLUGIN_NO_PRIORITY:
             self.priority = STRATIS_STATIC_PRIORITY
 
+    def _filter_stratis_snapshot(self, filesystem):
+        """
+        Filter Stratis snapshots.
+
+        Return ``True`` if the filesystem epresented by ``filesystem`` is a stratis
+        snapshot or ``False`` otherwise. The ``filesystem`` argument must be a
+        DBus managed object corresponding to a Stratis filesystem.
+        """
+        try:
+            return filesystem.Origin()[0]
+        except DbusClientMissingPropertyError:  # pragma: no cover
+            self._log_warn("Could not access filesystem.Origin() property")
+            return False
+        return False
+
     # pylint: disable=too-many-locals,too-many-branches
     def discover_snapshots(self):
         """
@@ -546,7 +547,7 @@ class Stratis(Plugin):
         ]
 
         for filesystem in filesystems_with_props:
-            if not filter_stratis_snapshot(filesystem):
+            if not self._filter_stratis_snapshot(filesystem):
                 continue
 
             try:
