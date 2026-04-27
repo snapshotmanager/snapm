@@ -206,7 +206,7 @@ class CommandTestsSimple(CommandTestsBase):
         from snapm import get_debug_mask, SNAPM_DEBUG_ALL
 
         args = MockArgs()
-        args.debug = "manager,command,report,schedule,mounts,fsdiff,plugin"
+        args.debug = "manager,command,report,schedule,mounts,fsdiff,plugin,lvm2,lvm2err"
         command.set_debug(args.debug)
         self.assertEqual(get_debug_mask(), SNAPM_DEBUG_ALL)
 
