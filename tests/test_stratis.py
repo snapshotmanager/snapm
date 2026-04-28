@@ -28,7 +28,7 @@ import snapm.manager.plugins.stratis as stratis
 from snapm.manager.plugins import device_from_mount_point
 
 from tests import have_root
-from ._util import StratisLoopBacked
+from ._util import StratisLoopBacked, _POOL_NAME
 
 
 def _systemctl_args(command):
@@ -137,8 +137,8 @@ class StratisTests(unittest.TestCase):
         proxy = get_object(TOP_OBJECT)
         managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
 
-        (pool, filesystem) = stratis._get_pool_filesystem(managed_objects, "pool1", "fs1")
-        self.assertTrue(str(pool.Name()) == "pool1")
+        (pool, filesystem) = stratis._get_pool_filesystem(managed_objects, _POOL_NAME, "fs1")
+        self.assertTrue(str(pool.Name()) == _POOL_NAME)
         self.assertTrue(str(filesystem.Name()) == "fs1")
 
     def test__get_pool_filesystem_bad_pool(self):
@@ -146,21 +146,21 @@ class StratisTests(unittest.TestCase):
         managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
 
         with self.assertRaises(DbusClientUniqueResultError) as cm:
-            (pool, filesystem) = stratis._get_pool_filesystem(managed_objects, "nosuchpool1", "fs1")
+            (pool, filesystem) = stratis._get_pool_filesystem(managed_objects, "nosuchpool", "fs1")
 
     def test__get_pool_filesystem_bad_fs(self):
         proxy = get_object(TOP_OBJECT)
         managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
 
         with self.assertRaises(DbusClientUniqueResultError) as cm:
-            (pool, filesystem) = stratis._get_pool_filesystem(managed_objects, "pool1", "nosuchfs1")
+            (pool, filesystem) = stratis._get_pool_filesystem(managed_objects, _POOL_NAME, "nosuchfs1")
 
     def test_pool_free_space_bytes(self):
         proxy = get_object(TOP_OBJECT)
         managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
 
-        (pool, filesystem) = stratis._get_pool_filesystem(managed_objects, "pool1", "fs1")
-        free_bytes = stratis._pool_free_space_bytes(managed_objects, "pool1")
+        (pool, filesystem) = stratis._get_pool_filesystem(managed_objects, _POOL_NAME, "fs1")
+        free_bytes = stratis._pool_free_space_bytes(managed_objects, _POOL_NAME)
         self.assertEqual(
             int(pool.TotalPhysicalSize()) - int(pool.TotalPhysicalUsed()[1]) if pool.TotalPhysicalUsed()[0] else 0,
             free_bytes
@@ -170,13 +170,13 @@ class StratisTests(unittest.TestCase):
         proxy = get_object(TOP_OBJECT)
         managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
 
-        size_bytes = stratis._fs_size_bytes(managed_objects, "pool1", "fs1")
+        size_bytes = stratis._fs_size_bytes(managed_objects, _POOL_NAME, "fs1")
         self.assertEqual(size_bytes, 2**30)
 
     def test_pool_fs_from_device_path(self):
         devpath = device_from_mount_point(self._stratis.mount_points()[0])
         (pool, fs) = stratis.pool_fs_from_device_path(devpath)
-        self.assertEqual(pool, "pool1")
+        self.assertEqual(pool, _POOL_NAME)
         self.assertEqual(fs, "fs1")
 
     def test_stratis_discover_snapshots(self):
@@ -193,20 +193,20 @@ class StratisTests(unittest.TestCase):
         # Plugin setup
         stratis_plugin = stratis.Stratis(log, ConfigParser())
         snapshots = stratis_plugin.discover_snapshots()
-        pool1_count = stratis_plugin.pools["pool1"]
+        pool_count = stratis_plugin.pools[_POOL_NAME]
 
         # Create snapshot via Plugin.create_snapshot()
         stratis_plugin.start_transaction()
-        stratis_plugin.check_create_snapshot("pool1/fs1", "test", 1721136677, "/opt", "1%SIZE")
-        stratis_plugin.create_snapshot("pool1/fs1", "test", 1721136677, "/opt", "1%SIZE")
+        stratis_plugin.check_create_snapshot(f"{_POOL_NAME}/fs1", "test", 1721136677, "/opt", "1%SIZE")
+        stratis_plugin.create_snapshot(f"{_POOL_NAME}/fs1", "test", 1721136677, "/opt", "1%SIZE")
         stratis_plugin.end_transaction()
 
         # Verify counter incremented
-        self.assertEqual(stratis_plugin.pools["pool1"], pool1_count + 1)
+        self.assertEqual(stratis_plugin.pools[_POOL_NAME], pool_count + 1)
 
         # Delete snapshot & verify decrement
-        stratis_plugin.delete_snapshot("pool1/fs1-snapset_test_1721136677_-opt")
-        self.assertEqual(stratis_plugin.pools["pool1"], pool1_count)
+        stratis_plugin.delete_snapshot(f"{_POOL_NAME}/fs1-snapset_test_1721136677_-opt")
+        self.assertEqual(stratis_plugin.pools[_POOL_NAME], pool_count)
 
     def test_stratis_can_snapshot_no_stratisd(self):
         systemctl_stop_args = _systemctl_args("stop")
@@ -224,7 +224,7 @@ class StratisTests(unittest.TestCase):
         proxy = get_object(TOP_OBJECT)
         managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
 
-        (pool, fs) = stratis._get_pool_filesystem(managed_objects, "pool1", "fs1-snapset_test_1721136677_-opt")
+        (pool, fs) = stratis._get_pool_filesystem(managed_objects, _POOL_NAME, "fs1-snapset_test_1721136677_-opt")
 
         managed_objects = ObjectManager.Methods.GetManagedObjects(proxy, {})
 
@@ -242,7 +242,7 @@ class StratisTests(unittest.TestCase):
 
         stratis_plugin = stratis.Stratis(log, ConfigParser())
 
-        (pool, fs) = stratis._get_pool_filesystem(managed_objects, "pool1", "fs1-snapset_test_1721136677_-opt")
+        (pool, fs) = stratis._get_pool_filesystem(managed_objects, _POOL_NAME, "fs1-snapset_test_1721136677_-opt")
         self.assertEqual(True, stratis_plugin._filter_stratis_snapshot(fs))
 
     def test_filter_stratis_snapshot_nonsnapshot(self):
@@ -251,5 +251,5 @@ class StratisTests(unittest.TestCase):
 
         stratis_plugin = stratis.Stratis(log, ConfigParser())
 
-        (pool, fs) = stratis._get_pool_filesystem(managed_objects, "pool1", "fs1")
+        (pool, fs) = stratis._get_pool_filesystem(managed_objects, _POOL_NAME, "fs1")
         self.assertEqual(False, stratis_plugin._filter_stratis_snapshot(fs))

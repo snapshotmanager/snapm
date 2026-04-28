@@ -22,7 +22,7 @@ import snapm.manager._manager as _manager
 import boom
 
 from tests import have_root, BOOT_ROOT_TEST, MockPlugin
-from ._util import LvmLoopBacked, StratisLoopBacked
+from ._util import LvmLoopBacked, StratisLoopBacked, _VG_NAME
 
 
 log = logging.getLogger()
@@ -636,7 +636,7 @@ class ManagerTests(unittest.TestCase):
             self.assertEqual(snap.status, snapm.SnapStatus.ACTIVE)
         self.manager.deactivate_snapshot_sets(selection=s)
         for snap in sets[0].snapshots:
-            if snap.origin.removeprefix("test_vg0/") in self.thin_volumes:
+            if snap.origin.removeprefix(f"{_VG_NAME}/") in self.thin_volumes:
                 self.assertEqual(snap.status, snapm.SnapStatus.INACTIVE)
         self.manager.delete_snapshot_sets(snapm.Selection(name="testset0"))
 

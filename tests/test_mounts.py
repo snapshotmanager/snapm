@@ -25,7 +25,7 @@ import snapm.manager
 from snapm.manager.plugins import format_snapshot_name, encode_mount_point
 
 from tests import have_root, is_redhat, in_rh_ci
-from ._util import LoopBackDevices, LvmLoopBacked
+from ._util import LoopBackDevices, LvmLoopBacked, _VG_NAME
 
 ETC_FSTAB = "/etc/fstab"
 
@@ -171,7 +171,7 @@ class MountsTestsBase(unittest.TestCase):
         with open(self._tmp_fstab, "w", encoding="utf8") as file:
             file.write("# Test fstab\n")
             for origin, mp in self.mount_volumes:
-                file.write(f"/dev/test_vg0/{origin}\t{mp}\text4\tdefaults 0 0\n")
+                file.write(f"/dev/{_VG_NAME}/{origin}\t{mp}\text4\tdefaults 0 0\n")
         run(["mount", "--bind", self._tmp_fstab, ETC_FSTAB], check=True)
 
     def _clear_fstab(self):
@@ -232,7 +232,7 @@ class MountsTestsBase(unittest.TestCase):
 
         # ./~ Make it cheap & keep it shallow. Fill it up and make it hollow. ./~
         with tempfile.TemporaryDirectory(prefix="snapm_root_prep_") as tempdir:
-            with mounted("/dev/test_vg0/root", tempdir):
+            with mounted(f"/dev/{_VG_NAME}/root", tempdir):
                 for dirpath in _root_dirs:
                     os.makedirs(os.path.join(tempdir, dirpath))
 

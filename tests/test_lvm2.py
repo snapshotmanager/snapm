@@ -18,7 +18,7 @@ import snapm.manager.plugins.lvm2 as lvm2
 from snapm import SnapmCalloutError
 
 from tests import have_root
-from ._util import LvmLoopBacked
+from ._util import LvmLoopBacked, _VG_NAME, _THIN_POOL_NAME
 
 
 class Lvm2TestsSimple(unittest.TestCase):
@@ -232,17 +232,17 @@ class Lvm2Tests(unittest.TestCase):
 
         # Create snapshot via Plugin.create_snapshot()
         lvm2cow_plugin.start_transaction()
-        lvm2cow_plugin.check_create_snapshot("test_vg0/root", "test", 1721136677, "/", "1%SIZE")
-        lvm2cow_plugin.create_snapshot("test_vg0/root", "test", 1721136677, "/", "1%SIZE")
+        lvm2cow_plugin.check_create_snapshot(f"{_VG_NAME}/root", "test", 1721136677, "/", "1%SIZE")
+        lvm2cow_plugin.create_snapshot(f"{_VG_NAME}/root", "test", 1721136677, "/", "1%SIZE")
         lvm2cow_plugin.end_transaction()
 
         # Verify counter set to one
-        origin_count = lvm2cow_plugin.origins["/dev/test_vg0/root"]
+        origin_count = lvm2cow_plugin.origins[f"/dev/{_VG_NAME}/root"]
         self.assertEqual(origin_count, 1)
 
         # Delete snapshot & verify decrement
-        lvm2cow_plugin.delete_snapshot("test_vg0/root-snapset_test_1721136677_-")
-        origin_count = lvm2cow_plugin.origins["/dev/test_vg0/root"]
+        lvm2cow_plugin.delete_snapshot(f"{_VG_NAME}/root-snapset_test_1721136677_-")
+        origin_count = lvm2cow_plugin.origins[f"/dev/{_VG_NAME}/root"]
         self.assertEqual(origin_count, 0)
 
     def test_lvm2thin_create_delete_pool_accounting(self):
@@ -255,15 +255,15 @@ class Lvm2Tests(unittest.TestCase):
 
         # Create snapshot via Plugin.create_snapshot()
         lvm2thin_plugin.start_transaction()
-        lvm2thin_plugin.check_create_snapshot("test_vg0/opt", "test", 1721136677, "/opt", "1%SIZE")
-        lvm2thin_plugin.create_snapshot("test_vg0/opt", "test", 1721136677, "/opt", "1%SIZE")
+        lvm2thin_plugin.check_create_snapshot(f"{_VG_NAME}/opt", "test", 1721136677, "/opt", "1%SIZE")
+        lvm2thin_plugin.create_snapshot(f"{_VG_NAME}/opt", "test", 1721136677, "/opt", "1%SIZE")
         lvm2thin_plugin.end_transaction()
 
         # Verify counter incremented
-        pool0_count = lvm2thin_plugin.pools["test_vg0/pool0"]
+        pool0_count = lvm2thin_plugin.pools[f"{_VG_NAME}/{_THIN_POOL_NAME}"]
         self.assertEqual(pool0_count, 1)
 
         # Delete snapshot & verify decrement
-        lvm2thin_plugin.delete_snapshot("test_vg0/opt-snapset_test_1721136677_-opt")
-        pool0_count = lvm2thin_plugin.pools["test_vg0/pool0"]
+        lvm2thin_plugin.delete_snapshot(f"{_VG_NAME}/opt-snapset_test_1721136677_-opt")
+        pool0_count = lvm2thin_plugin.pools[f"{_VG_NAME}/{_THIN_POOL_NAME}"]
         self.assertEqual(pool0_count, 0)
