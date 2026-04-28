@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import subprocess
 import logging
@@ -5,6 +6,22 @@ from pathlib import Path
 import os
 
 log = logging.getLogger()
+
+
+def generate_test_name(subsystem, context):
+    random_hex = os.urandom(4).hex()
+    prefix = f"snapm_{subsystem}_{context}_{random_hex}"
+    checksum = hashlib.sha256(prefix.encode("ascii")).hexdigest()[:4]
+    return f"{prefix}_{checksum}"
+
+
+def validate_test_name(name):
+    if len(name) < 6 or name[-5] != "_":
+        return False
+    prefix = name[:-5]
+    checksum = name[-4:]
+    return hashlib.sha256(prefix.encode("ascii")).hexdigest()[:4] == checksum
+
 
 _LOSETUP_CMD = "losetup"
 
@@ -27,9 +44,9 @@ _UMOUNT_CMD = "umount"
 _MKFS_EXT4_CMD = "mkfs.ext4"
 
 # LVM2
-_VG_NAME = "test_vg0"
+_VG_NAME = generate_test_name("lm", "vg")
 
-_THIN_POOL_NAME = "pool0"
+_THIN_POOL_NAME = generate_test_name("lm", "pool")
 
 # 1GiB
 _LV_SIZE = 1024**3
@@ -52,7 +69,7 @@ _STOP_CMD = "stop"
 _NAME_ARG = "--name"
 _SIZE_ARG = "--size"
 
-_POOL_NAME = "pool1"
+_POOL_NAME = generate_test_name("st", "pool")
 
 _FS_SIZE = "1GiB"
 

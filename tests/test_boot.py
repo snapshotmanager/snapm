@@ -22,7 +22,7 @@ from snapm.manager.plugins import format_snapshot_name, encode_mount_point
 import boom
 
 from tests import have_root, is_redhat, BOOT_ROOT_TEST
-from ._util import LvmLoopBacked
+from ._util import LvmLoopBacked, _VG_NAME
 
 ETC_FSTAB = "/etc/fstab"
 TMP_FSTAB = "/tmp/fstab"
@@ -100,7 +100,7 @@ class BootTestsBase(unittest.TestCase):
         with open(TMP_FSTAB, "w", encoding="utf8") as file:
             file.write("# Test fstab\n")
             for origin, mp in self.boot_volumes:
-                file.write(f"/dev/test_vg0/{origin}\t{mp}\text4\tdefaults 0 0\n")
+                file.write(f"/dev/{_VG_NAME}/{origin}\t{mp}\text4\tdefaults 0 0\n")
         run(["mount", "--bind", TMP_FSTAB, ETC_FSTAB], check=True)
 
     def _clear_fstab(self):
