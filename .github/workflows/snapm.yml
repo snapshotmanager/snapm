@@ -1,4 +1,4 @@
---
+---
 name: Snapshot Manager CI
 permissions:
   contents: read
