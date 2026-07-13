@@ -160,13 +160,13 @@ jobs:
           # Log host virtualization capabilities
           sudo virt-host-validate qemu || true
           if [[ "$BASE_OS" == fedora* ]]; then
-            # fedora: add fedora 42/43
-            OSINFO_COMMIT="91fe868553246b6af94df08db678cc4c9adc693f"
-            sudo wget -O /usr/share/osinfo/os/fedoraproject.org/fedora-42.xml https://gitlab.com/libosinfo/osinfo-db/-/raw/${OSINFO_COMMIT}/data/os/fedoraproject.org/fedora-42.xml.in
+            # fedora: Add Fedora 44
+            OSINFO_COMMIT="a018d7fec08547758ee64cc08d22c9f75b4fedbd"
             sudo wget -O /usr/share/osinfo/os/fedoraproject.org/fedora-43.xml https://gitlab.com/libosinfo/osinfo-db/-/raw/${OSINFO_COMMIT}/data/os/fedoraproject.org/fedora-43.xml.in
+            sudo wget -O /usr/share/osinfo/os/fedoraproject.org/fedora-44.xml https://gitlab.com/libosinfo/osinfo-db/-/raw/${OSINFO_COMMIT}/data/os/fedoraproject.org/fedora-44.xml.in
             # Sanity-check that osinfo picks up the new definitions
-            osinfo-query os short-id=fedora42 -f short-id || { echo "fedora42 not recognized by osinfo" >&2; exit 1; }
             osinfo-query os short-id=fedora43 -f short-id || { echo "fedora43 not recognized by osinfo" >&2; exit 1; }
+            osinfo-query os short-id=fedora44 -f short-id || { echo "fedora44 not recognized by osinfo" >&2; exit 1; }
           fi
       - name: Install Seabios bios.bin into /usr/share/qemu
         if: ${{ matrix.firmware == 'bios' }}
