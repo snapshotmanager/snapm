@@ -15,9 +15,15 @@ from json import loads, JSONDecodeError
 from math import floor
 from stat import S_ISBLK
 from time import time
+from shlex import join as shlex_join
 from shutil import which
+import logging
 
 from snapm import (
+    SNAPM_DEBUG_LVM2,
+    SNAPM_SUBSYSTEM_LVM2,
+    SNAPM_SUBSYSTEM_LVM2_ERR,
+    get_debug_mask,
     SnapmInvalidIdentifierError,
     SnapmSizePolicyError,
     SnapmCalloutError,
@@ -47,6 +53,19 @@ from snapm.manager.plugins import (
     format_snapshot_name,
     encode_mount_point,
 )
+
+_log = logging.getLogger(__name__)
+
+
+def _log_debug_lvm2(msg, *args, **kwargs):
+    """A wrapper for lvm2 subsystem debug logs."""
+    _log.debug(msg, *args, extra={"subsystem": SNAPM_SUBSYSTEM_LVM2}, **kwargs)
+
+
+def _log_debug_lvm2_err(msg, *args, **kwargs):
+    """A wrapper for lvm2err subsystem debug logs."""
+    _log.debug(msg, *args, extra={"subsystem": SNAPM_SUBSYSTEM_LVM2_ERR}, **kwargs)
+
 
 #: Maximum length for LVM2 LV names
 LVM_MAX_NAME_LEN = 127
@@ -518,14 +537,26 @@ class _Lvm2(Plugin):
         in ``self._env``.
         """
         kwargs["env"] = self._env | kwargs["env"] if "env" in kwargs else self._env
-        return run(
-            *popenargs,
-            input=input,
-            capture_output=capture_output,
-            timeout=timeout,
-            check=check,
-            **kwargs,
-        )
+        cmd_str = shlex_join(popenargs[0])
+        _log_debug_lvm2("lvm2: %s", cmd_str)
+        try:
+            result = run(
+                *popenargs,
+                input=input,
+                capture_output=capture_output,
+                timeout=timeout,
+                check=check,
+                **kwargs,
+            )
+        except CalledProcessError as err:
+            err_msg = err.stderr.decode("utf8").strip() if err.stderr else ""
+            _log_debug_lvm2("lvm2: %s failed: %s", cmd_str, err_msg)
+            if not get_debug_mask() & SNAPM_DEBUG_LVM2:
+                _log_debug_lvm2_err("lvm2: %s failed: %s", cmd_str, err_msg)
+            raise
+        if capture_output and result.stdout:
+            _log_debug_lvm2("lvm2: output: %s", result.stdout.decode("utf8").strip())
+        return result
 
     def _is_lvm_device(self, device):
         """
