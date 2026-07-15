@@ -32,6 +32,16 @@ except (TypeError, ValueError):
     err_print(f"Invalid VM_INSTALL_TIMEOUT: {os.getenv('VM_INSTALL_TIMEOUT', None)}")
     err_print(f"Using default ({VM_INSTALL_TIMEOUT}s)")
 
+# Explicit install locations using CDN mirrors for reliability
+# Using official CDN endpoints instead of virt-install auto-discovery
+# to avoid network flakiness from random mirror selection in CI.
+INSTALL_LOCATIONS = {
+    "fedora42": "https://dl.fedoraproject.org/pub/fedora/linux/releases/42/Everything/x86_64/os/",
+    "fedora43": "https://dl.fedoraproject.org/pub/fedora/linux/releases/43/Everything/x86_64/os/",
+    "centos-stream9": "https://mirror.stream.centos.org/9-stream/BaseOS/x86_64/os/",
+    "centos-stream10": "https://mirror.stream.centos.org/10-stream/BaseOS/x86_64/os/",
+}
+
 
 def _need_force_bios() -> bool:
     """
@@ -290,6 +300,17 @@ restorecon -R /root/.ssh || true
         ks_opts = "inst.cmdline inst.ksstrict"
         console = "console=tty0 console=ttyS0"
 
+        # Use explicit install location from CDN if available, otherwise fallback to auto-discovery
+        if self.base_os in INSTALL_LOCATIONS:
+            install_location = INSTALL_LOCATIONS[self.base_os]
+            log_print(f"📍 Using explicit install location: {install_location}")
+            install_args = ["--location", install_location]
+            # Also configure Anaconda to use the same repo for package downloads
+            ks_opts += f" inst.repo={install_location}"
+        else:
+            log_print(f"⚠️  No explicit location for {self.base_os}, using auto-discovery")
+            install_args = ["--install", self.base_os]
+
         virt_install_cmd = [
             "unbuffer",
             "virt-install",
@@ -305,8 +326,7 @@ restorecon -R /root/.ssh || true
             "disk_size=off",
             "--disk",
             f"path={disk_path},size={self.vm_disk_size},format=qcow2,bus=virtio",
-            "--install",
-            self.base_os,
+            *install_args,
             "--initrd-inject",
             kickstart_path,
             "--extra-args",
