@@ -145,6 +145,10 @@ jobs:
         base_os: [fedora43, fedora44, centos-stream9, centos-stream10]
     steps:
       - uses: actions/checkout@v4
+      - name: Install virt-framework
+        run: |
+          set -euo pipefail
+          sudo pip install git+https://github.com/trgill/virt-framework.git@main
       - name: Install virt dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -212,7 +216,7 @@ jobs:
           REF_NAME:    ${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}
         run: |
           set -euo pipefail
-          sudo python3 -m virt_tests \
+          sudo virt-framework \
             --"$FIRMWARE" \
             --storage "$STORAGE" \
             --repo "$REPOSITORY" \
