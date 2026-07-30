@@ -1828,7 +1828,35 @@ def _mount_cmd(cmd_args):
         _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
         return 1
     snapset = matches[0]
-    manager.mounts.mount(snapset)
+
+    mount_root = getattr(cmd_args, "mount_root", None)
+
+    mount_points_override = {}
+    mount_points_args = getattr(cmd_args, "mount_points", None)
+    if mount_points_args:
+        for mp_spec in mount_points_args:
+            if "=" not in mp_spec:
+                _log_error(
+                    "Invalid mount point override format '%s'. Expected ORIG=CUSTOM",
+                    mp_spec,
+                )
+                return 1
+            orig, custom = mp_spec.split("=", 1)
+            orig = orig.strip()
+            custom = custom.strip()
+            if not orig.startswith("/"):
+                _log_error("Original mount point must be absolute: '%s'", orig)
+                return 1
+            if not custom.startswith("/"):
+                _log_error("Custom mount point must be absolute: '%s'", custom)
+                return 1
+            mount_points_override[orig] = custom
+
+    manager.mounts.mount(
+        snapset,
+        mount_root=mount_root,
+        mount_points=mount_points_override or None,
+    )
     return 0
 
 
@@ -3107,6 +3135,22 @@ def _add_snapset_subparser(type_subparser):
         type=str,
         action="store",
         help="The name of the snapshot set to be mounted",
+    )
+    snapset_mount_parser.add_argument(
+        "--mount-root",
+        metavar="PATH",
+        type=str,
+        default=None,
+        help="Custom root directory for the snapshot set mount tree",
+    )
+    snapset_mount_parser.add_argument(
+        "--mount-point",
+        metavar="ORIG=CUSTOM",
+        type=str,
+        action="append",
+        dest="mount_points",
+        default=None,
+        help="Override a member mount point (repeatable, e.g. --mount-point /home=/mnt/home)",
     )
     snapset_mount_parser.set_defaults(func=_mount_cmd)
 
