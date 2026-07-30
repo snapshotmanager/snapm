@@ -196,6 +196,71 @@ operations:
 The mount status of a snapshot set is visible in the ``snapset show``
 and ``snapset list`` output via the ``Mounted`` field.
 
+Custom Mount Root
+-----------------
+
+By default, snapshot sets are mounted under ``/run/snapm/mounts``. The
+``--mount-root`` option allows you to specify an alternative base
+directory for the mount tree. The snapshot set name is appended to the
+given path:
+
+.. code-block:: bash
+
+   # Mount the snapshot set under /mnt/snapshots/backup
+   snapm snapset mount --mount-root /mnt/snapshots backup
+
+   # Access contents at the custom location
+   ls /mnt/snapshots/backup/etc
+   cat /mnt/snapshots/backup/var/log/messages
+
+   # Unmount when finished
+   snapm snapset umount backup
+
+If the specified directory does not exist, it is created automatically.
+
+Per-Member Mount Point Overrides
+--------------------------------
+
+The ``--mount-point`` option allows individual snapshot set members to
+be mounted at arbitrary absolute paths instead of their default
+locations within the mount tree. This is useful when you need direct
+access to specific parts of the snapshot without navigating the full
+hierarchy.
+
+The option takes an ``ORIG=CUSTOM`` argument, where ``ORIG`` is the
+original mount point of the snapshot set member (e.g. ``/home``) and
+``CUSTOM`` is the desired mount location. The option can be repeated to
+override multiple members:
+
+.. code-block:: bash
+
+   # Mount /home from the snapshot to /mnt/recovery
+   snapm snapset mount --mount-point /home=/mnt/recovery backup
+
+   # Override multiple members
+   snapm snapset mount \
+       --mount-point /home=/mnt/home-recovery \
+       --mount-point /var=/mnt/var-investigation \
+       backup
+
+If a custom mount point directory does not exist, it is created
+automatically. Both the original and custom paths must be absolute.
+
+The ``--mount-root`` and ``--mount-point`` options can be combined:
+``--mount-root`` controls where the main mount tree is placed, while
+``--mount-point`` overrides redirect specific members to entirely
+separate locations outside the mount tree.
+
+Permissions
+-----------
+
+All mount operations require root privileges. To mount snapshot sets
+with custom paths, run ``snapm`` with ``sudo`` or as root:
+
+.. code-block:: bash
+
+   sudo snapm snapset mount --mount-root /mnt/snapshots backup
+
 Difference Engine
 =================
 
