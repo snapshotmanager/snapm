@@ -206,17 +206,34 @@ given path:
 
 .. code-block:: bash
 
+   # Create the mount root directory with appropriate permissions
+   sudo mkdir -p /mnt/snapshots
+   sudo chmod 755 /mnt/snapshots
+
    # Mount the snapshot set under /mnt/snapshots/backup
-   snapm snapset mount --mount-root /mnt/snapshots backup
+   sudo snapm snapset mount --mount-root /mnt/snapshots backup
 
    # Access contents at the custom location
    ls /mnt/snapshots/backup/etc
    cat /mnt/snapshots/backup/var/log/messages
 
    # Unmount when finished
-   snapm snapset umount backup
+   sudo snapm snapset umount backup
 
-If the specified directory does not exist, it is created automatically.
+The mount root directory must exist before mounting. This allows
+administrators to control ownership and permissions on the parent
+directory. For example, to grant selective access to snapshot contents
+while maintaining security boundaries:
+
+.. code-block:: bash
+
+   # Create mount root owned by a specific user
+   sudo mkdir -p /tmp/rescue
+   sudo chown user:group /tmp/rescue
+   sudo chmod 700 /tmp/rescue
+
+   # User can now mount and access snapshot contents
+   sudo snapm snapset mount --mount-root /tmp/rescue backup
 
 Per-Member Mount Point Overrides
 --------------------------------
@@ -234,32 +251,51 @@ override multiple members:
 
 .. code-block:: bash
 
+   # Create the custom mount point directory
+   sudo mkdir -p /mnt/recovery
+
    # Mount /home from the snapshot to /mnt/recovery
-   snapm snapset mount --mount-point /home=/mnt/recovery backup
+   sudo snapm snapset mount --mount-point /home=/mnt/recovery backup
 
    # Override multiple members
-   snapm snapset mount \
+   sudo mkdir -p /mnt/home-recovery /mnt/var-investigation
+   sudo snapm snapset mount \
        --mount-point /home=/mnt/home-recovery \
        --mount-point /var=/mnt/var-investigation \
        backup
 
-If a custom mount point directory does not exist, it is created
-automatically. Both the original and custom paths must be absolute.
+Both the original and custom paths must be absolute. Custom mount point
+directories are created automatically if they do not exist, using the
+default permissions inherited from the parent directory.
 
 The ``--mount-root`` and ``--mount-point`` options can be combined:
 ``--mount-root`` controls where the main mount tree is placed, while
 ``--mount-point`` overrides redirect specific members to entirely
 separate locations outside the mount tree.
 
-Permissions
------------
+Security and Permissions
+-------------------------
 
-All mount operations require root privileges. To mount snapshot sets
-with custom paths, run ``snapm`` with ``sudo`` or as root:
+All mount operations require root privileges. When using custom mount
+paths, administrators should carefully consider directory ownership and
+permissions to maintain appropriate security boundaries.
+
+The default mount location ``/run/snapm/mounts`` uses mode ``0700`` to
+restrict snapshot contents to root only. When using ``--mount-root``,
+create the parent directory with appropriate permissions before mounting:
 
 .. code-block:: bash
 
+   # Restrict to root only (like the default)
+   sudo mkdir -p /mnt/snapshots
+   sudo chmod 700 /mnt/snapshots
    sudo snapm snapset mount --mount-root /mnt/snapshots backup
+
+   # Allow a specific user/group to access snapshot contents
+   sudo mkdir -p /srv/recovery
+   sudo chown recoveryuser:recoverygroup /srv/recovery
+   sudo chmod 750 /srv/recovery
+   sudo snapm snapset mount --mount-root /srv/recovery backup
 
 Difference Engine
 =================
