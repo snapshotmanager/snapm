@@ -855,11 +855,9 @@ class Mounts:
 
         if mount_root is not None:
             mount_root = os.path.abspath(mount_root)
-            if not os.path.exists(mount_root):
-                os.makedirs(mount_root, mode=0o755, exist_ok=True)
-            elif not os.path.isdir(mount_root):
+            if not os.path.isdir(mount_root):
                 raise SnapmPathError(
-                    f"Mount root path exists but is not a directory: {mount_root}"
+                    f"Mount root path does not exist or is not a directory: {mount_root}"
                 )
             mount_path = os.path.join(mount_root, snapset.name)
         else:

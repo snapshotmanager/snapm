@@ -578,9 +578,9 @@ class MountsTests(MountsTestsBase):
 
         self.mounts.umount(self.snapset)
 
-    def test_mount_with_custom_mount_root_new_dir(self):
+    def test_mount_with_custom_mount_root_nonexistent(self):
         """
-        Tests that a non-existent mount_root directory is created automatically.
+        Tests that a non-existent mount_root directory raises SnapmPathError.
         """
         custom_root_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_root_")
         self.addCleanup(custom_root_obj.cleanup)
@@ -588,14 +588,10 @@ class MountsTests(MountsTestsBase):
         new_root = os.path.join(custom_root_obj.name, "nested", "mount_root")
         self.assertFalse(os.path.exists(new_root))
 
-        mount_obj = self.mounts.mount(self.snapset, mount_root=new_root)
-
-        self.assertTrue(os.path.isdir(new_root))
-        expected_path = os.path.join(new_root, self.snapset_name)
-        self.assertEqual(mount_obj.root, expected_path)
-        self.assertTrue(mount_obj.mounted)
-
-        self.mounts.umount(self.snapset)
+        with self.assertRaisesRegex(
+            snapm.SnapmPathError, "does not exist or is not a directory"
+        ):
+            self.mounts.mount(self.snapset, mount_root=new_root)
 
     def test_mount_with_mount_root_not_a_dir(self):
         """
