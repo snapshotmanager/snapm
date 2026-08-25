@@ -266,7 +266,10 @@ override multiple members:
 
 Both the original and custom paths must be absolute. Custom mount point
 directories are created automatically if they do not exist, using the
-default permissions inherited from the parent directory.
+default permissions inherited from the parent directory. Note that once
+the filesystem is mounted, the permissions and ownership visible within
+the mount reflect those of the snapshot's filesystem content, not the
+mount directory's initial permissions.
 
 The ``--mount-root`` and ``--mount-point`` options can be combined:
 ``--mount-root`` controls where the main mount tree is placed, while
