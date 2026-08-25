@@ -3150,7 +3150,10 @@ def _add_snapset_subparser(type_subparser):
         action="append",
         dest="mount_points",
         default=None,
-        help="Override a member mount point: specify multiple times to override different mount points.",
+        help=(
+            "Override a member mount point: specify multiple times "
+            "to override different mount points."
+        ),
     )
     snapset_mount_parser.set_defaults(func=_mount_cmd)
 
