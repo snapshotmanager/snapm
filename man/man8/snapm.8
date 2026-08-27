@@ -358,6 +358,10 @@ snapm \- Linux Snapshot Manager
 .de CMD_SNAPSET_MOUNT
 .  B snapset
 .  B mount
+.  RB [--mount-root\ \c
+.  IR path] " "\c
+.  RB [--mount-point\ \c
+.  IR orig=custom] " "\c
 .  ARG_NAME
 ..
 .CMD_SNAPSET_MOUNT
@@ -366,6 +370,8 @@ snapm \- Linux Snapshot Manager
 .de CMD_SNAPSET_UMOUNT
 .  B snapset
 .  B umount
+.  RB [--mount-root\ \c
+.  IR path] " "\c
 .  ARG_NAME
 ..
 .CMD_SNAPSET_UMOUNT
@@ -1312,15 +1318,28 @@ output.
 .B snapm
 .CMD_SNAPSET_MOUNT
 .br
-Mount the members of the specified snapshot set. The root volume is mounted at
-\fI/run/snapm/mounts/<name>\fP. Bind mounts for API and runtime file systems
-are created automatically.
+Mount the members of the specified snapshot set. By default, the root volume
+is mounted at \fI/run/snapm/mounts/<name>\fP. Bind mounts for API and runtime
+file systems are created automatically.
+.sp
+The \fB--mount-root\fP option specifies an alternative base directory for the
+mount tree. The directory must exist and have appropriate permissions set by
+the administrator before mounting.
+.sp
+The \fB--mount-point\fP option redirects individual snapshot set members to
+arbitrary absolute paths instead of their default locations within the mount
+tree. This option may be specified multiple times to override different mount
+points. The format is \fIorig=custom\fP where \fIorig\fP is the original mount
+point (e.g., /home) and \fIcustom\fP is the desired mount location.
 .
 .TP
 .B snapm
 .CMD_SNAPSET_UMOUNT
 .br
-Unmount the specified snapshot set members from \fI/run/snapm/mounts/<name>\fP.
+Unmount the specified snapshot set members. By default, unmounts from
+\fI/run/snapm/mounts/<name>\fP. If the snapshot set was mounted with
+\fB--mount-root\fP, the same option should be specified to unmount from
+that location.
 .
 .TP
 .B snapm
