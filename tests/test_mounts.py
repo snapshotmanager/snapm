@@ -660,6 +660,49 @@ class MountsTests(MountsTestsBase):
 
         self.mounts.umount(self.snapset)
 
+    def test_discover_mounts_with_custom_root(self):
+        """
+        Tests that discover_mounts() finds mounts created with custom mount_root
+        by checking each snapset's mount_root attribute.
+        """
+        custom_root_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_root_")
+        self.addCleanup(custom_root_obj.cleanup)
+
+        # Mount with custom root
+        mount_obj = self.mounts.mount(self.snapset, mount_root=custom_root_obj.name)
+        custom_path = os.path.join(custom_root_obj.name, self.snapset_name)
+        self.assertEqual(mount_obj.root, custom_path)
+        self.assertTrue(mount_obj.mounted)
+
+        # Verify snapset.mount_root is set
+        self.assertEqual(self.snapset.mount_root, custom_path)
+
+        # Re-discover mounts (simulating a fresh Manager initialization)
+        self.mounts.discover_mounts()
+
+        # Verify the custom mount was rediscovered
+        self.assertIn(self.snapset_name, self.mounts._mounts_by_name)
+        rediscovered = self.mounts._mounts_by_name[self.snapset_name]
+        self.assertEqual(rediscovered.root, custom_path)
+        self.assertTrue(rediscovered.mounted)
+
+        self.mounts.umount(self.snapset)
+
+    def test_discover_mounts_clears_stale_mount_root(self):
+        """
+        Tests that discover_mounts() clears stale mount_root values when
+        the mount no longer exists.
+        """
+        # Set a fake mount_root that doesn't exist
+        fake_path = "/nonexistent/path/to/mount"
+        self.snapset.mount_root = fake_path
+
+        # Discover mounts should clear the stale mount_root
+        self.mounts.discover_mounts()
+
+        # Verify mount_root was cleared
+        self.assertEqual(self.snapset.mount_root, "")
+
     def test_get_sys_mount(self):
         """
         Tests that ``Mounts.get_sys_mount()`` returns a ``SysMount`` object
