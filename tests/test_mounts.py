@@ -801,3 +801,110 @@ class MountBaseTests(unittest.TestCase):
             m.is_mounted = False
             with self.assertRaisesRegex(snapm.SnapmPathError, "is not mounted"):
                 m.exec("ls")
+
+
+class ProcMountsReaderTests(unittest.TestCase):
+    """
+    Tests for ProcMountsReader class.
+    """
+
+    def test_submounts_with_escaped_paths(self):
+        """Test that ProcMountsReader correctly handles octal escape sequences.
+        
+        /proc/mounts uses octal escape sequences for special characters:
+        - \\134 represents a backslash (octal 92)
+        - \\134x2d represents the escape sequence \\x2d (hyphen, hex 2d = decimal 45)
+        
+        This is common with systemd-cryptsetup credential mounts on LUKS-encrypted
+        systems, where the service name contains hyphens in the LUKS UUID:
+        systemd-cryptsetup@luks-XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX.service
+        """
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
+            # Write a mock /proc/mounts with escaped paths
+            # This simulates what you see on LUKS-encrypted systems
+            f.write("tmpfs /run/credentials/systemd-journald.service tmpfs ro,nosuid 0 0\n")
+            f.write("tmpfs /run/credentials/systemd-cryptsetup@luks\\134x2dc0d4bcd3\\134x2d54d6\\134x2d4b7e\\134x2db656\\134x2d77ddcbbc8416.service tmpfs ro,nosuid 0 0\n")
+            f.write("proc /run/snapm/mounts/test/proc proc rw,nosuid 0 0\n")
+            f.write("tmpfs /run/snapm/mounts/test/run/credentials/systemd-cryptsetup@luks\\134x2dc0d4bcd3\\134x2d54d6\\134x2d4b7e\\134x2db656\\134x2d77ddcbbc8416.service tmpfs ro,nosuid 0 0\n")
+            mock_mounts_file = f.name
+
+        try:
+            reader = mounts.ProcMountsReader(path=mock_mounts_file)
+            submounts_list = list(reader.submounts("/run/snapm/mounts/test"))
+            
+            # Should find 2 submounts under /run/snapm/mounts/test
+            self.assertEqual(len(submounts_list), 2)
+            
+            # Check the proc mount (no escapes)
+            proc_mount = submounts_list[0]
+            self.assertEqual(proc_mount.where, "/run/snapm/mounts/test/proc")
+            self.assertEqual(proc_mount.fstype, "proc")
+            
+            # Check the systemd-cryptsetup credential mount (has escapes)
+            credential_mount = submounts_list[1]
+
+            # The path should have literal \x2d (not hyphens, not \134x2d)
+            # systemd creates directories with literal escape sequence characters
+            expected_path = r"/run/snapm/mounts/test/run/credentials/systemd-cryptsetup@luks\x2dc0d4bcd3\x2d54d6\x2d4b7e\x2db656\x2d77ddcbbc8416.service"
+            self.assertEqual(credential_mount.where, expected_path)
+
+            # Verify the octal escapes are gone (no \134)
+            self.assertNotIn(r'\134', credential_mount.where)
+
+            # Verify it contains the literal \x2d characters (backslash + x + 2 + d)
+            self.assertIn(r'\x2d', credential_mount.where)
+            
+        finally:
+            os.unlink(mock_mounts_file)
+
+    def test_submounts_with_other_escape_sequences(self):
+        """Test handling of other common escape sequences in /proc/mounts."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
+            # Test various escape sequences
+            f.write("tmpfs /run/test/path\\040with\\040spaces tmpfs rw 0 0\n")  # \040 = space
+            f.write("tmpfs /run/test/path\\057with\\057slashes tmpfs rw 0 0\n")  # \057 = /
+            f.write("tmpfs /run/test/normal-path tmpfs rw 0 0\n")
+            mock_mounts_file = f.name
+
+        try:
+            reader = mounts.ProcMountsReader(path=mock_mounts_file)
+            submounts_list = list(reader.submounts("/run/test"))
+
+            self.assertEqual(len(submounts_list), 3)
+
+            # Check space escape (\040 = octal for space)
+            self.assertEqual(submounts_list[0].where, "/run/test/path with spaces")
+
+            # Check slash escape (\057 = octal for /)
+            self.assertEqual(submounts_list[1].where, "/run/test/path/with/slashes")
+
+            # Check normal path (no escapes)
+            self.assertEqual(submounts_list[2].where, "/run/test/normal-path")
+
+        finally:
+            os.unlink(mock_mounts_file)
+
+    def test_submounts_unescapes_device_field(self):
+        """Test that ProcMountsReader unescapes the device (what) field.
+
+        The kernel escapes special characters in the device field too, not just
+        the mount point. A bind mount of a file whose path contains a space is a
+        common way to hit this.
+        """
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
+            # Device path contains an escaped space (\040)
+            f.write("/mnt/backing\\040file /run/test/loop ext4 rw 0 0\n")
+            mock_mounts_file = f.name
+
+        try:
+            reader = mounts.ProcMountsReader(path=mock_mounts_file)
+            submounts_list = list(reader.submounts("/run/test"))
+
+            self.assertEqual(len(submounts_list), 1)
+
+            # The device field should be unescaped just like the mount point
+            self.assertEqual(submounts_list[0].what, "/mnt/backing file")
+            self.assertEqual(submounts_list[0].where, "/run/test/loop")
+
+        finally:
+            os.unlink(mock_mounts_file)
