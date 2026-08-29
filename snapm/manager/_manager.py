@@ -1096,6 +1096,10 @@ class Manager:
         self.by_name = {}
         self.by_uuid = {}
 
+        # Reject Image Mode / ostree deployments early: these are unsupported
+        # and would otherwise fail later with a confusing read-only /boot error.
+        _check_image_mode()
+
         # Verify presence and permissions for SNAPM_RUNTIME_DIR
         _check_snapm_runtime_dir()
 
