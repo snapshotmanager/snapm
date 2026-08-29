@@ -248,6 +248,11 @@ snapm snapset diffreport -o path,type,size_delta pre-update .
 - Root privileges for performing storage operations
 - Python 3.9+
 
+> **Note:** Image Mode (bootc) and ostree based deployments are currently
+> unsupported. These systems use a read-only `/boot` filesystem and a
+> different boot management model that snapm and boom do not yet support.
+> snapm detects such deployments and exits early with an error.
+
 ## Supported Storage Backends
 
 | Backend | Type | Snapshots | Thin Provisioning | Status |
