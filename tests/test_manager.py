@@ -292,6 +292,42 @@ class ManagerTestsSimple(unittest.TestCase):
         with self.assertRaises(snapm.SnapmSystemError):
             _manager._check_snapm_runtime_dir()
 
+    @patch("snapm.manager._manager.exists")
+    def test_check_image_mode(self, mock_exists):
+        """Test detection of Image Mode / ostree deployments."""
+        # Case 1: not an ostree/Image Mode system - should not raise
+        mock_exists.return_value = False
+        _manager._check_image_mode()
+        mock_exists.assert_called_once_with(_manager._OSTREE_BOOTED_PATH)
+
+        # Case 2: ostree marker present - should raise SnapmSystemError
+        mock_exists.return_value = True
+        with self.assertRaises(snapm.SnapmSystemError) as cm:
+            _manager._check_image_mode()
+        self.assertIn("Image Mode", str(cm.exception))
+
+    @patch("snapm.manager._manager._check_lock_dir")
+    @patch("snapm.manager._manager._check_snapm_runtime_dir")
+    def test_manager_init_rejects_image_mode(self, mock_runtime_dir, mock_lock_dir):
+        """Manager construction fails early on an Image Mode / ostree system."""
+        real_exists = os.path.exists
+
+        def fake_exists(path):
+            """
+            Report only the ostree marker as present, and delegate every
+            other path to the real ``os.path.exists()``.
+            """
+            if path == _manager._OSTREE_BOOTED_PATH:
+                return True
+            return real_exists(path)
+
+        with patch("snapm.manager._manager.exists", side_effect=fake_exists):
+            with self.assertRaises(snapm.SnapmSystemError) as cm:
+                manager.Manager()
+        self.assertIn("Image Mode", str(cm.exception))
+        # The check must come before any runtime directory or lock setup
+        mock_runtime_dir.assert_not_called()
+        mock_lock_dir.assert_not_called()
 
     def test__validate_snapset_name_empty_raises(self):
         """Ensure Manager._validate_snapset_name() rejects an empty name"""
