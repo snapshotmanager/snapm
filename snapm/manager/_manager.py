@@ -147,6 +147,10 @@ MANAGER_LOCK_TIMEOUT = 60.0
 #: How long to wait between attempts to take the manager lock.
 _LOCK_POLL_INTERVAL = 0.1
 
+#: Marker file created by ostree when booted into an ostree/Image Mode
+#: deployment (this includes bootc based Image Mode systems).
+_OSTREE_BOOTED_PATH = "/run/ostree-booted"
+
 #: Maximum length for a systemd unit name
 _SYSTEMD_UNIT_NAME_LEN = 255
 
@@ -505,6 +509,24 @@ def _lock_holder(fd: int) -> str:
     if not pid.isdigit():
         return ""
     return f" (held by pid {pid})"
+
+
+def _check_image_mode():
+    """
+    Reject operation on Image Mode / ostree deployments.
+
+    snapm cannot manage snapshots on Image Mode (bootc) or ostree based
+    systems: these deployments use a read-only ``/boot`` filesystem and a
+    different boot management model that snapm and boom do not currently
+    support. Detect such systems early and fail with a clear message rather
+    than allowing operations to fail later with confusing errors (for
+    example when boom attempts to generate a default configuration on the
+    read-only ``/boot`` filesystem).
+
+    :raises SnapmSystemError: If an ostree / Image Mode deployment is detected.
+    """
+    if exists(_OSTREE_BOOTED_PATH):
+        raise SnapmSystemError("Image Mode deployments are currently unsupported")
 
 
 def _check_lock_dir() -> str:
