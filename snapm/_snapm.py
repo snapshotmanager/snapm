@@ -419,9 +419,70 @@ class SnapmSizePolicyError(SnapmError):
 
 
 class SnapmExistsError(SnapmError):
+    """Base class for errors raised when a named resource already exists.
+
+    :param name: The name of the conflicting resource.
+    :param msg: Optional custom message. When omitted, a default message is
+        generated from *name*.
     """
-    The named snapshot set already exists.
+
+    _default_template = "Resource named {name!r} already exists"
+
+    def __init__(self, name: str, msg: Optional[str] = None) -> None:
+        self.name = name
+        super().__init__(msg if msg is not None else self._default_template.format(name=name))
+
+
+class SnapmSnapsetExistsError(SnapmExistsError):
+    """Raised when a snapshot set with the given name already exists.
+
+    :param name: The snapshot set name that already exists.
     """
+
+    _default_template = "Snapshot set named {name!r} already exists"
+
+    def __init__(self, name: str, msg: Optional[str] = None) -> None:
+        self.snapset_name = name
+        super().__init__(name, msg)
+
+
+class SnapmScheduleExistsError(SnapmExistsError):
+    """Raised when a schedule with the given name already exists.
+
+    :param name: The schedule name that already exists.
+    """
+
+    _default_template = "Schedule named {name!r} already exists"
+
+    def __init__(self, name: str, msg: Optional[str] = None) -> None:
+        self.schedule_name = name
+        super().__init__(name, msg)
+
+
+class SnapmBootEntryExistsError(SnapmExistsError):
+    """Raised when a boot entry already exists for the given snapshot set.
+
+    :param name: The snapshot set name whose boot entry already exists.
+    """
+
+    _default_template = "Boot entry already associated with snapshot set {name!r}"
+
+    def __init__(self, name: str, msg: Optional[str] = None) -> None:
+        self.snapset_name = name
+        super().__init__(name, msg)
+
+
+class SnapmRevertEntryExistsError(SnapmExistsError):
+    """Raised when a revert entry already exists for the given snapshot set.
+
+    :param name: The snapshot set name whose revert entry already exists.
+    """
+
+    _default_template = "Revert entry already associated with snapshot set {name!r}"
+
+    def __init__(self, name: str, msg: Optional[str] = None) -> None:
+        self.snapset_name = name
+        super().__init__(name, msg)
 
 
 class SnapmBusyError(SnapmError):
@@ -2554,6 +2615,10 @@ __all__ = [
     "SnapmNoProviderError",
     "SnapmSizePolicyError",
     "SnapmExistsError",
+    "SnapmSnapsetExistsError",
+    "SnapmScheduleExistsError",
+    "SnapmBootEntryExistsError",
+    "SnapmRevertEntryExistsError",
     "SnapmBusyError",
     "SnapmPathError",
     "SnapmNotFoundError",

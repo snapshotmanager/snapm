@@ -37,6 +37,10 @@ from snapm import (
     SnapmNoSpaceError,
     SnapmNoProviderError,
     SnapmExistsError,
+    SnapmSnapsetExistsError,
+    SnapmScheduleExistsError,
+    SnapmBootEntryExistsError,
+    SnapmRevertEntryExistsError,
     SnapmBusyError,
     SnapmPathError,
     SnapmNotFoundError,
@@ -708,7 +712,7 @@ class Scheduler:
         self._manager._validate_snapset_name(name)
 
         if name in self._schedules_by_name:
-            raise SnapmExistsError(f"Schedule named '{name}' already exists")
+            raise SnapmScheduleExistsError(name)
 
         _, _ = _parse_source_specs(sources, default_size_policy)
 
@@ -1263,7 +1267,7 @@ class Manager:
                  ``SnapmInvalidIdentifierError`` if the name fails validation.
         """
         if name in self.by_name:
-            raise SnapmExistsError(f"Snapshot set named '{name}' already exists")
+            raise SnapmSnapsetExistsError(name)
         for char in name:
             # Underscore is specifically disallowed in snapset names.
             if char == "_" or char not in SNAPM_VALID_NAME_CHARS:
@@ -1865,9 +1869,7 @@ class Manager:
                 f"set {snapset.name}"
             )
         if snapset.boot_entry is not None:
-            raise SnapmExistsError(
-                f"Boot entry already associated with snapshot set {snapset.name}"
-            )
+            raise SnapmBootEntryExistsError(snapset.name)
         create_snapset_boot_entry(snapset)
         self._boot_cache.refresh_cache()
 
@@ -1883,9 +1885,7 @@ class Manager:
         snapset = self._snapset_from_name_or_uuid(name=name, uuid=uuid)
 
         if snapset.revert_entry is not None:
-            raise SnapmExistsError(
-                f"Revert entry already associated with snapshot set {snapset.name}"
-            )
+            raise SnapmRevertEntryExistsError(snapset.name)
         create_snapset_revert_entry(snapset)
         self._boot_cache.refresh_cache()
 
