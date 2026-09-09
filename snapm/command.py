@@ -67,6 +67,8 @@ from snapm import (
     SNAPM_DEBUG_MOUNTS,
     SNAPM_DEBUG_FSDIFF,
     SNAPM_DEBUG_PLUGIN,
+    SNAPM_DEBUG_LVM2,
+    SNAPM_DEBUG_LVM2_ERR,
     SNAPM_DEBUG_ALL,
     SNAPM_SUBSYSTEM_COMMAND,
     SubsystemFilter,
@@ -2448,6 +2450,8 @@ def set_debug(debug_arg):
         "mounts": SNAPM_DEBUG_MOUNTS,
         "fsdiff": SNAPM_DEBUG_FSDIFF,
         "plugin": SNAPM_DEBUG_PLUGIN,
+        "lvm2": SNAPM_DEBUG_LVM2,
+        "lvm2err": SNAPM_DEBUG_LVM2_ERR,
         "all": SNAPM_DEBUG_ALL,
     }
 
