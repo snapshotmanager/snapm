@@ -201,23 +201,47 @@ class SnapmTestsSimple(unittest.TestCase):
     def test_size_fmt_yib(self):
         self.assertEqual(snapm.size_fmt(1000000000000000000000000000), "827.2YiB")
 
-    def test__unescape_mounts(self):
+    def test_unescape_mounts(self):
         unesc_strings = {
             "/foo/bar\\040baz": "/foo/bar baz",
             "/path/with/tab\\011chars": "/path/with/tab\tchars",
             "embedded\\012newline": "embedded\nnewline",
+            "hash\\043char": "hash#char",
             "back\\134slash": "back\\slash",
         }
         for to_unesc in unesc_strings:
-            self.assertEqual(snapm._snapm._unescape_mounts(to_unesc), unesc_strings[to_unesc])
+            self.assertEqual(snapm.unescape_mounts(to_unesc), unesc_strings[to_unesc])
 
-    def test__unescape_mounts_None(self):
-        with self.assertRaises(AttributeError):
-            snapm._snapm._unescape_mounts(None)
+    def test_unescape_mounts_non_latin1(self):
+        # The kernel only escapes " \t\n\\#": every other byte, including
+        # multi-byte UTF-8 sequences, must pass through untouched.
+        unesc_strings = {
+            "/mnt/日本/data": "/mnt/日本/data",
+            "/mnt/данные": "/mnt/данные",
+            "/mnt/café": "/mnt/café",
+            "/mnt/\U0001F4BE": "/mnt/\U0001F4BE",
+            "/mnt/日本\\040data": "/mnt/日本 data",
+        }
+        for to_unesc in unesc_strings:
+            self.assertEqual(snapm.unescape_mounts(to_unesc), unesc_strings[to_unesc])
 
-    def test__unescape_mounts_not_a_string(self):
+    def test_unescape_mounts_literal_escape_not_double_decoded(self):
+        # A path containing a literal "\040" is written by the kernel as
+        # "\134040": the backslash substitution runs last, so the result must
+        # be the literal text and not a space.
+        self.assertEqual(snapm.unescape_mounts("/mnt/a\\134040b"), "/mnt/a\\040b")
+
+    def test_unescape_mounts_leaves_unescaped_sequences(self):
+        # \057 ('/') is not in the kernel's escape set and must be left alone.
+        self.assertEqual(snapm.unescape_mounts("/mnt/a\\057b"), "/mnt/a\\057b")
+
+    def test_unescape_mounts_None(self):
         with self.assertRaises(AttributeError):
-            snapm._snapm._unescape_mounts(1)
+            snapm.unescape_mounts(None)
+
+    def test_unescape_mounts_not_a_string(self):
+        with self.assertRaises(AttributeError):
+            snapm.unescape_mounts(1)
 
     @patch("builtins.open", new_callable=mock_open, read_data="MemTotal:        16384000 kB\n")
     def test_get_total_memory_16GiB(self, mock_file):

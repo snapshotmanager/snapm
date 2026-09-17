@@ -965,9 +965,33 @@ class SnapStatus(Enum):
         return "Invalid"
 
 
-def _unescape_mounts(escaped: str) -> str:
-    """
+def unescape_mounts(escaped: str) -> str:
+    r"""
     Unescape octal escapes in values read from /proc/*mounts
+
+    The kernel escapes a fixed set of characters when writing mount table
+    fields. From ``fs/proc_namespace.c``::
+
+        static inline void mangle(struct seq_file *m, const char *s)
+        {
+                seq_escape(m, s, " \t\n\\#");
+        }
+
+    Giving five sequences that may appear in a field:
+
+    - ``\040`` represents a space
+    - ``\011`` represents a tab
+    - ``\012`` represents a newline
+    - ``\043`` represents a hash
+    - ``\134`` represents a backslash
+
+    No other character is escaped, so every remaining byte - including
+    multi-byte UTF-8 sequences - passes through unmodified.
+
+    Note: some systemd units (like systemd-cryptsetup credential mounts) have
+    literal escape sequence characters in their directory names (e.g. ``\x2d``).
+    The kernel escapes only the leading backslash, so these appear as
+    ``\134x2d`` in /proc/mounts and decode back to a literal ``\x2d`` here.
 
     :param escaped: The string to unescape.
     :type escaped: str
@@ -975,10 +999,15 @@ def _unescape_mounts(escaped: str) -> str:
               character values.
     :rtype: str
     """
+    # The backslash substitution must come last: it is the only replacement
+    # that can introduce a backslash into the result, so performing it earlier
+    # would allow a path containing a literal "\040" (escaped by the kernel as
+    # "\134040") to be decoded a second time and become a space.
     return (
         escaped.replace("\\040", " ")
         .replace("\\011", "\t")
         .replace("\\012", "\n")
+        .replace("\\043", "#")
         .replace("\\134", "\\")
     )
 
@@ -1822,8 +1851,8 @@ class Snapshot(ABC):
         with open("/proc/self/mounts", "r", encoding="utf8") as mounts:
             for line in mounts:
                 fields = line.split()
-                if self.mount_point == _unescape_mounts(fields[1]):
-                    devpath = _unescape_mounts(fields[0])
+                if self.mount_point == unescape_mounts(fields[1]):
+                    devpath = unescape_mounts(fields[0])
                     if os.path.exists(self.origin) and os.path.exists(devpath):
                         return os.path.samefile(self.origin, devpath)
         return False
@@ -1844,7 +1873,7 @@ class Snapshot(ABC):
         with open("/proc/self/mounts", "r", encoding="utf8") as mounts:
             for line in mounts:
                 fields = line.split()
-                devpath = _unescape_mounts(fields[0])
+                devpath = unescape_mounts(fields[0])
                 if os.path.exists(devpath) and os.path.exists(self.devpath):
                     if os.path.samefile(self.devpath, devpath):
                         return True
@@ -2052,10 +2081,10 @@ class FsTabReader:
                     what, where, fstype, options, freq, passno = parts
                     try:
                         entry = self.FsTabEntry(
-                            _unescape_mounts(what),
-                            _unescape_mounts(where),
+                            unescape_mounts(what),
+                            unescape_mounts(where),
                             fstype,
-                            _unescape_mounts(options),
+                            unescape_mounts(options),
                             int(freq),
                             int(passno),
                         )
@@ -2457,6 +2486,7 @@ __all__ = [
     "select_snapshot_set",
     "select_snapshot",
     "FsTabReader",
+    "unescape_mounts",
     "get_device_path",
     "get_device_fstype",
     "find_snapset_root",

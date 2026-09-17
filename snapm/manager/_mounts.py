@@ -30,6 +30,7 @@ from snapm import (
     SnapshotSet,
     select_snapshot_set,
     FsTabReader,
+    unescape_mounts,
     get_device_fstype,
     get_device_path,
     find_snapset_root,
@@ -340,28 +341,6 @@ def _umount(where: str):
         raise SnapmUmountError(where, err.returncode, err.stderr.strip()) from err
 
 
-def _unescape_proc_mounts_path(path: str) -> str:
-    """Decode octal escape sequences from /proc/mounts format.
-
-    The kernel escapes special characters in mount paths using octal sequences:
-    - \\134 represents a backslash (octal 92, hex 0x5c)
-    - \\040 represents a space (octal 32, hex 0x20)
-    - \\011 represents a tab (octal 9, hex 0x09)
-    - etc.
-
-    Note: Some systemd units (like systemd-cryptsetup credential mounts) have
-    literal escape sequence characters in their directory names (e.g., \\x2d).
-    After unescaping /proc/mounts octal sequences, these appear as literal
-    backslash characters in the filesystem path.
-
-    :param path: The escaped path from /proc/mounts
-    :returns: The unescaped filesystem path
-    """
-    # Use Python's unicode_escape codec to decode octal sequences
-    # This handles \nnn octal escapes but leaves \xHH patterns as literal text
-    return path.encode("latin1").decode("unicode_escape")
-
-
 class ProcMountsReader:
     """Reader for /proc/mounts format files."""
 
@@ -393,8 +372,8 @@ class ProcMountsReader:
                 if len(parts) == 6:
                     # Unescape the device and mount point paths
                     # /proc/mounts uses octal escape sequences for special characters
-                    what = _unescape_proc_mounts_path(parts[0])
-                    where = _unescape_proc_mounts_path(parts[1])
+                    what = unescape_mounts(parts[0])
+                    where = unescape_mounts(parts[1])
 
                     # Create entry with unescaped paths
                     entry = self.MountsEntry(what, where, *parts[2:])

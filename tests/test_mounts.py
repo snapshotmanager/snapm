@@ -858,11 +858,18 @@ class ProcMountsReaderTests(unittest.TestCase):
             os.unlink(mock_mounts_file)
 
     def test_submounts_with_other_escape_sequences(self):
-        """Test handling of other common escape sequences in /proc/mounts."""
+        """Test handling of the full set of escape sequences in /proc/mounts.
+
+        The kernel escapes exactly the characters in " \\t\\n\\\\#" (see
+        mangle() in fs/proc_namespace.c). Any other octal sequence is a
+        literal part of the path name and must be left alone.
+        """
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
             # Test various escape sequences
             f.write("tmpfs /run/test/path\\040with\\040spaces tmpfs rw 0 0\n")  # \040 = space
-            f.write("tmpfs /run/test/path\\057with\\057slashes tmpfs rw 0 0\n")  # \057 = /
+            f.write("tmpfs /run/test/path\\011with\\011tabs tmpfs rw 0 0\n")  # \011 = tab
+            f.write("tmpfs /run/test/path\\043with\\043hashes tmpfs rw 0 0\n")  # \043 = #
+            f.write("tmpfs /run/test/path\\057not\\057escaped tmpfs rw 0 0\n")  # \057 not escaped
             f.write("tmpfs /run/test/normal-path tmpfs rw 0 0\n")
             mock_mounts_file = f.name
 
@@ -870,16 +877,54 @@ class ProcMountsReaderTests(unittest.TestCase):
             reader = mounts.ProcMountsReader(path=mock_mounts_file)
             submounts_list = list(reader.submounts("/run/test"))
 
-            self.assertEqual(len(submounts_list), 3)
+            self.assertEqual(len(submounts_list), 5)
 
             # Check space escape (\040 = octal for space)
             self.assertEqual(submounts_list[0].where, "/run/test/path with spaces")
 
-            # Check slash escape (\057 = octal for /)
-            self.assertEqual(submounts_list[1].where, "/run/test/path/with/slashes")
+            # Check tab escape (\011 = octal for tab)
+            self.assertEqual(submounts_list[1].where, "/run/test/path\twith\ttabs")
+
+            # Check hash escape (\043 = octal for '#')
+            self.assertEqual(submounts_list[2].where, "/run/test/path#with#hashes")
+
+            # \057 ('/') is not in the kernel's escape set: a path name may
+            # legitimately contain that text, so it must survive verbatim.
+            self.assertEqual(submounts_list[3].where, r"/run/test/path\057not\057escaped")
 
             # Check normal path (no escapes)
-            self.assertEqual(submounts_list[2].where, "/run/test/normal-path")
+            self.assertEqual(submounts_list[4].where, "/run/test/normal-path")
+
+        finally:
+            os.unlink(mock_mounts_file)
+
+    def test_submounts_with_non_latin1_paths(self):
+        """Test that mount paths outside the Latin-1 range are preserved.
+
+        The kernel writes UTF-8 path names through unmodified, so decoding
+        must not assume the field is representable in Latin-1.
+        """
+        with tempfile.NamedTemporaryFile(
+            mode='w', encoding='utf8', delete=False, suffix='.mounts'
+        ) as f:
+            f.write("tmpfs /run/test/日本 tmpfs rw 0 0\n")  # CJK
+            f.write("tmpfs /run/test/данные tmpfs rw 0 0\n")  # Cyrillic
+            f.write("tmpfs /run/test/café tmpfs rw 0 0\n")  # Latin-1 range
+            f.write("tmpfs /run/test/\U0001F4BE tmpfs rw 0 0\n")  # non-BMP
+            # A non-Latin-1 path that also carries a real escape sequence.
+            f.write("tmpfs /run/test/日本\\040data tmpfs rw 0 0\n")
+            mock_mounts_file = f.name
+
+        try:
+            reader = mounts.ProcMountsReader(path=mock_mounts_file)
+            submounts_list = list(reader.submounts("/run/test"))
+
+            self.assertEqual(len(submounts_list), 5)
+            self.assertEqual(submounts_list[0].where, "/run/test/日本")
+            self.assertEqual(submounts_list[1].where, "/run/test/данные")
+            self.assertEqual(submounts_list[2].where, "/run/test/café")
+            self.assertEqual(submounts_list[3].where, "/run/test/\U0001F4BE")
+            self.assertEqual(submounts_list[4].where, "/run/test/日本 data")
 
         finally:
             os.unlink(mock_mounts_file)
