@@ -1852,6 +1852,15 @@ def _mount_cmd(cmd_args):
             if not custom.startswith("/"):
                 _log_error("Custom mount point must be absolute: '%s'", custom)
                 return 1
+            if orig not in snapset.mount_points:
+                _log_error(
+                    "Snapshot set %s has no member mounted at '%s' "
+                    "(mount points: %s)",
+                    snapset.name,
+                    orig,
+                    ", ".join(snapset.mount_points) or "none",
+                )
+                return 1
             mount_points_override[orig] = custom
 
     manager.mounts.mount(

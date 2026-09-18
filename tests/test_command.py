@@ -303,10 +303,28 @@ class CommandTestsSimple(CommandTestsBase):
         self.assertEqual(ret, 1)
 
     @patch("snapm.command.Manager")
+    def test_mount_cmd_mount_point_unknown_orig(self, MockManager):
+        """Test that --mount-point with an unknown original returns error."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_snapset.mount_points = ["/home", "/opt"]
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+        args.mount_points = ["/hom=/mnt/home"]
+
+        ret = command._mount_cmd(args)
+        self.assertEqual(ret, 1)
+        mock_manager.mounts.mount.assert_not_called()
+
+    @patch("snapm.command.Manager")
     def test_mount_cmd_valid_mount_point(self, MockManager):
         """Test that valid --mount-point passes correct dict to mounts.mount()."""
         mock_manager = MockManager.return_value
         mock_snapset = MagicMock()
+        mock_snapset.mount_points = ["/home"]
         mock_manager.find_snapshot_sets.return_value = [mock_snapset]
 
         args = MockArgs()
@@ -326,6 +344,7 @@ class CommandTestsSimple(CommandTestsBase):
         """Test that multiple --mount-point flags accumulate correctly."""
         mock_manager = MockManager.return_value
         mock_snapset = MagicMock()
+        mock_snapset.mount_points = ["/home", "/opt"]
         mock_manager.find_snapshot_sets.return_value = [mock_snapset]
 
         args = MockArgs()
@@ -383,6 +402,7 @@ class CommandTestsSimple(CommandTestsBase):
         """Test that whitespace around '=' in --mount-point is stripped."""
         mock_manager = MockManager.return_value
         mock_snapset = MagicMock()
+        mock_snapset.mount_points = ["/home"]
         mock_manager.find_snapshot_sets.return_value = [mock_snapset]
 
         args = MockArgs()
