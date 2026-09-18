@@ -461,9 +461,11 @@ class CommandTestsSimple(CommandTestsBase):
             args.name = "testset0"
             args.mount_root = tmpdir
 
+            # Mount(discover=True) rejects a path that is not a mount point.
             with patch("snapm.command.Mount") as MockMount:
-                mock_mount = MockMount.return_value
-                mock_mount.mounted = False
+                MockMount.side_effect = snapm.SnapmPathError(
+                    f"Mount path {mount_path} is not a mount point."
+                )
 
                 ret = command._umount_cmd(args)
                 self.assertEqual(ret, 1)

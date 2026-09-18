@@ -1901,16 +1901,12 @@ def _umount_cmd(cmd_args):
                 mount_path,
             )
             return 1
-        # Create a temporary Mount object to unmount from the specified location
+        # Create a temporary Mount object to unmount from the specified
+        # location. Discovery raises SnapmPathError if mount_path is not an
+        # active mount point, so a successfully constructed Mount is always
+        # mounted.
         try:
             mount = Mount(snapset, mount_path, discover=True)
-            if not mount.mounted:
-                _log_error(
-                    "Snapshot set %s is not mounted at %s",
-                    snapset.name,
-                    mount_path,
-                )
-                return 1
             mount.umount()
             try:
                 os.rmdir(mount_path)
