@@ -561,6 +561,148 @@ class MountsTests(MountsTestsBase):
             self.assertIn("Missing API file system submounts", log_output)
             self.assertIn("/proc", log_output)
 
+    def test_mount_with_custom_mount_root(self):
+        """
+        Tests that a custom mount_root places the mount tree
+        under mount_root/<snapset_name> instead of the default.
+        """
+        custom_root_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_root_")
+        self.addCleanup(custom_root_obj.cleanup)
+
+        mount_obj = self.mounts.mount(self.snapset, mount_root=custom_root_obj.name)
+
+        expected_path = os.path.join(custom_root_obj.name, self.snapset_name)
+        self.assertEqual(mount_obj.root, expected_path)
+        self.assertTrue(mount_obj.mounted)
+        self.assertTrue(os.path.ismount(expected_path))
+
+        self.mounts.umount(self.snapset)
+
+    def test_mount_with_custom_mount_root_nonexistent(self):
+        """
+        Tests that a non-existent mount_root directory raises SnapmPathError.
+        """
+        custom_root_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_root_")
+        self.addCleanup(custom_root_obj.cleanup)
+
+        new_root = os.path.join(custom_root_obj.name, "nested", "mount_root")
+        self.assertFalse(os.path.exists(new_root))
+
+        with self.assertRaisesRegex(
+            snapm.SnapmPathError, "does not exist or is not a directory"
+        ):
+            self.mounts.mount(self.snapset, mount_root=new_root)
+
+    def test_mount_with_mount_root_not_a_dir(self):
+        """
+        Tests that a mount_root that exists as a regular file raises SnapmPathError.
+        """
+        with tempfile.NamedTemporaryFile(prefix="snapm_not_a_dir_") as tmp:
+            with self.assertRaisesRegex(
+                snapm.SnapmPathError, "not a directory"
+            ):
+                self.mounts.mount(self.snapset, mount_root=tmp.name)
+
+    def test_mount_with_mount_point_override(self):
+        """
+        Tests that a per-member mount point override redirects the mount
+        to the specified custom path instead of under the snapshot root.
+        """
+        custom_mp_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_mp_")
+
+        def cleanup_custom_mp():
+            custom_opt = os.path.join(custom_mp_obj.name, "opt_override")
+            if os.path.exists(custom_opt) and os.path.ismount(custom_opt):
+                mounts._umount(custom_opt)
+            custom_mp_obj.cleanup()
+        self.addCleanup(cleanup_custom_mp)
+
+        custom_opt = os.path.join(custom_mp_obj.name, "opt_override")
+        mount_obj = self.mounts.mount(
+            self.snapset,
+            mount_points={"/opt": custom_opt},
+        )
+
+        self.assertTrue(mount_obj.mounted)
+        self.assertTrue(os.path.ismount(custom_opt))
+        self.assertFalse(os.path.ismount(os.path.join(mount_obj.root, "opt")))
+
+        self.mounts.umount(self.snapset)
+
+    def test_mount_with_mount_root_and_mount_point_override(self):
+        """
+        Tests that --mount-root and --mount-point can be used together.
+        """
+        custom_root_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_root_")
+        custom_mp_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_mp_")
+
+        def cleanup_custom():
+            custom_opt = os.path.join(custom_mp_obj.name, "opt_override")
+            if os.path.exists(custom_opt) and os.path.ismount(custom_opt):
+                mounts._umount(custom_opt)
+            custom_mp_obj.cleanup()
+            custom_root_obj.cleanup()
+        self.addCleanup(cleanup_custom)
+
+        custom_opt = os.path.join(custom_mp_obj.name, "opt_override")
+        mount_obj = self.mounts.mount(
+            self.snapset,
+            mount_root=custom_root_obj.name,
+            mount_points={"/opt": custom_opt},
+        )
+
+        expected_root = os.path.join(custom_root_obj.name, self.snapset_name)
+        self.assertEqual(mount_obj.root, expected_root)
+        self.assertTrue(mount_obj.mounted)
+        self.assertTrue(os.path.ismount(expected_root))
+        self.assertTrue(os.path.ismount(custom_opt))
+        self.assertFalse(os.path.ismount(os.path.join(mount_obj.root, "opt")))
+
+        self.mounts.umount(self.snapset)
+
+    def test_discover_mounts_with_custom_root(self):
+        """
+        Tests that discover_mounts() finds mounts created with custom mount_root
+        by checking each snapset's mount_root attribute.
+        """
+        custom_root_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_root_")
+        self.addCleanup(custom_root_obj.cleanup)
+
+        # Mount with custom root
+        mount_obj = self.mounts.mount(self.snapset, mount_root=custom_root_obj.name)
+        custom_path = os.path.join(custom_root_obj.name, self.snapset_name)
+        self.assertEqual(mount_obj.root, custom_path)
+        self.assertTrue(mount_obj.mounted)
+
+        # Verify snapset.mount_root is set
+        self.assertEqual(self.snapset.mount_root, custom_path)
+
+        # Re-discover mounts (simulating a fresh Manager initialization)
+        self.mounts.discover_mounts()
+
+        # Verify the custom mount was rediscovered
+        self.assertIn(self.snapset_name, self.mounts._mounts_by_name)
+        rediscovered = self.mounts._mounts_by_name[self.snapset_name]
+        self.assertEqual(rediscovered.root, custom_path)
+        self.assertTrue(rediscovered.mounted)
+
+        self.mounts.umount(self.snapset)
+
+    def test_discover_mounts_clears_stale_mount_root(self):
+        """
+        Tests that discover_mounts() clears stale mount_root values when
+        the mount no longer exists.
+        """
+        # Set a fake mount_root that doesn't exist
+        fake_path = "/nonexistent/path/to/mount"
+        self.snapset.mount_root = fake_path
+
+        # Discover mounts should clear the stale mount_root
+        self.mounts.discover_mounts()
+
+        # Verify mount_root was cleared
+        self.assertEqual(self.snapset.mount_root, "")
+
     def test_get_sys_mount(self):
         """
         Tests that ``Mounts.get_sys_mount()`` returns a ``SysMount`` object

@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import logging
 import os
+import tempfile
 
 log = logging.getLogger()
 
@@ -258,6 +259,216 @@ class CommandTestsSimple(CommandTestsBase):
         with self.assertRaises(SystemExit) as cm:
             command.main(args)
         self.assertEqual(cm.exception.code, 2)
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_mount_point_no_equals(self, MockManager):
+        """Test that --mount-point without '=' returns error."""
+        mock_manager = MockManager.return_value
+        mock_manager.find_snapshot_sets.return_value = [MagicMock()]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+        args.mount_points = ["bad_format_no_equals"]
+
+        ret = command._mount_cmd(args)
+        self.assertEqual(ret, 1)
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_mount_point_non_absolute_orig(self, MockManager):
+        """Test that --mount-point with non-absolute original returns error."""
+        mock_manager = MockManager.return_value
+        mock_manager.find_snapshot_sets.return_value = [MagicMock()]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+        args.mount_points = ["home=/mnt/home"]
+
+        ret = command._mount_cmd(args)
+        self.assertEqual(ret, 1)
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_mount_point_non_absolute_custom(self, MockManager):
+        """Test that --mount-point with non-absolute custom returns error."""
+        mock_manager = MockManager.return_value
+        mock_manager.find_snapshot_sets.return_value = [MagicMock()]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+        args.mount_points = ["/home=mnt/home"]
+
+        ret = command._mount_cmd(args)
+        self.assertEqual(ret, 1)
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_mount_point_unknown_orig(self, MockManager):
+        """Test that --mount-point with an unknown original returns error."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_snapset.mount_points = ["/home", "/opt"]
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+        args.mount_points = ["/hom=/mnt/home"]
+
+        ret = command._mount_cmd(args)
+        self.assertEqual(ret, 1)
+        mock_manager.mounts.mount.assert_not_called()
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_valid_mount_point(self, MockManager):
+        """Test that valid --mount-point passes correct dict to mounts.mount()."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_snapset.mount_points = ["/home"]
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+        args.mount_points = ["/home=/mnt/home"]
+
+        command._mount_cmd(args)
+        mock_manager.mounts.mount.assert_called_once_with(
+            mock_snapset,
+            mount_root=None,
+            mount_points={"/home": "/mnt/home"},
+        )
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_multiple_mount_points(self, MockManager):
+        """Test that multiple --mount-point flags accumulate correctly."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_snapset.mount_points = ["/home", "/opt"]
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+        args.mount_points = ["/home=/mnt/home", "/opt=/mnt/opt"]
+
+        command._mount_cmd(args)
+        mock_manager.mounts.mount.assert_called_once_with(
+            mock_snapset,
+            mount_root=None,
+            mount_points={"/home": "/mnt/home", "/opt": "/mnt/opt"},
+        )
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_no_overrides_passes_none(self, MockManager):
+        """Test that no --mount-point or --mount-root passes None for both."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+        args.mount_points = None
+
+        command._mount_cmd(args)
+        mock_manager.mounts.mount.assert_called_once_with(
+            mock_snapset,
+            mount_root=None,
+            mount_points=None,
+        )
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_mount_root_passes_through(self, MockManager):
+        """Test that --mount-root value is passed through to mounts.mount()."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = "/custom/root"
+        args.mount_points = None
+
+        command._mount_cmd(args)
+        mock_manager.mounts.mount.assert_called_once_with(
+            mock_snapset,
+            mount_root="/custom/root",
+            mount_points=None,
+        )
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_mount_point_strips_whitespace(self, MockManager):
+        """Test that whitespace around '=' in --mount-point is stripped."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_snapset.mount_points = ["/home"]
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+        args.mount_points = ["/home = /mnt/home"]
+
+        command._mount_cmd(args)
+        mock_manager.mounts.mount.assert_called_once_with(
+            mock_snapset,
+            mount_root=None,
+            mount_points={"/home": "/mnt/home"},
+        )
+
+    @patch("snapm.command.Manager")
+    def test_umount_cmd_with_mount_root(self, MockManager):
+        """Test that umount command handles --mount-root option."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_snapset.name = "testset0"
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        # Create a temp directory to simulate mount location
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mount_path = os.path.join(tmpdir, "testset0")
+            os.makedirs(mount_path)
+
+            args = MockArgs()
+            args.name = "testset0"
+            args.mount_root = tmpdir
+
+            # Mock the Mount class to avoid actual mounting
+            with patch("snapm.command.Mount") as MockMount:
+                mock_mount = MockMount.return_value
+                mock_mount.mounted = True
+                mock_mount.umount = MagicMock()
+
+                ret = command._umount_cmd(args)
+                self.assertEqual(ret, 0)
+                MockMount.assert_called_once()
+                mock_mount.umount.assert_called_once()
+
+    @patch("snapm.command.Manager")
+    def test_umount_cmd_with_mount_root_not_mounted(self, MockManager):
+        """Test that umount command returns error when path not mounted."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_snapset.name = "testset0"
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mount_path = os.path.join(tmpdir, "testset0")
+            os.makedirs(mount_path)
+
+            args = MockArgs()
+            args.name = "testset0"
+            args.mount_root = tmpdir
+
+            # Mount(discover=True) rejects a path that is not a mount point.
+            with patch("snapm.command.Mount") as MockMount:
+                MockMount.side_effect = snapm.SnapmPathError(
+                    f"Mount path {mount_path} is not a mount point."
+                )
+
+                ret = command._umount_cmd(args)
+                self.assertEqual(ret, 1)
 
 
 @unittest.skipIf(not have_root(), "requires root privileges")

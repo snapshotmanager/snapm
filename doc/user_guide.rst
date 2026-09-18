@@ -196,6 +196,127 @@ operations:
 The mount status of a snapshot set is visible in the ``snapset show``
 and ``snapset list`` output via the ``Mounted`` field.
 
+Custom Mount Root
+-----------------
+
+By default, snapshot sets are mounted under ``/run/snapm/mounts``. The
+``--mount-root`` option allows you to specify an alternative base
+directory for the mount tree. The snapshot set name is appended to the
+given path:
+
+.. code-block:: bash
+
+   # Create the mount root directory
+   sudo mkdir -p /mnt/snapshots
+   sudo chmod 700 /mnt/snapshots
+
+   # Mount the snapshot set under /mnt/snapshots/backup
+   sudo snapm snapset mount --mount-root /mnt/snapshots backup
+
+   # Access contents at the custom location
+   sudo ls /mnt/snapshots/backup/etc
+   sudo cat /mnt/snapshots/backup/var/log/messages
+
+   # Unmount when finished
+   sudo snapm snapset umount backup
+
+The mount root directory must exist before mounting. This allows
+administrators to control ownership and permissions on the parent
+directory, and so to grant selective access to snapshot contents.
+
+Keep the mount root owned by root and inaccessible to other users while
+the snapshot set is mounted, and open up access as the final step. A
+mount root that another user can write to before the mount takes place
+allows them to pre-create the snapshot set directory, or replace it with
+a symbolic link, so that ``snapm`` mounts onto a path of their choosing:
+
+.. code-block:: bash
+
+   # 1. Create a root-owned mount root
+   sudo mkdir -p /srv/rescue
+   sudo chmod 700 /srv/rescue
+
+   # 2. Mount the snapshot set at /srv/rescue/backup
+   sudo snapm snapset mount --mount-root /srv/rescue backup
+
+   # 3. Grant a user access to the mounted snapshot set
+   sudo setfacl -m u:auser:rx /srv/rescue
+
+Only the mount root itself needs to be opened up: within the mount,
+ownership and permissions are those of the snapshot's own file system
+content, so the snapshot set is visible to ``auser`` exactly as the
+origin file system was.
+
+Per-Member Mount Point Overrides
+--------------------------------
+
+The ``--mount-point`` option allows individual snapshot set members to
+be mounted at arbitrary absolute paths instead of their default
+locations within the mount tree. This is useful when you need direct
+access to specific parts of the snapshot without navigating the full
+hierarchy.
+
+The option takes an ``ORIG=CUSTOM`` argument, where ``ORIG`` is the
+original mount point of the snapshot set member (e.g. ``/home``) and
+``CUSTOM`` is the desired mount location. The option can be repeated to
+override multiple members:
+
+.. code-block:: bash
+
+   # Create the custom mount point directory
+   sudo mkdir -p /mnt/recovery
+
+   # Mount /home from the snapshot to /mnt/recovery
+   sudo snapm snapset mount --mount-point /home=/mnt/recovery backup
+
+   # Override multiple members
+   sudo mkdir -p /mnt/home-recovery /mnt/var-investigation
+   sudo snapm snapset mount \
+       --mount-point /home=/mnt/home-recovery \
+       --mount-point /var=/mnt/var-investigation \
+       backup
+
+Both the original and custom paths must be absolute. Custom mount point
+directories are created automatically if they do not exist, with mode
+``0755``. Note that once the filesystem is mounted, the permissions and
+ownership visible within the mount reflect those of the snapshot's
+filesystem content, not the mount directory's initial permissions.
+
+The ``--mount-root`` and ``--mount-point`` options can be combined:
+``--mount-root`` controls where the main mount tree is placed, while
+``--mount-point`` overrides redirect specific members to entirely
+separate locations outside the mount tree.
+
+Security and Permissions
+-------------------------
+
+All mount operations require root privileges. When using custom mount
+paths, administrators should carefully consider directory ownership and
+permissions to maintain appropriate security boundaries.
+
+The default mount location ``/run/snapm/mounts`` uses mode ``0700`` to
+restrict snapshot contents to root only. When using ``--mount-root``,
+create the parent directory root-owned and restricted, mount the
+snapshot set, and only then grant access to the users who need it:
+
+.. code-block:: bash
+
+   # Restrict to root only (like the default)
+   sudo mkdir -p /mnt/snapshots
+   sudo chmod 700 /mnt/snapshots
+   sudo snapm snapset mount --mount-root /mnt/snapshots backup
+
+   # Allow a specific user to access snapshot contents
+   sudo mkdir -p /srv/recovery
+   sudo chmod 700 /srv/recovery
+   sudo snapm snapset mount --mount-root /srv/recovery backup
+   sudo setfacl -m u:recoveryuser:rx /srv/recovery
+
+Do not place the mount root beneath a world-writable directory such as
+``/tmp``, and do not grant other users write access to it: either allows
+a local user to interpose on the path before the snapshot set is
+mounted.
+
 Difference Engine
 =================
 

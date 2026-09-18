@@ -27,6 +27,7 @@ from snapm import (
     SnapmNotFoundError,
     SnapmInvalidIdentifierError,
     SnapmPathError,
+    SnapmUmountError,
     SnapmArgumentError,
     SNAPSET_NAME,
     SNAPSET_BASENAME,
@@ -77,6 +78,7 @@ from snapm import (
     __version__,
 )
 from snapm.manager import Manager, CalendarSpec, GcPolicy
+from snapm.manager._mounts import Mount
 from snapm.report import (
     REP_NUM,
     REP_SHA,
@@ -1828,7 +1830,44 @@ def _mount_cmd(cmd_args):
         _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
         return 1
     snapset = matches[0]
-    manager.mounts.mount(snapset)
+
+    mount_root = getattr(cmd_args, "mount_root", None)
+
+    mount_points_override = {}
+    mount_points_args = getattr(cmd_args, "mount_points", None)
+    if mount_points_args:
+        for mp_spec in mount_points_args:
+            if "=" not in mp_spec:
+                _log_error(
+                    "Invalid mount point override format '%s'. Expected ORIG=CUSTOM",
+                    mp_spec,
+                )
+                return 1
+            orig, custom = mp_spec.split("=", 1)
+            orig = orig.strip()
+            custom = custom.strip()
+            if not orig.startswith("/"):
+                _log_error("Original mount point must be absolute: '%s'", orig)
+                return 1
+            if not custom.startswith("/"):
+                _log_error("Custom mount point must be absolute: '%s'", custom)
+                return 1
+            if orig not in snapset.mount_points:
+                _log_error(
+                    "Snapshot set %s has no member mounted at '%s' "
+                    "(mount points: %s)",
+                    snapset.name,
+                    orig,
+                    ", ".join(snapset.mount_points) or "none",
+                )
+                return 1
+            mount_points_override[orig] = custom
+
+    manager.mounts.mount(
+        snapset,
+        mount_root=mount_root,
+        mount_points=mount_points_override or None,
+    )
     return 0
 
 
@@ -1837,7 +1876,8 @@ def _umount_cmd(cmd_args):
     Unmount snapshot set command handler.
 
     Unmount the specified snapshot set (by default from
-    /run/snapm/mounts/<name>).
+    /run/snapm/mounts/<name>, or from the custom location if
+    --mount-root is specified).
 
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
@@ -1849,6 +1889,40 @@ def _umount_cmd(cmd_args):
         _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
         return 1
     snapset = matches[0]
+
+    mount_root = getattr(cmd_args, "mount_root", None)
+    if mount_root:
+        # If --mount-root is specified, manually try to discover/unmount from that location
+        mount_root = os.path.abspath(mount_root)
+        mount_path = os.path.join(mount_root, snapset.name)
+        if not os.path.exists(mount_path):
+            _log_error(
+                "Mount path does not exist: %s",
+                mount_path,
+            )
+            return 1
+        # Create a temporary Mount object to unmount from the specified
+        # location. Discovery raises SnapmPathError if mount_path is not an
+        # active mount point, so a successfully constructed Mount is always
+        # mounted.
+        try:
+            mount = Mount(snapset, mount_path, discover=True)
+            mount.umount()
+            try:
+                os.rmdir(mount_path)
+            except OSError:
+                pass
+            snapset.mount_root = ""
+            return 0
+        except (SnapmPathError, SnapmUmountError, ValueError) as err:
+            _log_error(
+                "Failed to unmount snapshot set %s from %s: %s",
+                snapset.name,
+                mount_path,
+                err,
+            )
+            return 1
+
     manager.mounts.umount(snapset)
     return 0
 
@@ -3108,6 +3182,25 @@ def _add_snapset_subparser(type_subparser):
         action="store",
         help="The name of the snapshot set to be mounted",
     )
+    snapset_mount_parser.add_argument(
+        "--mount-root",
+        metavar="PATH",
+        type=str,
+        default=None,
+        help="Custom root directory for the snapshot set mount tree",
+    )
+    snapset_mount_parser.add_argument(
+        "--mount-point",
+        metavar="ORIG=CUSTOM",
+        type=str,
+        action="append",
+        dest="mount_points",
+        default=None,
+        help=(
+            "Override a member mount point: specify multiple times "
+            "to override different mount points."
+        ),
+    )
     snapset_mount_parser.set_defaults(func=_mount_cmd)
 
     # snapset umount subcommand
@@ -3120,6 +3213,13 @@ def _add_snapset_subparser(type_subparser):
         type=str,
         action="store",
         help="The name of the snapshot set to be unmounted",
+    )
+    snapset_umount_parser.add_argument(
+        "--mount-root",
+        metavar="PATH",
+        type=str,
+        default=None,
+        help="Custom root directory where the snapshot set is mounted",
     )
     snapset_umount_parser.set_defaults(func=_umount_cmd)
 

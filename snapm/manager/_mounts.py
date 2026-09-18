@@ -528,6 +528,7 @@ class Mount(MountBase):
         snapset: SnapshotSet,
         mount_root: str,
         discover: bool = False,
+        mount_points: Optional[Dict[str, str]] = None,
     ):
         """
         Initialize a new Mount instance for the given snapshot set. If ``discover``
@@ -543,10 +544,14 @@ class Mount(MountBase):
                          and discover its submounts. If False, prepare a new mount
                          object without validation.
         :type discover: ``bool``
+        :param mount_points: Optional dictionary mapping original mount points to
+                             custom absolute paths for per-member overrides.
+        :type mount_points: ``Optional[Dict[str, str]]``
         :raises SnapmPathError: If mount_root is not a directory, or if discover is True
                                 and mount_root is not a mount point.
         """
         super().__init__(mount_root, snapset.name)
+        self._mount_points = mount_points or {}
 
         _log_debug("Building snapshot set Mount instance for %s", snapset.name)
 
@@ -573,6 +578,7 @@ class Mount(MountBase):
                 self.snapset.mount_points, submounts, name_map=name_map
             )
 
+    # pylint: disable=too-many-locals
     def _do_mount(self):
         """
         Mount the configured snapshot set and its submounts at `self.root`.
@@ -595,8 +601,20 @@ class Mount(MountBase):
 
             # 3. Mount the discovered auxiliary mount points.
             for mount_spec in mount_list:
-                what, where, fstype, options = mount_spec
-                where = os.path.join(self.root, where.lstrip("/"))
+                what, where_orig, fstype, options = mount_spec
+                if where_orig in self._mount_points:
+                    where = self._mount_points[where_orig]
+                    # Only create the directory if it's outside the snapshot root.
+                    # If it's inside the root, it must already exist in the snapshot,
+                    # otherwise we'd be modifying the snapshot filesystem (which may
+                    # be read-only).
+                    is_inside_root = not os.path.relpath(where, self.root).startswith(
+                        ".."
+                    )
+                    if not is_inside_root:
+                        os.makedirs(where, mode=0o755, exist_ok=True)
+                else:
+                    where = os.path.join(self.root, where_orig.lstrip("/"))
                 if not os.path.isdir(where):
                     _log_warn(
                         "Mount point %s does not exist in snapshot set %s, skipping mount",
@@ -783,12 +801,15 @@ class Mounts:
     def discover_mounts(self):
         """
         Discover and validate existing snapset mounts in the configured
-        mount path.
+        mount path and at custom mount locations.
         """
         _log_info("Discovering snapshot set mounts under '%s'", self._root)
         self._mounts.clear()
         self._mounts_by_name.clear()
         mounts = []
+        discovered_paths = set()
+
+        # First, discover mounts in the default mount path
         for dirent in os.listdir(self._root):
             if dirent not in self._manager.by_name:
                 _log_info("Skipping non-snapshot set path: '%s'", dirent)
@@ -799,6 +820,7 @@ class Mounts:
                 mount = Mount(snapset, mount_path, discover=True)
                 mounts.append(mount)
                 snapset.mount_root = mount.root
+                discovered_paths.add(mount.root)
                 _log_info(
                     "Found snapshot set mount at '%s' (mounted=%s)",
                     mount.root,
@@ -807,15 +829,56 @@ class Mounts:
             except SnapmPathError as err:
                 _log_info("Ignoring invalid mount path: '%s' (%s)", mount_path, err)
                 continue
+
+        # Second, check for mounts at custom locations via snapset.mount_root
+        for snapset in self._manager.snapshot_sets:
+            if snapset.mount_root and snapset.mount_root not in discovered_paths:
+                if os.path.exists(snapset.mount_root) and os.path.ismount(
+                    snapset.mount_root
+                ):
+                    try:
+                        mount = Mount(snapset, snapset.mount_root, discover=True)
+                        mounts.append(mount)
+                        discovered_paths.add(mount.root)
+                        _log_info(
+                            "Found snapshot set mount at custom location '%s' (mounted=%s)",
+                            mount.root,
+                            mount.mounted,
+                        )
+                    except SnapmPathError as err:
+                        _log_info(
+                            "Ignoring invalid custom mount path: '%s' (%s)",
+                            snapset.mount_root,
+                            err,
+                        )
+                        # Clear stale mount_root if mount is no longer valid
+                        snapset.mount_root = ""
+                elif snapset.mount_root:
+                    # Mount root is set but path doesn't exist or isn't mounted - clear it
+                    _log_debug(
+                        "Clearing stale mount_root '%s' for snapshot set '%s'",
+                        snapset.mount_root,
+                        snapset.name,
+                    )
+                    snapset.mount_root = ""
+
         self._mounts.extend(mounts)
         self._mounts_by_name.update({mount.snapset.name: mount for mount in mounts})
         _log_info("Found %d snapshot set mounts", len(self._mounts))
 
-    def mount(self, snapset: SnapshotSet) -> Mount:
+    def mount(
+        self,
+        snapset: SnapshotSet,
+        mount_root: Optional[str] = None,
+        mount_points: Optional[Dict[str, str]] = None,
+    ) -> Mount:
         """
         Mount the snapshot set `snapset`.
 
         :param snapset: The snapshot set to operate on.
+        :param mount_root: Optional custom root directory for the mount tree.
+        :param mount_points: Optional dictionary mapping original mount points
+                             to custom absolute paths for per-member overrides.
         """
         if snapset.name in self._mounts_by_name:
             existing = self._mounts_by_name[snapset.name]
@@ -835,10 +898,18 @@ class Mounts:
         # Ensure the snapshot set's volumes are active
         snapset.activate()
 
-        mount_path = os.path.join(self._root, snapset.name)
+        if mount_root is not None:
+            mount_root = os.path.abspath(mount_root)
+            if not os.path.isdir(mount_root):
+                raise SnapmPathError(
+                    f"Mount root path does not exist or is not a directory: {mount_root}"
+                )
+            mount_path = os.path.join(mount_root, snapset.name)
+        else:
+            mount_path = os.path.join(self._root, snapset.name)
         os.makedirs(mount_path, exist_ok=True)
 
-        mount = Mount(snapset, mount_path)
+        mount = Mount(snapset, mount_path, mount_points=mount_points)
         try:
             mount.mount()
         except (SnapmError, ValueError):
