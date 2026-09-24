@@ -11,6 +11,7 @@ Mount integration for snapshot manager
 from subprocess import run, CalledProcessError, TimeoutExpired
 from typing import Dict, Iterable, List, Optional, Union
 from abc import ABC, abstractmethod
+from stat import S_ISBLK
 import collections
 import logging
 import shlex
@@ -318,11 +319,11 @@ class ProcMountsReader:
         """
         self.path = path
 
-    def submounts(self, root):
-        """Iterate over submounts under the given mount point root.
+    @property
+    def entries(self):
+        """Iterate over all entries in the mounts file.
 
-        :param root: The mount point root (e.g., '/run/snapm/mounts/before-upgrade')
-        :returns: Yields ``MountsEntry`` objects for submounts under root.
+        :returns: Yields ``MountsEntry`` objects for each well-formed line.
         """
         with open(self.path, "r", encoding="utf8") as fp:
             for line in fp:
@@ -338,13 +339,74 @@ class ProcMountsReader:
                     where = unescape_mounts(parts[1])
 
                     # Create entry with unescaped paths
-                    entry = self.MountsEntry(what, where, *parts[2:])
-                    mount_point = entry.where
-                    root_prefix = root.rstrip("/") + "/"
-                    if mount_point.startswith(root_prefix):
-                        yield entry
+                    yield self.MountsEntry(what, where, *parts[2:])
                 else:
                     _log_warn("Skipping malformed %s line: %s", self.path, line)
+
+    def lookup(self, key, value):
+        """
+        Find and generate all entries matching a specific key-value pair.
+
+        :param key: The field to search by. Must be one of 'what', 'where',
+                    'fstype', 'options', 'freq', or 'passno'.
+        :type key: str
+        :param value: The value to match for the given key.
+        :type value: str|int
+        :yields: A ``MountsEntry`` for each matching mounts entry.
+
+        :raises KeyError: If the provided key is not a valid mounts field name.
+        """
+        if key not in self.MountsEntry._fields:
+            raise KeyError(
+                f"Invalid lookup key: '{key}'. "
+                f"Valid keys are: {self.MountsEntry._fields}"
+            )
+
+        for entry in self.entries:
+            if getattr(entry, key) == value:
+                yield entry
+
+    def lookup_device(self, devpath):
+        """
+        Find and generate all entries backed by the block device at ``devpath``.
+
+        Entries are matched on device number rather than on the device path, so
+        that the ``/dev/VG/LV`` paths used by ``Snapshot.devpath`` match the
+        ``/dev/mapper/VG-LV`` names reported in ``/proc/mounts``.
+
+        :param devpath: The path to the block device to search for.
+        :type devpath: str
+        :yields: A ``MountsEntry`` for each entry backed by ``devpath``.
+        """
+        try:
+            st = os.stat(devpath)
+        except OSError as err:
+            _log_debug_mounts("Cannot stat device %s: %s", devpath, err)
+            return
+        if not S_ISBLK(st.st_mode):
+            _log_debug_mounts("Path %s is not a block device", devpath)
+            return
+
+        for entry in self.entries:
+            if not entry.what.startswith("/dev/"):
+                continue
+            try:
+                entry_st = os.stat(entry.what)
+            except OSError:  # pragma: no cover
+                continue
+            if S_ISBLK(entry_st.st_mode) and entry_st.st_rdev == st.st_rdev:
+                yield entry
+
+    def submounts(self, root):
+        """Iterate over submounts under the given mount point root.
+
+        :param root: The mount point root (e.g., '/run/snapm/mounts/before-upgrade')
+        :returns: Yields ``MountsEntry`` objects for submounts under root.
+        """
+        root_prefix = root.rstrip("/") + "/"
+        for entry in self.entries:
+            if entry.where.startswith(root_prefix):
+                yield entry
 
 
 class MountBase(ABC):
