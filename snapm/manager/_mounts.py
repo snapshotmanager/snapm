@@ -842,35 +842,88 @@ class Mounts:
         self._sys_mount = SysMount()
         self.discover_mounts()
 
+    @staticmethod
+    def _snapset_mount_roots(snapset: SnapshotSet, pmr: ProcMountsReader) -> List[str]:
+        """
+        Find the paths at which the snapshot set ``snapset`` is currently
+        mounted by looking up its member devices in ``/proc/mounts``.
+
+        Each member snapshot is mounted at ``<root>/<mount point>`` within the
+        snapshot set mount tree, so the mount root is recovered by stripping
+        the member's own mount point from the path reported for its device.
+        The root member, if present, is checked first since its mount point is
+        the mount root itself.
+
+        :param snapset: The snapshot set to locate.
+        :param pmr: A ``ProcMountsReader`` instance to use.
+        :returns: A sorted list of distinct mount roots for ``snapset``.
+        """
+        roots = set()
+        snapshots = sorted(
+            snapset.snapshots, key=lambda snapshot: snapshot.mount_point != "/"
+        )
+        for snapshot in snapshots:
+            mount_point = snapshot.mount_point
+            if not mount_point:
+                continue
+            for entry in pmr.lookup_device(snapshot.devpath):
+                if mount_point == "/":
+                    roots.add(entry.where)
+                    continue
+                suffix = "/" + mount_point.strip("/")
+                if entry.where.endswith(suffix):
+                    roots.add(entry.where[: -len(suffix)])
+        return sorted(roots)
+
     def discover_mounts(self):
         """
-        Discover and validate existing snapset mounts in the configured
-        mount path.
+        Discover and validate existing snapshot set mounts.
+
+        Mounts are located by matching each snapshot set's member devices
+        against ``/proc/mounts``, so snapshot sets mounted at a custom mount
+        base are found without needing the mount root to be persisted
+        anywhere.
         """
-        _log_info("Discovering snapshot set mounts under '%s'", self._root)
+        _log_info("Discovering snapshot set mounts")
         self._mounts.clear()
         self._mounts_by_name.clear()
         mounts = []
-        for dirent in os.listdir(self._root):
-            if dirent not in self._manager.by_name:
-                _log_info("Skipping non-snapshot set path: '%s'", dirent)
+        pmr = ProcMountsReader()
+
+        for snapset in self._manager.snapshot_sets:
+            roots = self._snapset_mount_roots(snapset, pmr)
+            if not roots:
+                snapset.mount_root = ""
                 continue
-            snapset = self._manager.by_name[dirent]
-            try:
-                mount_path = os.path.join(self._root, dirent)
-                mount = Mount(snapset, mount_path, discover=True)
-                mounts.append(mount)
-                snapset.mount_root = mount.root
+            if len(roots) > 1:
+                _log_warn(
+                    "Snapshot set %s is mounted at multiple paths: %s",
+                    snapset.name,
+                    ", ".join(roots),
+                )
+            snapset_mounts = []
+            for root in roots:
+                try:
+                    mount = Mount(snapset, root, discover=True)
+                except SnapmPathError as err:
+                    _log_info("Ignoring invalid mount path: '%s' (%s)", root, err)
+                    continue
+                snapset_mounts.append(mount)
                 _log_info(
                     "Found snapshot set mount at '%s' (mounted=%s)",
                     mount.root,
                     mount.mounted,
                 )
-            except SnapmPathError as err:
-                _log_info("Ignoring invalid mount path: '%s' (%s)", mount_path, err)
-                continue
+            mounts.extend(snapset_mounts)
+
+            # Record the first valid mount root for report output.
+            snapset.mount_root = snapset_mounts[0].root if snapset_mounts else ""
+
         self._mounts.extend(mounts)
-        self._mounts_by_name.update({mount.snapset.name: mount for mount in mounts})
+        for mount in mounts:
+            # Keep the first mount found for a set: a set mounted at more than
+            # one path is disambiguated by the caller passing an explicit root.
+            self._mounts_by_name.setdefault(mount.snapset.name, mount)
         _log_info("Found %d snapshot set mounts", len(self._mounts))
 
     def mount(
@@ -934,29 +987,57 @@ class Mounts:
 
         return mount
 
-    def umount(self, snapset: SnapshotSet):
+    def umount(self, snapset: SnapshotSet, mount_base: Optional[str] = None):
         """
         Unmount the snapshot set `snapset`.
 
         :param snapset: The snapshot set to operate on.
+        :param mount_base: Optional base directory to select the mount to
+                           unmount. Only required when ``snapset`` is mounted
+                           at more than one path.
+        :raises SnapmNotFoundError: If no matching mount is found.
+        :raises SnapmArgumentError: If ``snapset`` is mounted at more than one
+                                    path and ``mount_base`` does not select
+                                    exactly one of them.
         """
-        # Unmount and clean up root first
-        mount = self._mounts_by_name.get(snapset.name)
-        if not mount:
-            raise SnapmNotFoundError(f"Mount for snapshot set {snapset.name} not found")
+        candidates = [m for m in self._mounts if m.snapset.name == snapset.name]
+        if mount_base is not None:
+            wanted = os.path.join(os.path.abspath(mount_base), snapset.name)
+            candidates = [m for m in candidates if m.root == wanted]
 
+        if not candidates:
+            raise SnapmNotFoundError(f"Mount for snapshot set {snapset.name} not found")
+        if len(candidates) > 1:
+            raise SnapmArgumentError(
+                f"Snapshot set {snapset.name} is mounted at multiple paths "
+                f"({', '.join(m.root for m in candidates)}): use --mount-root "
+                "to select one."
+            )
+
+        # Unmount and clean up root first
+        mount = candidates[0]
         mount.umount()
         os.rmdir(mount.root)
 
         # Update registries on success
-        self._mounts_by_name.pop(snapset.name, None)
         try:
             self._mounts.remove(mount)
         except ValueError:  # pragma: no cover
             pass
+        if self._mounts_by_name.get(snapset.name) is mount:
+            self._mounts_by_name.pop(snapset.name, None)
+            remaining = next(
+                (m for m in self._mounts if m.snapset.name == snapset.name), None
+            )
+            if remaining is not None:
+                self._mounts_by_name[snapset.name] = remaining
 
-        # Clear snapset mount_root
-        snapset.mount_root = ""
+        # Update snapset mount_root to any remaining mount for the set
+        snapset.mount_root = (
+            self._mounts_by_name[snapset.name].root
+            if snapset.name in self._mounts_by_name
+            else ""
+        )
 
     def find_mounts(self, selection: Optional[Selection] = None) -> List[Mount]:
         """
