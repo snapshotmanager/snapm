@@ -1844,7 +1844,8 @@ def _mount_cmd(cmd_args):
         _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
         return 1
     snapset = matches[0]
-    manager.mounts.mount(snapset)
+
+    manager.mounts.mount(snapset, mount_base=getattr(cmd_args, "mount_root", None))
     return 0
 
 
@@ -1852,8 +1853,9 @@ def _umount_cmd(cmd_args):
     """
     Unmount snapshot set command handler.
 
-    Unmount the specified snapshot set (by default from
-    /run/snapm/mounts/<name>).
+    Unmount the specified snapshot set. Snapshot sets mounted at a custom
+    location are discovered automatically; --mount-root is only needed to
+    select between them if the set is mounted at more than one path.
 
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
@@ -1865,7 +1867,8 @@ def _umount_cmd(cmd_args):
         _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
         return 1
     snapset = matches[0]
-    manager.mounts.umount(snapset)
+
+    manager.mounts.umount(snapset, mount_base=getattr(cmd_args, "mount_root", None))
     return 0
 
 
@@ -3134,6 +3137,13 @@ def _add_snapset_subparser(type_subparser):
         action="store",
         help="The name of the snapshot set to be mounted",
     )
+    snapset_mount_parser.add_argument(
+        "--mount-root",
+        metavar="PATH",
+        type=str,
+        default=None,
+        help="Custom root directory for the snapshot set mount tree",
+    )
     snapset_mount_parser.set_defaults(func=_mount_cmd)
 
     # snapset umount subcommand
@@ -3146,6 +3156,16 @@ def _add_snapset_subparser(type_subparser):
         type=str,
         action="store",
         help="The name of the snapshot set to be unmounted",
+    )
+    snapset_umount_parser.add_argument(
+        "--mount-root",
+        metavar="PATH",
+        type=str,
+        default=None,
+        help=(
+            "Select the mount to unmount when the snapshot set is mounted "
+            "at more than one path"
+        ),
     )
     snapset_umount_parser.set_defaults(func=_umount_cmd)
 
