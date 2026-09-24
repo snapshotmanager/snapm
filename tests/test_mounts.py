@@ -7,6 +7,8 @@
 # SPDX-License-Identifier: Apache-2.0
 from subprocess import run, CalledProcessError
 from contextlib import contextmanager
+from stat import S_ISBLK
+from types import SimpleNamespace
 import unittest
 import unittest.mock
 import logging
@@ -561,6 +563,99 @@ class MountsTests(MountsTestsBase):
             self.assertIn("Missing API file system submounts", log_output)
             self.assertIn("/proc", log_output)
 
+    def test_mount_with_custom_mount_root(self):
+        """
+        Tests that a custom mount_root places the mount tree
+        under mount_root/<snapset_name> instead of the default.
+        """
+        custom_root_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_root_")
+        self.addCleanup(custom_root_obj.cleanup)
+
+        mount_obj = self.mounts.mount(self.snapset, mount_base=custom_root_obj.name)
+
+        expected_path = os.path.join(custom_root_obj.name, self.snapset_name)
+        self.assertEqual(mount_obj.root, expected_path)
+        self.assertTrue(mount_obj.mounted)
+        self.assertTrue(os.path.ismount(expected_path))
+
+        self.mounts.umount(self.snapset)
+
+    def test_mount_with_custom_mount_root_nonexistent(self):
+        """
+        Tests that a non-existent mount_root directory raises SnapmPathError.
+        """
+        custom_root_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_root_")
+        self.addCleanup(custom_root_obj.cleanup)
+
+        new_root = os.path.join(custom_root_obj.name, "nested", "mount_root")
+        self.assertFalse(os.path.exists(new_root))
+
+        with self.assertRaisesRegex(
+            snapm.SnapmPathError, "does not exist or is not a directory"
+        ):
+            self.mounts.mount(self.snapset, mount_base=new_root)
+
+    def test_mount_with_mount_root_not_a_dir(self):
+        """
+        Tests that a mount_root that exists as a regular file raises SnapmPathError.
+        """
+        with tempfile.NamedTemporaryFile(prefix="snapm_not_a_dir_") as tmp:
+            with self.assertRaisesRegex(
+                snapm.SnapmPathError, "not a directory"
+            ):
+                self.mounts.mount(self.snapset, mount_base=tmp.name)
+
+    def test_discover_mounts_with_custom_root(self):
+        """
+        Tests that discover_mounts() finds mounts created with custom mount_root
+        by checking each snapset's mount_root attribute.
+        """
+        custom_root_obj = tempfile.TemporaryDirectory(prefix="snapm_custom_root_")
+        self.addCleanup(custom_root_obj.cleanup)
+
+        # Mount with custom root
+        mount_obj = self.mounts.mount(self.snapset, mount_base=custom_root_obj.name)
+        custom_path = os.path.join(custom_root_obj.name, self.snapset_name)
+        self.assertEqual(mount_obj.root, custom_path)
+        self.assertTrue(mount_obj.mounted)
+
+        # Verify snapset.mount_root is set
+        self.assertEqual(self.snapset.mount_root, custom_path)
+
+        # Clear the in-process hint so that rediscovery has to find the mount
+        # by matching member devices against /proc/mounts, as it would in a
+        # freshly started process.
+        self.snapset.mount_root = ""
+
+        # Re-discover mounts (simulating a fresh Manager initialization)
+        self.mounts.discover_mounts()
+
+        # Verify the custom mount was rediscovered
+        self.assertIn(self.snapset_name, self.mounts._mounts_by_name)
+        rediscovered = self.mounts._mounts_by_name[self.snapset_name]
+        self.assertEqual(rediscovered.root, custom_path)
+        self.assertTrue(rediscovered.mounted)
+
+        # Discovery repopulates mount_root for report output
+        self.assertEqual(self.snapset.mount_root, custom_path)
+
+        self.mounts.umount(self.snapset)
+
+    def test_discover_mounts_clears_stale_mount_root(self):
+        """
+        Tests that discover_mounts() clears stale mount_root values when
+        the mount no longer exists.
+        """
+        # Set a fake mount_root that doesn't exist
+        fake_path = "/nonexistent/path/to/mount"
+        self.snapset.mount_root = fake_path
+
+        # Discover mounts should clear the stale mount_root
+        self.mounts.discover_mounts()
+
+        # Verify mount_root was cleared
+        self.assertEqual(self.snapset.mount_root, "")
+
     def test_get_sys_mount(self):
         """
         Tests that ``Mounts.get_sys_mount()`` returns a ``SysMount`` object
@@ -756,6 +851,35 @@ class MountBaseTests(unittest.TestCase):
                 m.exec("ls")
 
 
+def _alias_block_devices(count):
+    """Return up to ``count`` (canonical path, alias path) block device pairs.
+
+    The ``/dev/block/MAJ:MIN`` links give every block device a second name
+    that differs textually from its canonical path, which is the same
+    situation as an LVM volume appearing as ``/dev/VG/LV`` in one place and
+    ``/dev/mapper/VG-LV`` in another. Each pair names a distinct device.
+    """
+    try:
+        aliases = sorted(os.listdir("/dev/block"))
+    except OSError:
+        return []
+    devices = []
+    for alias in aliases:
+        alias_path = os.path.join("/dev/block", alias)
+        canonical = os.path.realpath(alias_path)
+        if canonical == alias_path:
+            continue
+        try:
+            if not S_ISBLK(os.stat(canonical).st_mode):
+                continue
+        except OSError:
+            continue
+        devices.append((canonical, alias_path))
+        if len(devices) == count:
+            break
+    return devices
+
+
 class ProcMountsReaderTests(unittest.TestCase):
     """
     Tests for ProcMountsReader class.
@@ -906,3 +1030,307 @@ class ProcMountsReaderTests(unittest.TestCase):
 
         finally:
             os.unlink(mock_mounts_file)
+
+    def test_entries_skips_malformed_lines(self):
+        """Test that entries ignores lines without exactly six fields."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
+            f.write("tmpfs /run/test/one tmpfs rw 0 0\n")
+            f.write("\n")
+            f.write("tmpfs /run/test/truncated tmpfs rw\n")
+            f.write("tmpfs /run/test/two tmpfs rw 0 0\n")
+            mock_mounts_file = f.name
+
+        try:
+            reader = mounts.ProcMountsReader(path=mock_mounts_file)
+            entries = list(reader.entries)
+
+            self.assertEqual(len(entries), 2)
+            self.assertEqual(entries[0].where, "/run/test/one")
+            self.assertEqual(entries[1].where, "/run/test/two")
+
+        finally:
+            os.unlink(mock_mounts_file)
+
+    def test_lookup_by_field(self):
+        """Test that lookup returns all entries matching a field value."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
+            f.write("/dev/vda1 /boot ext4 rw 0 0\n")
+            f.write("tmpfs /run tmpfs rw 0 0\n")
+            f.write("tmpfs /dev/shm tmpfs rw 0 0\n")
+            mock_mounts_file = f.name
+
+        try:
+            reader = mounts.ProcMountsReader(path=mock_mounts_file)
+
+            by_where = list(reader.lookup("where", "/boot"))
+            self.assertEqual(len(by_where), 1)
+            self.assertEqual(by_where[0].what, "/dev/vda1")
+
+            by_what = list(reader.lookup("what", "tmpfs"))
+            self.assertEqual(len(by_what), 2)
+            self.assertEqual(
+                [entry.where for entry in by_what], ["/run", "/dev/shm"]
+            )
+
+            self.assertEqual(list(reader.lookup("where", "/nonexistent")), [])
+
+        finally:
+            os.unlink(mock_mounts_file)
+
+    def test_lookup_invalid_key(self):
+        """Test that lookup rejects a key that is not a MountsEntry field."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
+            f.write("tmpfs /run tmpfs rw 0 0\n")
+            mock_mounts_file = f.name
+
+        try:
+            reader = mounts.ProcMountsReader(path=mock_mounts_file)
+            with self.assertRaisesRegex(KeyError, "Invalid lookup key"):
+                # The generator body only runs once it is iterated.
+                list(reader.lookup("device", "/dev/vda1"))
+
+        finally:
+            os.unlink(mock_mounts_file)
+
+    def test_lookup_device_matches_alternate_device_name(self):
+        """Test that lookup_device matches on device number, not path.
+
+        A snapshot's ``devpath`` and the device name recorded in
+        ``/proc/mounts`` frequently differ for the same device, so matching has
+        to be by device number.
+        """
+        devices = _alias_block_devices(1)
+        if not devices:
+            self.skipTest("No aliased block device available")
+        canonical, alias_path = devices[0]
+
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
+            f.write("tmpfs /run tmpfs rw 0 0\n")
+            f.write(f"{canonical} /mnt/target ext4 rw 0 0\n")
+            f.write("/dev/does-not-exist /mnt/other ext4 rw 0 0\n")
+            mock_mounts_file = f.name
+
+        try:
+            reader = mounts.ProcMountsReader(path=mock_mounts_file)
+
+            # Looked up under its other name, the device still matches.
+            found = list(reader.lookup_device(alias_path))
+            self.assertEqual(len(found), 1)
+            self.assertEqual(found[0].where, "/mnt/target")
+
+            # And under the name the mounts file itself uses.
+            found = list(reader.lookup_device(canonical))
+            self.assertEqual(len(found), 1)
+            self.assertEqual(found[0].where, "/mnt/target")
+
+        finally:
+            os.unlink(mock_mounts_file)
+
+    def test_lookup_device_ignores_non_block_devices(self):
+        """Test that lookup_device yields nothing for a non-block path."""
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
+            f.write("tmpfs /run tmpfs rw 0 0\n")
+            mock_mounts_file = f.name
+
+        try:
+            reader = mounts.ProcMountsReader(path=mock_mounts_file)
+
+            # A regular file is not a block device.
+            self.assertEqual(list(reader.lookup_device(mock_mounts_file)), [])
+
+            # Neither is a path that does not exist at all.
+            self.assertEqual(list(reader.lookup_device("/dev/no/such/device")), [])
+
+        finally:
+            os.unlink(mock_mounts_file)
+
+
+class SnapsetMountRootsTests(unittest.TestCase):
+    """
+    Tests for Mounts._snapset_mount_roots().
+    """
+
+    @staticmethod
+    def _snapset(members):
+        """Build a minimal snapshot set stand-in from (mount_point, devpath)."""
+        return SimpleNamespace(
+            name="testset0",
+            snapshots=[
+                SimpleNamespace(mount_point=mount_point, devpath=devpath)
+                for mount_point, devpath in members
+            ],
+        )
+
+    @staticmethod
+    @contextmanager
+    def _reader(lines):
+        """Yield a ProcMountsReader over a synthetic mounts file."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", delete=False, suffix=".mounts"
+        ) as f:
+            for line in lines:
+                f.write(line + "\n")
+            path = f.name
+        try:
+            yield mounts.ProcMountsReader(path=path)
+        finally:
+            os.unlink(path)
+
+    def setUp(self):
+        self.devices = _alias_block_devices(2)
+        if len(self.devices) < 2:
+            self.skipTest("Fewer than two aliased block devices available")
+
+    def test_mount_roots_from_root_member(self):
+        """Test that the mount root is found from a set's '/' member."""
+        (root_dev, root_alias), (opt_dev, _) = self.devices
+        snapset = self._snapset([("/", root_alias), ("/opt", opt_dev)])
+
+        with self._reader(
+            [
+                "tmpfs /run tmpfs rw 0 0",
+                f"{root_dev} /mnt/custom/testset0 ext4 rw 0 0",
+                f"{opt_dev} /mnt/custom/testset0/opt ext4 rw 0 0",
+            ]
+        ) as pmr:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+
+        self.assertEqual(roots, ["/mnt/custom/testset0"])
+
+    def test_mount_roots_without_root_member(self):
+        """Test that the mount root is derived from a non-'/' member.
+
+        A snapshot set need not include the root volume. The mount root is
+        then recovered by stripping the member's own mount point from the
+        path it is mounted at.
+        """
+        (var_dev, var_alias), (opt_dev, opt_alias) = self.devices
+        snapset = self._snapset([("/var", var_alias), ("/opt", opt_alias)])
+
+        with self._reader(
+            [
+                f"{var_dev} /mnt/custom/testset0/var ext4 rw 0 0",
+                f"{opt_dev} /mnt/custom/testset0/opt ext4 rw 0 0",
+            ]
+        ) as pmr:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+
+        self.assertEqual(roots, ["/mnt/custom/testset0"])
+
+    def test_mount_roots_multiple_paths(self):
+        """Test that every path a snapshot set is mounted at is reported."""
+        (root_dev, root_alias), _ = self.devices
+        snapset = self._snapset([("/", root_alias)])
+
+        with self._reader(
+            [
+                f"{root_dev} /mnt/one/testset0 ext4 rw 0 0",
+                f"{root_dev} /srv/two/testset0 ext4 rw 0 0",
+            ]
+        ) as pmr:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+
+        self.assertEqual(roots, ["/mnt/one/testset0", "/srv/two/testset0"])
+
+    def test_mount_roots_not_mounted(self):
+        """Test that a snapshot set with no mounted members has no roots."""
+        (root_dev, root_alias), (opt_dev, opt_alias) = self.devices
+        snapset = self._snapset([("/", root_alias), ("/opt", opt_alias)])
+
+        with self._reader(
+            [
+                "tmpfs /run tmpfs rw 0 0",
+                "/dev/does-not-exist /mnt/other ext4 rw 0 0",
+            ]
+        ) as pmr:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+
+        self.assertEqual(roots, [])
+        # Neither member device appears in the mounts file.
+        self.assertNotEqual(root_dev, opt_dev)
+
+    def test_mount_roots_ignores_member_without_mount_point(self):
+        """Test that members with no mount point are skipped."""
+        (root_dev, root_alias), (swap_dev, swap_alias) = self.devices
+        snapset = self._snapset([("/", root_alias), ("", swap_alias)])
+
+        with self._reader(
+            [
+                f"{root_dev} /mnt/custom/testset0 ext4 rw 0 0",
+                f"{swap_dev} /mnt/elsewhere ext4 rw 0 0",
+            ]
+        ) as pmr:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+
+        self.assertEqual(roots, ["/mnt/custom/testset0"])
+
+
+class MountsUmountSelectionTests(unittest.TestCase):
+    """
+    Tests for the mount selection logic in Mounts.umount().
+    """
+
+    def setUp(self):
+        manager = SimpleNamespace(snapshot_sets=[])
+        self.mounts = mounts.Mounts(manager, "/run/snapm/mounts")
+        self.snapset = SimpleNamespace(name="testset0", mount_root="")
+
+    def _add_mount(self, base):
+        """Register a stub mount for self.snapset beneath a real directory."""
+        base_obj = tempfile.TemporaryDirectory(prefix="snapm_umount_sel_")
+        self.addCleanup(base_obj.cleanup)
+        root = os.path.join(base_obj.name, base, self.snapset.name)
+        os.makedirs(root)
+        mount = SimpleNamespace(
+            snapset=self.snapset, root=root, umount=lambda: None
+        )
+        self.mounts._mounts.append(mount)
+        self.mounts._mounts_by_name.setdefault(self.snapset.name, mount)
+        return mount
+
+    def test_umount_not_mounted(self):
+        """Test that unmounting a snapshot set that is not mounted fails."""
+        with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
+            self.mounts.umount(self.snapset)
+
+    def test_umount_mount_base_selects_nothing(self):
+        """Test that a mount base matching no mount fails."""
+        self._add_mount("one")
+        with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
+            self.mounts.umount(self.snapset, mount_base="/no/such/base")
+
+    def test_umount_ambiguous_without_mount_base(self):
+        """Test that unmounting a set mounted twice needs a mount base."""
+        first = self._add_mount("one")
+        second = self._add_mount("two")
+
+        with self.assertRaises(snapm.SnapmArgumentError) as ctx:
+            self.mounts.umount(self.snapset)
+
+        # The error names both paths so the user can pick one.
+        self.assertIn(first.root, str(ctx.exception))
+        self.assertIn(second.root, str(ctx.exception))
+        self.assertIn("--mount-root", str(ctx.exception))
+
+        # Nothing was unmounted
+        self.assertEqual(len(self.mounts._mounts), 2)
+
+    def test_umount_mount_base_disambiguates(self):
+        """Test that a mount base selects one of several mounts."""
+        first = self._add_mount("one")
+        second = self._add_mount("two")
+
+        self.mounts.umount(self.snapset, mount_base=os.path.dirname(first.root))
+
+        self.assertEqual(self.mounts._mounts, [second])
+        self.assertFalse(os.path.exists(first.root))
+
+        # The name lookup and report field fall back to the surviving mount
+        self.assertIs(self.mounts._mounts_by_name[self.snapset.name], second)
+        self.assertEqual(self.snapset.mount_root, second.root)
+
+        # With one mount left the mount base is no longer required
+        self.mounts.umount(self.snapset)
+        self.assertEqual(self.mounts._mounts, [])
+        self.assertNotIn(self.snapset.name, self.mounts._mounts_by_name)
+        self.assertEqual(self.snapset.mount_root, "")
