@@ -438,16 +438,14 @@ class MountsTests(MountsTestsBase):
         os.makedirs(dummy_path)
         self.addCleanup(lambda: os.path.isdir(dummy_path) and os.rmdir(dummy_path))
 
-        # 2. Run discovery
-        with self.assertLogs(mounts._log, level='INFO') as cm:
-            new_mounts = mounts.Mounts(self.manager, self.mounts_root_dir)
-
-            log_output = "\n".join(cm.output)
-            self.assertIn("Ignoring invalid mount path", log_output)
-            self.assertIn(dummy_path, log_output)
+        # 2. Run discovery. Mounts are found by looking up the snapshot set's
+        #    member devices in /proc/mounts, so a directory that merely carries
+        #    the snapshot set name is never mistaken for a mount.
+        new_mounts = mounts.Mounts(self.manager, self.mounts_root_dir)
 
         # 3. Check that no mount was discovered
         self.assertEqual(len(new_mounts._mounts), 0)
+        self.assertEqual(self.snapset.mount_root, "")
 
         os.rmdir(dummy_path)
 
@@ -503,20 +501,20 @@ class MountsTests(MountsTestsBase):
         """
         Tests that discovery skips directories that don't match a snapset.
         """
-        # 1. Create a directory that isn't a known snapset
+        # 1. Mount the snapshot set so that discovery has something to find
+        mount_obj = self.mounts.mount(self.snapset)
+
+        # 2. Create a directory that isn't a known snapset alongside it
         dummy_path = os.path.join(self.mounts_root_dir, "not-a-real-snapset")
         os.makedirs(dummy_path)
+        self.addCleanup(lambda: os.path.isdir(dummy_path) and os.rmdir(dummy_path))
 
-        # 2. Run discovery
-        with self.assertLogs(mounts._log, level='INFO') as cm:
-            new_mounts = mounts.Mounts(self.manager, self.mounts_root_dir)
+        # 3. Run discovery
+        new_mounts = mounts.Mounts(self.manager, self.mounts_root_dir)
 
-            log_output = "\n".join(cm.output)
-            self.assertIn("Skipping non-snapshot set path", log_output)
-            self.assertIn("not-a-real-snapset", log_output)
-
-        # 3. Check that no mount was discovered
-        self.assertEqual(len(new_mounts._mounts), 0)
+        # 4. Only the real snapshot set mount is discovered
+        self.assertEqual(len(new_mounts._mounts), 1)
+        self.assertEqual(new_mounts._mounts[0].root, mount_obj.root)
 
         os.rmdir(dummy_path)
 
@@ -880,6 +878,31 @@ def _alias_block_devices(count):
     return devices
 
 
+def _fake_snapset(members, name="testset0"):
+    """Build a minimal snapshot set stand-in from (mount_point, devpath)."""
+    return SimpleNamespace(
+        name=name,
+        mount_root="",
+        snapshots=[
+            SimpleNamespace(mount_point=mount_point, devpath=devpath)
+            for mount_point, devpath in members
+        ],
+    )
+
+
+@contextmanager
+def _mounts_file(lines):
+    """Yield the path to a synthetic mounts file containing ``lines``."""
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".mounts") as f:
+        for line in lines:
+            f.write(line + "\n")
+        path = f.name
+    try:
+        yield path
+    finally:
+        os.unlink(path)
+
+
 class ProcMountsReaderTests(unittest.TestCase):
     """
     Tests for ProcMountsReader class.
@@ -1150,31 +1173,14 @@ class SnapsetMountRootsTests(unittest.TestCase):
     Tests for Mounts._snapset_mount_roots().
     """
 
-    @staticmethod
-    def _snapset(members):
-        """Build a minimal snapshot set stand-in from (mount_point, devpath)."""
-        return SimpleNamespace(
-            name="testset0",
-            snapshots=[
-                SimpleNamespace(mount_point=mount_point, devpath=devpath)
-                for mount_point, devpath in members
-            ],
-        )
+    _snapset = staticmethod(_fake_snapset)
 
     @staticmethod
     @contextmanager
     def _reader(lines):
         """Yield a ProcMountsReader over a synthetic mounts file."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", delete=False, suffix=".mounts"
-        ) as f:
-            for line in lines:
-                f.write(line + "\n")
-            path = f.name
-        try:
+        with _mounts_file(lines) as path:
             yield mounts.ProcMountsReader(path=path)
-        finally:
-            os.unlink(path)
 
     def setUp(self):
         self.devices = _alias_block_devices(2)
@@ -1280,6 +1286,58 @@ class SnapsetMountRootsTests(unittest.TestCase):
         self.assertEqual(roots, ["/mnt/custom/testset0"])
         for call in log_debug.call_args_list:
             self.assertNotIn("Cannot stat device", call[0][0])
+
+
+class MountsDiscoveryTests(unittest.TestCase):
+    """
+    Tests for Mounts.discover_mounts().
+    """
+
+    @staticmethod
+    @contextmanager
+    def _proc_mounts(lines):
+        """Make ``ProcMountsReader()`` read a synthetic mounts file."""
+        reader = mounts.ProcMountsReader
+        with _mounts_file(lines) as path:
+            with unittest.mock.patch.object(
+                mounts,
+                "ProcMountsReader",
+                lambda *args, **kwargs: reader(path=path),
+            ):
+                yield
+
+    def setUp(self):
+        self.devices = _alias_block_devices(1)
+        if not self.devices:
+            self.skipTest("No aliased block devices available")
+
+    def test_discover_root_that_is_not_a_mount_point(self):
+        """Test that a mount root that is not itself a mount point is ignored.
+
+        A snapshot set with no '/' member has its mount root derived by
+        stripping a member's own mount point from the path its device is
+        mounted at, and nothing guarantees the result is a mount point: a
+        member mounted by hand outside a snapshot set mount tree yields a
+        root that must be rejected rather than reported as a mount.
+        """
+        ((opt_dev, opt_alias),) = self.devices
+        snapset = _fake_snapset([("/opt", opt_alias)])
+        manager = SimpleNamespace(snapshot_sets=[snapset])
+
+        # A plain directory, not a mount point.
+        with tempfile.TemporaryDirectory(prefix="snapm_test_mnt_") as tempdir:
+            opt_path = os.path.join(tempdir, "opt")
+            os.makedirs(opt_path)
+            with self._proc_mounts([f"{opt_dev} {opt_path} ext4 rw 0 0"]):
+                with self.assertLogs(mounts._log, level="INFO") as cm:
+                    discovered = mounts.Mounts(manager, "/run/snapm/mounts")
+
+            log_output = "\n".join(cm.output)
+            self.assertIn("Ignoring invalid mount path", log_output)
+            self.assertIn(tempdir, log_output)
+
+        self.assertEqual(discovered._mounts, [])
+        self.assertEqual(snapset.mount_root, "")
 
 
 class MountsUmountSelectionTests(unittest.TestCase):
