@@ -1264,6 +1264,23 @@ class SnapsetMountRootsTests(unittest.TestCase):
 
         self.assertEqual(roots, ["/mnt/custom/testset0"])
 
+    def test_mount_roots_ignores_inactive_member(self):
+        """Test that inactive members are skipped.
+
+        An inactive snapshot has no devpath and cannot be mounted: looking
+        one up would stat the empty string and log a spurious error.
+        """
+        (root_dev, root_alias), _ = self.devices
+        snapset = self._snapset([("/", root_alias), ("/opt", "")])
+
+        with self._reader([f"{root_dev} /mnt/custom/testset0 ext4 rw 0 0"]) as pmr:
+            with unittest.mock.patch.object(mounts, "_log_debug_mounts") as log_debug:
+                roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+
+        self.assertEqual(roots, ["/mnt/custom/testset0"])
+        for call in log_debug.call_args_list:
+            self.assertNotIn("Cannot stat device", call[0][0])
+
 
 class MountsUmountSelectionTests(unittest.TestCase):
     """

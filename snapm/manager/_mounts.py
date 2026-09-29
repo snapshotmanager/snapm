@@ -866,6 +866,9 @@ class Mounts:
             mount_point = snapshot.mount_point
             if not mount_point:
                 continue
+            if not snapshot.devpath:
+                # A snapshot with no devpath is inactive and cannot be mounted.
+                continue
             for entry in pmr.lookup_device(snapshot.devpath):
                 if mount_point == "/":
                     roots.add(entry.where)
