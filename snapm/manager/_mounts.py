@@ -843,6 +843,31 @@ class Mounts:
         self.discover_mounts()
 
     @staticmethod
+    def _snapset_root_device(
+        snapset: SnapshotSet, pmr: ProcMountsReader
+    ) -> Optional[str]:
+        """
+        Find the device that is mounted at the mount root of ``snapset``.
+
+        This is the snapshot set's root member if it has one, and the host
+        root file system otherwise: see ``Mount._do_mount()``, which always
+        mounts the device returned by ``find_snapset_root()`` at the mount
+        root before mounting the remaining members beneath it.
+
+        :param snapset: The snapshot set to check.
+        :param pmr: A ``ProcMountsReader`` instance to use.
+        :returns: A device path, or ``None`` if no device can be determined.
+        """
+        for snapshot in snapset.snapshots:
+            if snapshot.mount_point == "/":
+                # An inactive root member has no devpath: the snapshot set
+                # cannot be mounted without it.
+                return snapshot.devpath or None
+        for entry in pmr.lookup("where", "/"):
+            return entry.what
+        return None  # pragma: no cover
+
+    @staticmethod
     def _snapset_mount_roots(snapset: SnapshotSet, pmr: ProcMountsReader) -> List[str]:
         """
         Find the paths at which the snapshot set ``snapset`` is currently
@@ -851,18 +876,24 @@ class Mounts:
         Each member snapshot is mounted at ``<root>/<mount point>`` within the
         snapshot set mount tree, so the mount root is recovered by stripping
         the member's own mount point from the path reported for its device.
-        The root member, if present, is checked first since its mount point is
-        the mount root itself.
+
+        Stripping a suffix does not on its own prove that the result is a
+        snapshot set mount root: a member mounted by hand at ``/data/opt``
+        yields the root ``/data``. Candidate roots are therefore accepted only
+        if the snapshot set's root device is mounted there, which is the
+        condition ``Mount._do_mount()`` establishes when the set is mounted.
 
         :param snapset: The snapshot set to locate.
         :param pmr: A ``ProcMountsReader`` instance to use.
         :returns: A sorted list of distinct mount roots for ``snapset``.
         """
+        root_device = Mounts._snapset_root_device(snapset, pmr)
+        if root_device is None:
+            return []
+        mount_roots = {entry.where for entry in pmr.lookup_device(root_device)}
+
         roots = set()
-        snapshots = sorted(
-            snapset.snapshots, key=lambda snapshot: snapshot.mount_point != "/"
-        )
-        for snapshot in snapshots:
+        for snapshot in snapset.snapshots:
             mount_point = snapshot.mount_point
             if not mount_point:
                 continue
@@ -871,11 +902,17 @@ class Mounts:
                 continue
             for entry in pmr.lookup_device(snapshot.devpath):
                 if mount_point == "/":
-                    roots.add(entry.where)
+                    candidate = entry.where
+                else:
+                    suffix = "/" + mount_point.strip("/")
+                    if not entry.where.endswith(suffix):
+                        continue
+                    candidate = entry.where[: -len(suffix)]
+                if not candidate or candidate == "/":
+                    # A member mounted at its own mount point on the host.
                     continue
-                suffix = "/" + mount_point.strip("/")
-                if entry.where.endswith(suffix):
-                    roots.add(entry.where[: -len(suffix)])
+                if candidate in mount_roots:
+                    roots.add(candidate)
         return sorted(roots)
 
     def discover_mounts(self):
@@ -908,7 +945,10 @@ class Mounts:
             for root in roots:
                 try:
                     mount = Mount(snapset, root, discover=True)
-                except SnapmPathError as err:
+                except SnapmPathError as err:  # pragma: no cover
+                    # Mount roots are mount points read from /proc/mounts, so
+                    # this is only reached if one is unmounted while discovery
+                    # is running.
                     _log_info("Ignoring invalid mount path: '%s' (%s)", root, err)
                     continue
                 snapset_mounts.append(mount)

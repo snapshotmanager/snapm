@@ -880,13 +880,20 @@ def _alias_block_devices(count):
 
 def _fake_snapset(members, name="testset0"):
     """Build a minimal snapshot set stand-in from (mount_point, devpath)."""
+    snapshots = [
+        SimpleNamespace(
+            mount_point=mount_point, devpath=devpath, name=f"{name}-{mount_point}"
+        )
+        for mount_point, devpath in members
+    ]
     return SimpleNamespace(
         name=name,
         mount_root="",
-        snapshots=[
-            SimpleNamespace(mount_point=mount_point, devpath=devpath)
-            for mount_point, devpath in members
-        ],
+        snapshots=snapshots,
+        mount_points=[snapshot.mount_point for snapshot in snapshots],
+        snapshot_by_source=lambda mount_point: next(
+            snapshot for snapshot in snapshots if snapshot.mount_point == mount_point
+        ),
     )
 
 
@@ -1208,13 +1215,20 @@ class SnapsetMountRootsTests(unittest.TestCase):
 
         A snapshot set need not include the root volume. The mount root is
         then recovered by stripping the member's own mount point from the
-        path it is mounted at.
+        path it is mounted at, and confirmed by the host root file system
+        being mounted there: a set with no root member is mounted with the
+        host root at its mount root.
         """
-        (var_dev, var_alias), (opt_dev, opt_alias) = self.devices
+        devices = _alias_block_devices(3)
+        if len(devices) < 3:
+            self.skipTest("Fewer than three aliased block devices available")
+        (host_root_dev, _), (var_dev, var_alias), (opt_dev, opt_alias) = devices
         snapset = self._snapset([("/var", var_alias), ("/opt", opt_alias)])
 
         with self._reader(
             [
+                f"{host_root_dev} / ext4 rw 0 0",
+                f"{host_root_dev} /mnt/custom/testset0 ext4 rw 0 0",
                 f"{var_dev} /mnt/custom/testset0/var ext4 rw 0 0",
                 f"{opt_dev} /mnt/custom/testset0/opt ext4 rw 0 0",
             ]
@@ -1222,6 +1236,52 @@ class SnapsetMountRootsTests(unittest.TestCase):
             roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
 
         self.assertEqual(roots, ["/mnt/custom/testset0"])
+
+    def test_mount_roots_rejects_partial_suffix_match(self):
+        """Test that a member mounted by hand does not yield a mount root.
+
+        Stripping a member's mount point from the path its device is mounted
+        at matches any path with the right suffix: a '/opt' member mounted by
+        hand at '/data/opt' yields the root '/data'. Accepting that root would
+        make 'snapset umount' unmount the host's /data and remove it.
+        """
+        devices = _alias_block_devices(3)
+        if len(devices) < 3:
+            self.skipTest("Fewer than three aliased block devices available")
+        (host_root_dev, _), (data_dev, _), (opt_dev, opt_alias) = devices
+        snapset = self._snapset([("/opt", opt_alias)])
+
+        with self._reader(
+            [
+                f"{host_root_dev} / ext4 rw 0 0",
+                f"{data_dev} /data ext4 rw 0 0",
+                f"{opt_dev} /data/opt ext4 rw 0 0",
+            ]
+        ) as pmr:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+
+        self.assertEqual(roots, [])
+
+    def test_mount_roots_rejects_host_root_directory(self):
+        """Test that a snapshot set booted as the host is not a mount root.
+
+        A snapshot set that the system is running from has its members
+        mounted at their own mount points, so the derived root is '/' or the
+        empty string. Neither is a snapshot set mount root: reporting one
+        would let 'snapset umount' try to unmount and remove '/'.
+        """
+        (root_dev, root_alias), (opt_dev, opt_alias) = self.devices
+        snapset = self._snapset([("/", root_alias), ("/opt", opt_alias)])
+
+        with self._reader(
+            [
+                f"{root_dev} / ext4 rw 0 0",
+                f"{opt_dev} /opt ext4 rw 0 0",
+            ]
+        ) as pmr:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+
+        self.assertEqual(roots, [])
 
     def test_mount_roots_multiple_paths(self):
         """Test that every path a snapshot set is mounted at is reported."""
@@ -1306,35 +1366,78 @@ class MountsDiscoveryTests(unittest.TestCase):
             ):
                 yield
 
+    @staticmethod
+    def _real_mount_point():
+        """Return a (device, mount point) pair for a real non-root mount."""
+        for entry in mounts.ProcMountsReader().entries:
+            if entry.where == "/" or not entry.what.startswith("/dev/"):
+                continue
+            try:
+                if not S_ISBLK(os.stat(entry.what).st_mode):
+                    continue
+            except OSError:
+                continue
+            return entry.what, entry.where
+        return None, None
+
+    def _devices_other_than(self, devpath, count):
+        """Return ``count`` aliased devices that are not ``devpath``."""
+        canonical = os.path.realpath(devpath)
+        devices = [dev for dev in self.devices if dev[0] != canonical]
+        if len(devices) < count:
+            self.skipTest(f"Fewer than {count} usable block devices available")
+        return devices[:count]
+
     def setUp(self):
-        self.devices = _alias_block_devices(1)
-        if not self.devices:
-            self.skipTest("No aliased block devices available")
+        self.devices = _alias_block_devices(4)
+        if len(self.devices) < 4:
+            self.skipTest("Fewer than four aliased block devices available")
 
-    def test_discover_root_that_is_not_a_mount_point(self):
-        """Test that a mount root that is not itself a mount point is ignored.
-
-        A snapshot set with no '/' member has its mount root derived by
-        stripping a member's own mount point from the path its device is
-        mounted at, and nothing guarantees the result is a mount point: a
-        member mounted by hand outside a snapshot set mount tree yields a
-        root that must be rejected rather than reported as a mount.
-        """
-        ((opt_dev, opt_alias),) = self.devices
+    def test_discover_mount_root(self):
+        """Test that a snapshot set mounted at a custom root is discovered."""
+        root_dev, root_path = self._real_mount_point()
+        if root_dev is None:
+            self.skipTest("No non-root block device mount available")
+        ((_, opt_alias),) = self._devices_other_than(root_dev, 1)
         snapset = _fake_snapset([("/opt", opt_alias)])
         manager = SimpleNamespace(snapshot_sets=[snapset])
 
-        # A plain directory, not a mount point.
-        with tempfile.TemporaryDirectory(prefix="snapm_test_mnt_") as tempdir:
-            opt_path = os.path.join(tempdir, "opt")
-            os.makedirs(opt_path)
-            with self._proc_mounts([f"{opt_dev} {opt_path} ext4 rw 0 0"]):
-                with self.assertLogs(mounts._log, level="INFO") as cm:
-                    discovered = mounts.Mounts(manager, "/run/snapm/mounts")
+        opt_dev = os.path.realpath(opt_alias)
+        with self._proc_mounts(
+            [
+                f"{root_dev} / ext4 rw 0 0",
+                f"{root_dev} {root_path} ext4 rw 0 0",
+                f"{opt_dev} {root_path}/opt ext4 rw 0 0",
+            ]
+        ):
+            discovered = mounts.Mounts(manager, "/run/snapm/mounts")
 
-            log_output = "\n".join(cm.output)
-            self.assertIn("Ignoring invalid mount path", log_output)
-            self.assertIn(tempdir, log_output)
+        self.assertEqual([mount.root for mount in discovered._mounts], [root_path])
+        self.assertEqual(snapset.mount_root, root_path)
+
+    def test_discover_rejects_partial_suffix_match(self):
+        """Test that a member mounted by hand is not discovered as a mount.
+
+        A '/opt' member mounted by hand at '/data/opt' strips to the root
+        '/data'. Even when that path is a mount point it is not a snapshot
+        set mount root, and unmounting it would take out the host's /data.
+        """
+        data_dev, data_path = self._real_mount_point()
+        if data_dev is None:
+            self.skipTest("No non-root block device mount available")
+        (host_root_dev, _), (_, opt_alias) = self._devices_other_than(data_dev, 2)
+        snapset = _fake_snapset([("/opt", opt_alias)])
+        manager = SimpleNamespace(snapshot_sets=[snapset])
+
+        opt_dev = os.path.realpath(opt_alias)
+        with self._proc_mounts(
+            [
+                f"{host_root_dev} / ext4 rw 0 0",
+                f"{data_dev} {data_path} ext4 rw 0 0",
+                f"{opt_dev} {data_path}/opt ext4 rw 0 0",
+            ]
+        ):
+            discovered = mounts.Mounts(manager, "/run/snapm/mounts")
 
         self.assertEqual(discovered._mounts, [])
         self.assertEqual(snapset.mount_root, "")
