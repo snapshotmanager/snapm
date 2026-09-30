@@ -67,7 +67,7 @@
 ..
 .
 .de ARG_COMMAND
-.  RI command " "\c
+.  IR command ... " "\c
 ..
 .
 .de ARG_NAME_OR_UUID
@@ -358,6 +358,8 @@ snapm \- Linux Snapshot Manager
 .de CMD_SNAPSET_MOUNT
 .  B snapset
 .  B mount
+.  RB [--mount-root\ \c
+.  IR path] " "\c
 .  ARG_NAME
 ..
 .CMD_SNAPSET_MOUNT
@@ -366,6 +368,8 @@ snapm \- Linux Snapshot Manager
 .de CMD_SNAPSET_UMOUNT
 .  B snapset
 .  B umount
+.  RB [--mount-root\ \c
+.  IR path] " "\c
 .  ARG_NAME
 ..
 .CMD_SNAPSET_UMOUNT
@@ -1312,15 +1316,27 @@ output.
 .B snapm
 .CMD_SNAPSET_MOUNT
 .br
-Mount the members of the specified snapshot set. The root volume is mounted at
-\fI/run/snapm/mounts/<name>\fP. Bind mounts for API and runtime file systems
-are created automatically.
+Mount the members of the specified snapshot set. By default, the root volume
+is mounted at \fI/run/snapm/mounts/<name>\fP. Bind mounts for API and runtime
+file systems are created automatically.
+.sp
+The \fB--mount-root\fP option specifies an alternative base directory for the
+mount tree. The directory must exist and have appropriate permissions set by
+the administrator before mounting.
 .
 .TP
 .B snapm
 .CMD_SNAPSET_UMOUNT
 .br
-Unmount the specified snapshot set members from \fI/run/snapm/mounts/<name>\fP.
+Unmount the specified snapshot set members. Snapshot set mounts are located
+by matching the set's member devices against the system mount table, so a
+snapshot set mounted with \fB--mount-root\fP is unmounted without needing to
+name that location again.
+.sp
+The \fB--mount-root\fP option selects which mount to unmount, and is only
+required when the snapshot set is mounted at more than one path. An
+ambiguous \fBumount\fP reports the paths the snapshot set is mounted at and
+makes no changes.
 .
 .TP
 .B snapm

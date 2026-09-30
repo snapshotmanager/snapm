@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 import logging
 import os
+import tempfile
 
 log = logging.getLogger()
 
@@ -258,6 +259,97 @@ class CommandTestsSimple(CommandTestsBase):
         with self.assertRaises(SystemExit) as cm:
             command.main(args)
         self.assertEqual(cm.exception.code, 2)
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_no_mount_base_passes_none(self, MockManager):
+        """Test that omitting --mount-root passes None to mounts.mount()."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+
+        command._mount_cmd(args)
+        mock_manager.mounts.mount.assert_called_once_with(
+            mock_snapset,
+            mount_base=None,
+        )
+
+    @patch("snapm.command.Manager")
+    def test_mount_cmd_mount_root_passes_through(self, MockManager):
+        """Test that --mount-root value is passed through to mounts.mount()."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = "/custom/root"
+
+        command._mount_cmd(args)
+        mock_manager.mounts.mount.assert_called_once_with(
+            mock_snapset,
+            mount_base="/custom/root",
+        )
+
+    @patch("snapm.command.Manager")
+    def test_umount_cmd_no_mount_root_passes_none(self, MockManager):
+        """Test that umount without --mount-root passes None to mounts.umount()."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_snapset.name = "testset0"
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+
+        ret = command._umount_cmd(args)
+        self.assertEqual(ret, 0)
+        mock_manager.mounts.umount.assert_called_once_with(
+            mock_snapset,
+            mount_base=None,
+        )
+
+    @patch("snapm.command.Manager")
+    def test_umount_cmd_with_mount_root(self, MockManager):
+        """Test that --mount-root value is passed through to mounts.umount()."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_snapset.name = "testset0"
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = "/custom/root"
+
+        ret = command._umount_cmd(args)
+        self.assertEqual(ret, 0)
+        mock_manager.mounts.umount.assert_called_once_with(
+            mock_snapset,
+            mount_base="/custom/root",
+        )
+
+    @patch("snapm.command.Manager")
+    def test_umount_cmd_not_mounted_raises(self, MockManager):
+        """Test that umount propagates SnapmNotFoundError when not mounted."""
+        mock_manager = MockManager.return_value
+        mock_snapset = MagicMock()
+        mock_snapset.name = "testset0"
+        mock_manager.find_snapshot_sets.return_value = [mock_snapset]
+        mock_manager.mounts.umount.side_effect = snapm.SnapmNotFoundError(
+            "Mount for snapshot set testset0 not found"
+        )
+
+        args = MockArgs()
+        args.name = "testset0"
+        args.mount_root = None
+
+        with self.assertRaises(snapm.SnapmNotFoundError):
+            command._umount_cmd(args)
+
 
 
 @unittest.skipIf(not have_root(), "requires root privileges")
