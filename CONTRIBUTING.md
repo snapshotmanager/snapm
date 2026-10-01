@@ -84,8 +84,7 @@ Some examples of common subsystem strings used in the project are:
     as the Sphinx documentation in doc/, and the groff formatted man pages in
     the man/ directory).
   * **tests**: changes to any of the test suites. It is also fine to use the
-    specific suite name if that makes sense ("``virt_tests``",
-    "``container_tests``", etc).
+    specific suite name if that makes sense ("``container_tests``", etc).
   * **dist**: package and distribution metadata: RPM spec file, Python project
     and build metadata etc.
   * **scripts**: patches affecting the demo & helper scripts found in the
