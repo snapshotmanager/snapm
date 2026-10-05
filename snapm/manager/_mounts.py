@@ -1032,13 +1032,29 @@ class Mounts:
                     existing.root,
                 )
                 return existing
-            # A stale entry: the path is no longer mounted.
+            # A stale entry: the path is no longer mounted. Discard the
+            # mount point along with it, so that the set can be mounted
+            # there again.
             self._mounts.remove(existing)
+            try:
+                os.rmdir(existing.root)
+            except OSError as err:
+                _log_warn(
+                    "Could not remove stale mount point '%s': %s", existing.root, err
+                )
 
         # Ensure the snapshot set's volumes are active
         snapset.activate()
 
-        os.makedirs(mount_path, exist_ok=False)
+        # Create the mount point without re-using an existing path: this
+        # prevents a user with write access to the mount base from
+        # redirecting the mount with a symbolic link planted there first.
+        try:
+            os.makedirs(mount_path, exist_ok=False)
+        except OSError as err:
+            raise SnapmPathError(
+                f"Could not create mount point {mount_path}: {err}"
+            ) from err
 
         mount = Mount(snapset, mount_path)
         try:

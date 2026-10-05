@@ -1504,6 +1504,33 @@ class MountsMountSelectionTests(unittest.TestCase):
         self.assertIs(again, first)
         self.assertEqual(self.mounts._mounts, [first])
 
+    def test_mount_replaces_stale_mount_point(self):
+        """Test that a stale mount point is discarded and re-created."""
+        base = self._mount_base()
+        first = self._mount(mount_base=base)
+        self.assertTrue(os.path.isdir(first.root))
+
+        # The set is unmounted behind snapm's back: the mount table entry
+        # goes stale, but the mount point is left behind.
+        first.mounted = False
+
+        second = self._mount(mount_base=base)
+
+        self.assertIsNot(second, first)
+        self.assertEqual(second.root, first.root)
+        self.assertEqual(self.mounts._mounts, [second])
+        self.assertTrue(os.path.isdir(second.root))
+
+    def test_mount_point_in_use_raises_path_error(self):
+        """Test that an occupied mount point fails with a SnapmError."""
+        base = self._mount_base()
+        os.mkdir(os.path.join(base, self.snapset.name))
+
+        with self.assertRaisesRegex(
+            snapm.SnapmPathError, "Could not create mount point"
+        ):
+            self._mount(mount_base=base)
+
     def test_mount_reports_canonical_mount_root(self):
         """Test that a second mount leaves the reported mount root alone."""
         first = self._mount(mount_base=self._mount_base())
