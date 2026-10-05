@@ -1010,7 +1010,7 @@ class Mounts:
             mount_path = os.path.join(mount_base, snapset.name)
         else:
             mount_path = os.path.join(self._root, snapset.name)
-        os.makedirs(mount_path, exist_ok=True)
+        os.makedirs(mount_path, exist_ok=False)
 
         mount = Mount(snapset, mount_path)
         try:
