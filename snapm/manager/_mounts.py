@@ -1007,7 +1007,23 @@ class Mounts:
                            The snapshot set root is mounted at
                            ``<mount_base>/<snapset name>``.
         """
-        existing = self._find_mount(snapset)
+        if mount_base is not None:
+            mount_base = os.path.abspath(mount_base)
+            if not os.path.isdir(mount_base):
+                raise SnapmPathError(
+                    f"Mount base path does not exist or is not a directory: {mount_base}"
+                )
+            mount_path = os.path.join(mount_base, snapset.name)
+        else:
+            mount_path = os.path.join(self._root, snapset.name)
+
+        # A snapshot set may be mounted at more than one path at a time. An
+        # explicit mount base asks for a mount at a specific path, so only a
+        # mount already rooted there will do: with no mount base any mount of
+        # the set is acceptable.
+        existing = self._find_mount(
+            snapset, mount_path if mount_base is not None else None
+        )
         if existing is not None:
             if existing.mounted:
                 _log_info(
@@ -1022,15 +1038,6 @@ class Mounts:
         # Ensure the snapshot set's volumes are active
         snapset.activate()
 
-        if mount_base is not None:
-            mount_base = os.path.abspath(mount_base)
-            if not os.path.isdir(mount_base):
-                raise SnapmPathError(
-                    f"Mount base path does not exist or is not a directory: {mount_base}"
-                )
-            mount_path = os.path.join(mount_base, snapset.name)
-        else:
-            mount_path = os.path.join(self._root, snapset.name)
         os.makedirs(mount_path, exist_ok=False)
 
         mount = Mount(snapset, mount_path)
@@ -1045,8 +1052,9 @@ class Mounts:
 
         self._mounts.append(mount)
 
-        # Set snapset mount_root
-        snapset.mount_root = mount.root
+        # Report the canonical mount for the set: this is the new mount
+        # unless the set was already mounted at another path.
+        snapset.mount_root = self._find_mount(snapset).root
 
         return mount
 

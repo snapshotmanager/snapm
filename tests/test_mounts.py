@@ -1443,6 +1443,76 @@ class MountsDiscoveryTests(unittest.TestCase):
         self.assertEqual(snapset.mount_root, "")
 
 
+class MountsMountSelectionTests(unittest.TestCase):
+    """
+    Tests for the mount selection logic in Mounts.mount().
+    """
+
+    def setUp(self):
+        manager = SimpleNamespace(snapshot_sets=[])
+        self.mounts = mounts.Mounts(manager, "/run/snapm/mounts")
+        self.snapset = SimpleNamespace(
+            name="testset0", mount_root="", activate=lambda: None
+        )
+
+    def _mount_base(self):
+        """Return the path to a new, empty mount base directory."""
+        base_obj = tempfile.TemporaryDirectory(prefix="snapm_mount_sel_")
+        self.addCleanup(base_obj.cleanup)
+        return base_obj.name
+
+    @staticmethod
+    def _stub_mount(snapset, root, discover=False):
+        """Build a stub mount, in place of mounting the set for real."""
+        return SimpleNamespace(
+            snapset=snapset, root=root, mounted=True, mount=lambda: None
+        )
+
+    def _mount(self, mount_base=None):
+        """Call Mounts.mount() without mounting anything."""
+        with unittest.mock.patch.object(mounts, "Mount", self._stub_mount):
+            return self.mounts.mount(self.snapset, mount_base=mount_base)
+
+    def test_mount_second_base_creates_second_mount(self):
+        """Test that an explicit mount base mounts a set already mounted."""
+        base_one = self._mount_base()
+        base_two = self._mount_base()
+
+        first = self._mount(mount_base=base_one)
+        second = self._mount(mount_base=base_two)
+
+        self.assertIsNot(first, second)
+        self.assertEqual(first.root, os.path.join(base_one, self.snapset.name))
+        self.assertEqual(second.root, os.path.join(base_two, self.snapset.name))
+        self.assertEqual(self.mounts._mounts, [first, second])
+
+    def test_mount_same_base_returns_existing(self):
+        """Test that re-mounting at the same base returns the same mount."""
+        base = self._mount_base()
+
+        first = self._mount(mount_base=base)
+        again = self._mount(mount_base=base)
+
+        self.assertIs(again, first)
+        self.assertEqual(self.mounts._mounts, [first])
+
+    def test_mount_without_base_returns_existing(self):
+        """Test that mount() with no mount base accepts any existing mount."""
+        first = self._mount(mount_base=self._mount_base())
+        again = self._mount()
+
+        self.assertIs(again, first)
+        self.assertEqual(self.mounts._mounts, [first])
+
+    def test_mount_reports_canonical_mount_root(self):
+        """Test that a second mount leaves the reported mount root alone."""
+        first = self._mount(mount_base=self._mount_base())
+        self.assertEqual(self.snapset.mount_root, first.root)
+
+        self._mount(mount_base=self._mount_base())
+        self.assertEqual(self.snapset.mount_root, first.root)
+
+
 class MountsUmountSelectionTests(unittest.TestCase):
     """
     Tests for the mount selection logic in Mounts.umount().
