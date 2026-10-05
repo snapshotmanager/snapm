@@ -293,7 +293,7 @@ class MountsTests(MountsTestsBase):
         except snapm.SnapmError as e:
             self.fail(f"Mounting failed when it should have succeeded: {e}")
 
-        self.assertIn(self.snapset.name, self.mounts._mounts_by_name)
+        self.assertIs(self.mounts._find_mount(self.snapset), mount_obj)
         self.assertIn(mount_obj, self.mounts._mounts)
         self.assertTrue(mount_obj.mounted)
         self.assertEqual(self.snapset.mount_root, mount_obj.root)
@@ -307,7 +307,7 @@ class MountsTests(MountsTestsBase):
         # --- Umount ---
         self.mounts.umount(self.snapset)
 
-        self.assertNotIn(self.snapset.name, self.mounts._mounts_by_name)
+        self.assertIsNone(self.mounts._find_mount(self.snapset))
         self.assertNotIn(mount_obj, self.mounts._mounts)
         self.assertFalse(mount_obj.mounted) # Check object state
         self.assertFalse(os.path.ismount(mount_obj.root)) # Check system state
@@ -423,7 +423,7 @@ class MountsTests(MountsTestsBase):
         Tests that calling umount() on a snapset that is not managed
         by this Mounts instance raises SnapmNotFoundError.
         """
-        # Note: self.snapset exists, but it's not in self.mounts._mounts_by_name
+        # Note: self.snapset exists, but it has no mount in self.mounts
         self.assertEqual(len(self.mounts._mounts), 0)
         with self.assertRaises(snapm.SnapmNotFoundError):
             self.mounts.umount(self.snapset)
@@ -629,8 +629,8 @@ class MountsTests(MountsTestsBase):
         self.mounts.discover_mounts()
 
         # Verify the custom mount was rediscovered
-        self.assertIn(self.snapset_name, self.mounts._mounts_by_name)
-        rediscovered = self.mounts._mounts_by_name[self.snapset_name]
+        rediscovered = self.mounts._find_mount(self.snapset)
+        self.assertIsNotNone(rediscovered)
         self.assertEqual(rediscovered.root, custom_path)
         self.assertTrue(rediscovered.mounted)
 
@@ -1463,7 +1463,6 @@ class MountsUmountSelectionTests(unittest.TestCase):
             snapset=self.snapset, root=root, umount=lambda: None
         )
         self.mounts._mounts.append(mount)
-        self.mounts._mounts_by_name.setdefault(self.snapset.name, mount)
         return mount
 
     def test_umount_not_mounted(self):
@@ -1503,12 +1502,12 @@ class MountsUmountSelectionTests(unittest.TestCase):
         self.assertEqual(self.mounts._mounts, [second])
         self.assertFalse(os.path.exists(first.root))
 
-        # The name lookup and report field fall back to the surviving mount
-        self.assertIs(self.mounts._mounts_by_name[self.snapset.name], second)
+        # The canonical mount and report field fall back to the survivor
+        self.assertIs(self.mounts._find_mount(self.snapset), second)
         self.assertEqual(self.snapset.mount_root, second.root)
 
         # With one mount left the mount base is no longer required
         self.mounts.umount(self.snapset)
         self.assertEqual(self.mounts._mounts, [])
-        self.assertNotIn(self.snapset.name, self.mounts._mounts_by_name)
+        self.assertIsNone(self.mounts._find_mount(self.snapset))
         self.assertEqual(self.snapset.mount_root, "")

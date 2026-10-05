@@ -838,9 +838,38 @@ class Mounts:
         self._manager = manager
         self._root = mounts_dir
         self._mounts = []
-        self._mounts_by_name = {}
         self._sys_mount = SysMount()
         self.discover_mounts()
+
+    def _snapset_mounts(self, snapset: SnapshotSet) -> List[Mount]:
+        """
+        Return the mounts for ``snapset``, in discovery order.
+
+        :param snapset: The snapshot set to look up.
+        :returns: A list of `Mount` objects, empty if the set is not mounted.
+        """
+        return [mount for mount in self._mounts if mount.snapset.name == snapset.name]
+
+    def _find_mount(
+        self, snapset: SnapshotSet, mount_root: Optional[str] = None
+    ) -> Optional[Mount]:
+        """
+        Return the mount for ``snapset`` at ``mount_root``, or the canonical
+        mount for the set when ``mount_root`` is ``None``.
+
+        A snapshot set may be mounted at more than one path at a time: the
+        canonical mount is the first one discovered or created, and is the
+        mount reported as the set's mount root.
+
+        :param snapset: The snapshot set to look up.
+        :param mount_root: Optional mount path selecting a specific mount.
+        :returns: A `Mount` object, or ``None`` if the set is not mounted at
+                  ``mount_root``, or not mounted at all.
+        """
+        candidates = self._snapset_mounts(snapset)
+        if mount_root is None:
+            return candidates[0] if candidates else None
+        return next((mount for mount in candidates if mount.root == mount_root), None)
 
     @staticmethod
     def _snapset_root_device(
@@ -926,7 +955,6 @@ class Mounts:
         """
         _log_info("Discovering snapshot set mounts")
         self._mounts.clear()
-        self._mounts_by_name.clear()
         mounts = []
         pmr = ProcMountsReader()
 
@@ -963,10 +991,6 @@ class Mounts:
             snapset.mount_root = snapset_mounts[0].root if snapset_mounts else ""
 
         self._mounts.extend(mounts)
-        for mount in mounts:
-            # Keep the first mount found for a set: a set mounted at more than
-            # one path is disambiguated by the caller passing an explicit root.
-            self._mounts_by_name.setdefault(mount.snapset.name, mount)
         _log_info("Found %d snapshot set mounts", len(self._mounts))
 
     def mount(
@@ -983,8 +1007,8 @@ class Mounts:
                            The snapshot set root is mounted at
                            ``<mount_base>/<snapset name>``.
         """
-        if snapset.name in self._mounts_by_name:
-            existing = self._mounts_by_name[snapset.name]
+        existing = self._find_mount(snapset)
+        if existing is not None:
             if existing.mounted:
                 _log_info(
                     "Snapshot set %s already mounted at %s",
@@ -992,11 +1016,8 @@ class Mounts:
                     existing.root,
                 )
                 return existing
-            try:
-                self._mounts.remove(existing)
-            except ValueError:
-                pass
-            self._mounts_by_name.pop(snapset.name, None)
+            # A stale entry: the path is no longer mounted.
+            self._mounts.remove(existing)
 
         # Ensure the snapshot set's volumes are active
         snapset.activate()
@@ -1023,7 +1044,6 @@ class Mounts:
             raise
 
         self._mounts.append(mount)
-        self._mounts_by_name[snapset.name] = mount
 
         # Set snapset mount_root
         snapset.mount_root = mount.root
@@ -1043,7 +1063,7 @@ class Mounts:
                                     path and ``mount_base`` does not select
                                     exactly one of them.
         """
-        candidates = [m for m in self._mounts if m.snapset.name == snapset.name]
+        candidates = self._snapset_mounts(snapset)
         if mount_base is not None:
             wanted = os.path.join(os.path.abspath(mount_base), snapset.name)
             candidates = [m for m in candidates if m.root == wanted]
@@ -1062,25 +1082,12 @@ class Mounts:
         mount.umount()
         os.rmdir(mount.root)
 
-        # Update registries on success
-        try:
-            self._mounts.remove(mount)
-        except ValueError:  # pragma: no cover
-            pass
-        if self._mounts_by_name.get(snapset.name) is mount:
-            self._mounts_by_name.pop(snapset.name, None)
-            remaining = next(
-                (m for m in self._mounts if m.snapset.name == snapset.name), None
-            )
-            if remaining is not None:
-                self._mounts_by_name[snapset.name] = remaining
+        # Update the mount table on success
+        self._mounts.remove(mount)
 
         # Update snapset mount_root to any remaining mount for the set
-        snapset.mount_root = (
-            self._mounts_by_name[snapset.name].root
-            if snapset.name in self._mounts_by_name
-            else ""
-        )
+        remaining = self._find_mount(snapset)
+        snapset.mount_root = remaining.root if remaining is not None else ""
 
     def find_mounts(self, selection: Optional[Selection] = None) -> List[Mount]:
         """
