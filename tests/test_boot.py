@@ -20,6 +20,9 @@ import snapm.manager._boot as boot
 import snapm.manager
 from snapm.manager.plugins import format_snapshot_name, encode_mount_point
 import boom
+import boom.bootloader
+import boom.cache
+import boom.osprofile
 
 from tests import have_root, is_redhat, BOOT_ROOT_TEST
 from ._util import LvmLoopBacked, _VG_NAME
@@ -110,6 +113,25 @@ class BootTestsBase(unittest.TestCase):
         run(["umount", ETC_FSTAB], check=True)
         os.unlink(TMP_FSTAB)
 
+    def _set_boom_boot_path(self, boot_path):
+        """
+        Switch the boom boot file system path to ``boot_path`` and reload
+        all in-memory boom state.
+
+        Boom caches OsProfiles, BootEntries and the boot image cache index
+        at module scope: each of these must be reloaded explicitly when the
+        boot path changes. In particular the image cache index is loaded
+        lazily on first use and is never invalidated, so without an explicit
+        reload a test that switches boot path inherits the cache index of
+        whichever boot path was in use when the first lookup happened.
+
+        :param boot_path: The boot file system path to switch to.
+        """
+        boom.set_boot_path(boot_path)
+        boom.osprofile.load_profiles()
+        boom.bootloader.load_entries()
+        boom.cache.load_cache()
+
     def _populate_boom_root_path(self):
         """
         Populate a mock /boot directory for testing.
@@ -151,14 +173,12 @@ class BootTestsBase(unittest.TestCase):
         return boot_dir
 
     def _cleanup_boom_root_path(self, boot_path):
-        boom.set_boot_path(BOOT_ROOT_TEST)
-        boom.osprofile.load_profiles()
-        boom.bootloader.load_entries()
+        self._set_boom_boot_path(BOOT_ROOT_TEST)
         rmtree(boot_path)
 
     def setUp(self):
         log.debug("Preparing %s", self._testMethodName)
-        boom.set_boot_path("/boot")
+        self._set_boom_boot_path("/boot")
         self._lvm = LvmLoopBacked(self.volumes, thin_volumes=self.thin_volumes)
         snapset_name = "bootset0"
         snapset_time = 1707923080
@@ -176,7 +196,7 @@ class BootTestsBase(unittest.TestCase):
 
     def tearDown(self):
         log.debug("Tearing down %s", self._testMethodName)
-        boom.set_boot_path(BOOT_ROOT_TEST)
+        self._set_boom_boot_path(BOOT_ROOT_TEST)
         self._clear_fstab()
         self._lvm.destroy()
 
@@ -298,9 +318,7 @@ class BootTestsWithRoot(BootTestsBase):
     @unittest.skipIf(not is_redhat(), "profile auto-creation not supported")
     def test_auto_profile_create_boot_entry(self):
         boot_dir = self._populate_boom_root_path()
-        boom.set_boot_path(boot_dir)
-        boom.osprofile.load_profiles()
-        boom.bootloader.load_entries()
+        self._set_boom_boot_path(boot_dir)
         self.addCleanup(self._cleanup_boom_root_path, boot_dir)
         sset = self.manager.find_snapshot_sets(snapm.Selection(name="bootset0"))[0]
         self.manager.create_snapshot_set_boot_entry(uuid=sset.uuid)
