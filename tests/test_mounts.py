@@ -1536,6 +1536,27 @@ class MountsMountSelectionTests(unittest.TestCase):
         self.assertEqual(self.mounts._mounts, [second])
         self.assertFalse(os.path.exists(first.root))
 
+        # The pruned mount is no longer the one reported for the set
+        self.assertEqual(self.snapset.mount_root, second.root)
+
+    def test_mount_clears_mount_root_when_remount_fails(self):
+        """Test that a failed re-mount does not leave a stale mount root."""
+        base = self._mount_base()
+        first = self._mount(mount_base=base)
+        self.assertEqual(self.snapset.mount_root, first.root)
+
+        # The mount goes away behind snapm's back, and something is left in
+        # the mount point so that it can be neither removed nor re-created.
+        first.mounted = False
+        with open(os.path.join(first.root, "leftover"), "w", encoding="utf8"):
+            pass
+
+        with self.assertRaises(snapm.SnapmPathError):
+            self._mount(mount_base=base)
+
+        self.assertEqual(self.mounts._mounts, [])
+        self.assertEqual(self.snapset.mount_root, "")
+
     def test_mount_point_in_use_raises_path_error(self):
         """Test that an occupied mount point fails with a SnapmError."""
         base = self._mount_base()

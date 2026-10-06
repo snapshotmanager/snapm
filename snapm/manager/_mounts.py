@@ -871,6 +871,16 @@ class Mounts:
             return candidates[0] if candidates else None
         return next((mount for mount in candidates if mount.root == mount_root), None)
 
+    def _update_mount_root(self, snapset: SnapshotSet) -> None:
+        """
+        Point the snapshot set's reported mount root at its canonical mount,
+        or clear it if the set is no longer mounted anywhere.
+
+        :param snapset: The snapshot set to update.
+        """
+        canonical = self._find_mount(snapset)
+        snapset.mount_root = canonical.root if canonical is not None else ""
+
     @staticmethod
     def _snapset_root_device(
         snapset: SnapshotSet, pmr: ProcMountsReader
@@ -1043,6 +1053,8 @@ class Mounts:
                 _log_warn(
                     "Could not remove stale mount point '%s': %s", existing.root, err
                 )
+            # The discarded entry may have been the one reported for the set.
+            self._update_mount_root(snapset)
 
         # Ensure the snapshot set's volumes are active
         snapset.activate()
@@ -1071,7 +1083,7 @@ class Mounts:
 
         # Report the canonical mount for the set: this is the new mount
         # unless the set was already mounted at another path.
-        snapset.mount_root = self._find_mount(snapset).root
+        self._update_mount_root(snapset)
 
         return mount
 
@@ -1111,8 +1123,7 @@ class Mounts:
         self._mounts.remove(mount)
 
         # Update snapset mount_root to any remaining mount for the set
-        remaining = self._find_mount(snapset)
-        snapset.mount_root = remaining.root if remaining is not None else ""
+        self._update_mount_root(snapset)
 
     def find_mounts(self, selection: Optional[Selection] = None) -> List[Mount]:
         """
