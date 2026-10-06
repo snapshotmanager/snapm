@@ -1020,11 +1020,12 @@ class Mounts:
         # A snapshot set may be mounted at more than one path at a time. An
         # explicit mount base asks for a mount at a specific path, so only a
         # mount already rooted there will do: with no mount base any mount of
-        # the set is acceptable.
-        existing = self._find_mount(
-            snapset, mount_path if mount_base is not None else None
-        )
-        if existing is not None:
+        # the set is acceptable, so look for one that is still mounted rather
+        # than stopping at the first entry recorded for the set.
+        wanted = mount_path if mount_base is not None else None
+        for existing in self._snapset_mounts(snapset):
+            if wanted is not None and existing.root != wanted:
+                continue
             if existing.mounted:
                 _log_info(
                     "Snapshot set %s already mounted at %s",

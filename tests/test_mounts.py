@@ -1521,6 +1521,21 @@ class MountsMountSelectionTests(unittest.TestCase):
         self.assertEqual(self.mounts._mounts, [second])
         self.assertTrue(os.path.isdir(second.root))
 
+    def test_mount_prefers_live_mount_to_stale_entry(self):
+        """Test that a live mount is used when an earlier entry is stale."""
+        first = self._mount(mount_base=self._mount_base())
+        second = self._mount(mount_base=self._mount_base())
+
+        # The first mount goes away behind snapm's back, leaving the second
+        # mount live but no longer the first entry recorded for the set.
+        first.mounted = False
+
+        again = self._mount()
+
+        self.assertIs(again, second)
+        self.assertEqual(self.mounts._mounts, [second])
+        self.assertFalse(os.path.exists(first.root))
+
     def test_mount_point_in_use_raises_path_error(self):
         """Test that an occupied mount point fails with a SnapmError."""
         base = self._mount_base()
