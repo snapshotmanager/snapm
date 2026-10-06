@@ -1593,7 +1593,7 @@ class MountsUmountSelectionTests(unittest.TestCase):
         root = os.path.join(base_obj.name, base, self.snapset.name)
         os.makedirs(root)
         mount = SimpleNamespace(
-            snapset=self.snapset, root=root, umount=lambda: None
+            snapset=self.snapset, root=root, mounted=True, umount=lambda: None
         )
         self.mounts._mounts.append(mount)
         return mount
@@ -1642,5 +1642,22 @@ class MountsUmountSelectionTests(unittest.TestCase):
         # With one mount left the mount base is no longer required
         self.mounts.umount(self.snapset)
         self.assertEqual(self.mounts._mounts, [])
+        self.assertIsNone(self.mounts._find_mount(self.snapset))
+        self.assertEqual(self.snapset.mount_root, "")
+
+    def test_umount_does_not_report_a_stale_mount(self):
+        """Test that a stale mount is not reported after unmounting."""
+        first = self._add_mount("one")
+        second = self._add_mount("two")
+
+        # The first mount goes away behind snapm's back, and is still
+        # recorded when the second one is unmounted.
+        first.mounted = False
+
+        self.mounts.umount(self.snapset, mount_base=os.path.dirname(second.root))
+
+        # The stale entry survives until the next discovery, but nothing is
+        # mounted at it, so it is not what the set reports.
+        self.assertEqual(self.mounts._mounts, [first])
         self.assertIsNone(self.mounts._find_mount(self.snapset))
         self.assertEqual(self.snapset.mount_root, "")

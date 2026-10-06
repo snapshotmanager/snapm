@@ -858,8 +858,10 @@ class Mounts:
         mount for the set when ``mount_root`` is ``None``.
 
         A snapshot set may be mounted at more than one path at a time: the
-        canonical mount is the first one discovered or created, and is the
-        mount reported as the set's mount root.
+        canonical mount is the first of those that is still mounted, and is
+        the mount reported as the set's mount root. Entries for paths that
+        have been unmounted outside snapm are skipped, since they describe
+        nothing that is mounted until the next discovery prunes them.
 
         :param snapset: The snapshot set to look up.
         :param mount_root: Optional mount path selecting a specific mount.
@@ -868,7 +870,7 @@ class Mounts:
         """
         candidates = self._snapset_mounts(snapset)
         if mount_root is None:
-            return candidates[0] if candidates else None
+            return next((mount for mount in candidates if mount.mounted), None)
         return next((mount for mount in candidates if mount.root == mount_root), None)
 
     def _update_mount_root(self, snapset: SnapshotSet) -> None:
