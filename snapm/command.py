@@ -996,7 +996,7 @@ def diff_snapsets(
             from_root = manager.mounts.get_sys_mount()
         else:
             mounts = manager.mounts.find_mounts(Selection(name=diff_from))
-            if not mounts or not mounts[0].mounted:
+            if not mounts:
                 snapsets = manager.find_snapshot_sets(Selection(name=diff_from))
                 if not snapsets:
                     raise SnapmNotFoundError(
@@ -1012,7 +1012,7 @@ def diff_snapsets(
             to_root = manager.mounts.get_sys_mount()
         else:
             mounts = manager.mounts.find_mounts(Selection(name=diff_to))
-            if not mounts or not mounts[0].mounted:
+            if not mounts:
                 snapsets = manager.find_snapshot_sets(Selection(name=diff_to))
                 if not snapsets:
                     raise SnapmNotFoundError(
@@ -1845,7 +1845,7 @@ def _mount_cmd(cmd_args):
         return 1
     snapset = matches[0]
 
-    manager.mounts.mount(snapset, mount_base=getattr(cmd_args, "mount_root", None))
+    manager.mounts.mount(snapset, mount_base=cmd_args.mount_root)
     return 0
 
 
@@ -1868,7 +1868,7 @@ def _umount_cmd(cmd_args):
         return 1
     snapset = matches[0]
 
-    manager.mounts.umount(snapset, mount_base=getattr(cmd_args, "mount_root", None))
+    manager.mounts.umount(snapset, mount_base=cmd_args.mount_root)
     return 0
 
 
@@ -1898,7 +1898,7 @@ def _exec_cmd(cmd_args):
 
     pre_existing = manager.mounts.find_mounts(selection=select)
     mount = manager.mounts.mount(snapset)  # idempotent
-    did_mount = not any(m.mounted for m in pre_existing)
+    did_mount = not pre_existing
 
     try:
         ret = mount.exec(cmd_args.command)

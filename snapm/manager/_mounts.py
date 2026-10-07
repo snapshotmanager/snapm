@@ -625,8 +625,6 @@ class Mount(MountBase):
             for submount in submounts:
                 _log_debug_mounts(submount)
 
-            self.snapset.mount_root = mount_root
-
             name_map = {
                 mp: self.snapset.snapshot_by_source(mp).name
                 for mp in self.snapset.mount_points
@@ -858,10 +856,10 @@ class Mounts:
         mount for the set when ``mount_root`` is ``None``.
 
         A snapshot set may be mounted at more than one path at a time: the
-        canonical mount is the first of those that is still mounted, and is
-        the mount reported as the set's mount root. Entries for paths that
-        have been unmounted outside snapm are skipped, since they describe
-        nothing that is mounted until the next discovery prunes them.
+        canonical mount is the first one discovered or created, and is the
+        mount reported as the set's mount root. Entries describing a path
+        that is no longer mounted are discarded by
+        ``_prune_stale_mounts()``, which every caller runs first.
 
         :param snapset: The snapshot set to look up.
         :param mount_root: Optional mount path selecting a specific mount.
@@ -870,7 +868,7 @@ class Mounts:
         """
         candidates = self._snapset_mounts(snapset)
         if mount_root is None:
-            return next((mount for mount in candidates if mount.mounted), None)
+            return candidates[0] if candidates else None
         return next((mount for mount in candidates if mount.root == mount_root), None)
 
     def _update_mount_root(self, snapset: SnapshotSet) -> None:
@@ -882,6 +880,43 @@ class Mounts:
         """
         canonical = self._find_mount(snapset)
         snapset.mount_root = canonical.root if canonical is not None else ""
+
+    def _prune_stale_mounts(self, snapset: Optional[SnapshotSet] = None) -> None:
+        """
+        Discard the mount table entries that no longer describe a mount.
+
+        A snapshot set unmounted outside snapm, or one whose mount point
+        could not be removed when it was unmounted, leaves an entry naming a
+        path with nothing mounted on it. Until it is discarded the set looks
+        mounted there: the path is reported as the set's mount root, it
+        blocks mounting the set there again, and it counts towards the
+        ambiguity check in ``umount()``.
+
+        The mount point goes with the entry, since the path is one that snapm
+        created and nothing is mounted on it any more.
+
+        :param snapset: Optional snapshot set to limit pruning to. All
+                        snapshot sets are pruned when it is ``None``.
+        """
+        stale = [
+            mount
+            for mount in self._mounts
+            if not mount.mounted
+            and (snapset is None or mount.snapset.name == snapset.name)
+        ]
+        for mount in stale:
+            _log_debug_mounts(
+                "Discarding stale mount for %s at '%s'", mount.snapset.name, mount.root
+            )
+            self._mounts.remove(mount)
+            try:
+                os.rmdir(mount.root)
+            except OSError as err:
+                _log_warn(
+                    "Could not remove stale mount point '%s': %s", mount.root, err
+                )
+            # The discarded entry may have been the one reported for the set.
+            self._update_mount_root(mount.snapset)
 
     @staticmethod
     def _snapset_root_device(
@@ -967,21 +1002,16 @@ class Mounts:
         """
         _log_info("Discovering snapshot set mounts")
         self._mounts.clear()
-        mounts = []
         pmr = ProcMountsReader()
 
         for snapset in self._manager.snapshot_sets:
             roots = self._snapset_mount_roots(snapset, pmr)
-            if not roots:
-                snapset.mount_root = ""
-                continue
             if len(roots) > 1:
                 _log_warn(
                     "Snapshot set %s is mounted at multiple paths: %s",
                     snapset.name,
                     ", ".join(roots),
                 )
-            snapset_mounts = []
             for root in roots:
                 try:
                     mount = Mount(snapset, root, discover=True)
@@ -991,18 +1021,14 @@ class Mounts:
                     # is running.
                     _log_info("Ignoring invalid mount path: '%s' (%s)", root, err)
                     continue
-                snapset_mounts.append(mount)
+                self._mounts.append(mount)
                 _log_info(
                     "Found snapshot set mount at '%s' (mounted=%s)",
                     mount.root,
                     mount.mounted,
                 )
-            mounts.extend(snapset_mounts)
+            self._update_mount_root(snapset)
 
-            # Record the first valid mount root for report output.
-            snapset.mount_root = snapset_mounts[0].root if snapset_mounts else ""
-
-        self._mounts.extend(mounts)
         _log_info("Found %d snapshot set mounts", len(self._mounts))
 
     def mount(
@@ -1029,34 +1055,23 @@ class Mounts:
         else:
             mount_path = os.path.join(self._root, snapset.name)
 
+        # Discard any entry for a path that is no longer mounted, along with
+        # the mount point it names, so that the set can be mounted there
+        # again.
+        self._prune_stale_mounts(snapset)
+
         # A snapshot set may be mounted at more than one path at a time. An
         # explicit mount base asks for a mount at a specific path, so only a
         # mount already rooted there will do: with no mount base any mount of
-        # the set is acceptable, so look for one that is still mounted rather
-        # than stopping at the first entry recorded for the set.
-        wanted = mount_path if mount_base is not None else None
-        for existing in self._snapset_mounts(snapset):
-            if wanted is not None and existing.root != wanted:
-                continue
-            if existing.mounted:
-                _log_info(
-                    "Snapshot set %s already mounted at %s",
-                    snapset.name,
-                    existing.root,
-                )
-                return existing
-            # A stale entry: the path is no longer mounted. Discard the
-            # mount point along with it, so that the set can be mounted
-            # there again.
-            self._mounts.remove(existing)
-            try:
-                os.rmdir(existing.root)
-            except OSError as err:
-                _log_warn(
-                    "Could not remove stale mount point '%s': %s", existing.root, err
-                )
-            # The discarded entry may have been the one reported for the set.
-            self._update_mount_root(snapset)
+        # the set is acceptable.
+        existing = self._find_mount(
+            snapset, mount_path if mount_base is not None else None
+        )
+        if existing is not None:
+            _log_info(
+                "Snapshot set %s already mounted at %s", snapset.name, existing.root
+            )
+            return existing
 
         # Ensure the snapshot set's volumes are active
         snapset.activate()
@@ -1102,6 +1117,10 @@ class Mounts:
                                     path and ``mount_base`` does not select
                                     exactly one of them.
         """
+        # Only the paths the set is still mounted at are candidates, and only
+        # they make the request ambiguous.
+        self._prune_stale_mounts(snapset)
+
         candidates = self._snapset_mounts(snapset)
         if mount_base is not None:
             wanted = os.path.join(os.path.abspath(mount_base), snapset.name)
@@ -1131,7 +1150,11 @@ class Mounts:
         """
         Return a list of `Mount` objects describing the currently mounted
         snapshot sets managed by this `Mounts` instance.
+
+        Snapshot sets unmounted outside snapm are dropped before matching, so
+        that every mount returned is one that is still mounted.
         """
+        self._prune_stale_mounts()
         selection = selection or Selection()
         selection.check_valid_selection(snapshot_set=True)
         return [m for m in self._mounts if select_snapshot_set(selection, m.snapset)]

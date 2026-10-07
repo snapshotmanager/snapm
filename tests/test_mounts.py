@@ -1645,8 +1645,8 @@ class MountsUmountSelectionTests(unittest.TestCase):
         self.assertIsNone(self.mounts._find_mount(self.snapset))
         self.assertEqual(self.snapset.mount_root, "")
 
-    def test_umount_does_not_report_a_stale_mount(self):
-        """Test that a stale mount is not reported after unmounting."""
+    def test_umount_prunes_a_stale_mount(self):
+        """Test that a stale mount is discarded when unmounting."""
         first = self._add_mount("one")
         second = self._add_mount("two")
 
@@ -1656,8 +1656,38 @@ class MountsUmountSelectionTests(unittest.TestCase):
 
         self.mounts.umount(self.snapset, mount_base=os.path.dirname(second.root))
 
-        # The stale entry survives until the next discovery, but nothing is
-        # mounted at it, so it is not what the set reports.
-        self.assertEqual(self.mounts._mounts, [first])
+        # The stale entry and its mount point go with the unmount.
+        self.assertEqual(self.mounts._mounts, [])
+        self.assertFalse(os.path.exists(first.root))
         self.assertIsNone(self.mounts._find_mount(self.snapset))
         self.assertEqual(self.snapset.mount_root, "")
+
+    def test_umount_stale_mount_is_not_ambiguous(self):
+        """Test that a stale mount does not make an unmount ambiguous."""
+        first = self._add_mount("one")
+        second = self._add_mount("two")
+
+        # The first mount goes away behind snapm's back, leaving one path
+        # the set is still mounted at: no mount base should be needed.
+        first.mounted = False
+
+        self.mounts.umount(self.snapset)
+
+        self.assertEqual(self.mounts._mounts, [])
+        self.assertFalse(os.path.exists(first.root))
+        self.assertFalse(os.path.exists(second.root))
+        self.assertEqual(self.snapset.mount_root, "")
+
+    def test_find_mounts_prunes_a_stale_mount(self):
+        """Test that a stale mount is discarded when listing mounts."""
+        first = self._add_mount("one")
+        second = self._add_mount("two")
+
+        first.mounted = False
+
+        found = self.mounts.find_mounts(snapm.Selection(name=self.snapset.name))
+
+        self.assertEqual(found, [second])
+        self.assertEqual(self.mounts._mounts, [second])
+        self.assertFalse(os.path.exists(first.root))
+        self.assertEqual(self.snapset.mount_root, second.root)
