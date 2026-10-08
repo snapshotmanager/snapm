@@ -42,7 +42,12 @@ class LoaderTestsSimple(unittest.TestCase):
 
     def test_load_plugins(self):
         plugin_classes = load_plugins()
-        self.assertEqual(len(plugin_classes), 3)
+        # Btrfs, Lvm2Cow, Lvm2Thin, Stratis
+        self.assertEqual(len(plugin_classes), 4)
+        self.assertEqual(
+            sorted(c.name for c in plugin_classes),
+            ["btrfs", "lvm2-cow", "lvm2-thin", "stratis"],
+        )
 
     def test_load_plugins_returns_plugins(self):
         plugin_classes = load_plugins()

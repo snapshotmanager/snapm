@@ -73,6 +73,17 @@ _POOL_NAME = generate_test_name("st", "pool")
 
 _FS_SIZE = "1GiB"
 
+# Btrfs
+_MKFS_BTRFS_CMD = "mkfs.btrfs"
+_BTRFS_CMD = "btrfs"
+_SUBVOLUME_CMD = "subvolume"
+_SNAPSHOT_CMD = "snapshot"
+_DELETE_CMD = "delete"
+
+_BTRFS_LABEL = "snapm_test"
+
+_BTRFS_TOPLEVEL_SUBVOLID = 5
+
 # Path in which to create temporary files
 _VAR_TMP = "/var/tmp"
 
@@ -507,5 +518,197 @@ class StratisLoopBacked(object):
         self._destroy_all_filesystems()
 
         _run([_STRATIS_CMD, _POOL_CMD, _DESTROY_CMD, _POOL_NAME])
+
+        self._lb.destroy_all()
+
+
+class BtrfsLoopBacked(object):
+    """
+    Class to create Btrfs file systems using loop devices.
+
+    The file system is laid out following Fedora conventions: a single
+    file system containing flat, top level subvolumes that are mounted
+    using ``subvol=`` mount options. The top level of the file system is
+    not mounted unless a test explicitly calls ``mount_top()``.
+    """
+
+    def __init__(self, volumes):
+        """
+        Initialize a new test Btrfs file system labeled ``_BTRFS_LABEL``.
+
+        :param volumes: A list of top level subvolumes to create and mount.
+        """
+        self.mount_root = tempfile.mkdtemp("_snapm_mounts", dir=_VAR_TMP)
+        log.debug("Created Btrfs mount_root at %s", self.mount_root)
+
+        self.top_root = tempfile.mkdtemp("_snapm_top", dir=_VAR_TMP)
+        log.debug("Created Btrfs top_root at %s", self.top_root)
+
+        # Create loopback device to back the file system
+        self._lb = LoopBackDevices()
+        self._lb.create_devices(1)
+        self.device = self._lb.device_nodes()[0]
+
+        self._mkfs()
+
+        self._create_and_mount_volumes(volumes)
+        self.volumes = volumes
+
+    def _mkfs(self):
+        _run([_MKFS_BTRFS_CMD, "--quiet", "--label", _BTRFS_LABEL, self.device])
+
+    def _create_and_mount_volumes(self, volumes):
+        self.mount_top()
+        for subvol in volumes:
+            self._subvolume_create(subvol)
+        self.umount_top()
+        for subvol in volumes:
+            os.makedirs(os.path.join(self.mount_root, subvol))
+            self.mount(subvol)
+
+    def _subvolume_create(self, name):
+        _run([_BTRFS_CMD, _SUBVOLUME_CMD, _CREATE_CMD, self.top_path(name)])
+
+    def mount_top(self):
+        """
+        Mount the top level of the test file system at ``self.top_root``.
+        """
+        _run(
+            [
+                _MOUNT_CMD,
+                "-o",
+                f"subvolid={_BTRFS_TOPLEVEL_SUBVOLID}",
+                self.device,
+                self.top_root,
+            ]
+        )
+
+    def umount_top(self):
+        """
+        Unmount the top level of the test file system.
+        """
+        _run([_UMOUNT_CMD, self.top_root])
+
+    def top_path(self, name):
+        """
+        Return the path to the subvolume ``name`` relative to the top level
+        mount point of the test file system.
+        """
+        return os.path.join(self.top_root, name)
+
+    def create_subvolume(self, name):
+        """
+        Create a new top level subvolume named ``name``.
+        """
+        self.mount_top()
+        try:
+            self._subvolume_create(name)
+        finally:
+            self.umount_top()
+
+    def create_snapshot(self, origin, name):
+        """
+        Create a snapshot of subvolume ``origin`` named ``name`` in the test
+        file system.
+        """
+        if origin not in self.list_subvolumes():
+            raise ValueError(f"Unknown origin: {origin}")
+        self.mount_top()
+        try:
+            _run(
+                [
+                    _BTRFS_CMD,
+                    _SUBVOLUME_CMD,
+                    _SNAPSHOT_CMD,
+                    self.top_path(origin),
+                    self.top_path(name),
+                ]
+            )
+        finally:
+            self.umount_top()
+
+    def delete_subvolume(self, name):
+        """
+        Delete the top level subvolume named ``name``.
+        """
+        self.mount_top()
+        try:
+            _run([_BTRFS_CMD, _SUBVOLUME_CMD, _DELETE_CMD, self.top_path(name)])
+        finally:
+            self.umount_top()
+
+    def list_subvolumes(self):
+        """
+        Return a list of the subvolume paths present in the test file system.
+        """
+        self.mount_top()
+        try:
+            out = _run([_BTRFS_CMD, _SUBVOLUME_CMD, _LIST_CMD, self.top_root])
+        finally:
+            self.umount_top()
+        return [line.split(" path ", maxsplit=1)[1] for line in out.splitlines()]
+
+    def all_volumes(self):
+        return self.volumes
+
+    def mount(self, name, subvol=None):
+        """
+        Mount the subvolume ``subvol`` (defaulting to ``name``) at the mount
+        point for ``name``.
+        """
+        _run(
+            [
+                _MOUNT_CMD,
+                "-o",
+                f"subvol=/{subvol if subvol else name}",
+                self.device,
+                f"{self.mount_root}/{name}",
+            ]
+        )
+
+    def mount_all(self):
+        for subvol in self.all_volumes():
+            self.mount(subvol)
+
+    def umount(self, name):
+        _run([_UMOUNT_CMD, f"{self.mount_root}/{name}"])
+
+    def umount_all(self):
+        for subvol in self.all_volumes():
+            self.umount(subvol)
+
+    def mount_points(self):
+        return [f"{self.mount_root}/{name}" for name in self.all_volumes()]
+
+    def block_devs(self):
+        return [self.device]
+
+    def touch_path(self, relpath):
+        path = Path(f"{self.mount_root}/{relpath}")
+        path.touch()
+
+    def test_path(self, relpath):
+        path = Path(f"{self.mount_root}/{relpath}")
+        return path.exists()
+
+    def dump_subvolumes(self):
+        self.mount_top()
+        try:
+            subprocess.check_call([_BTRFS_CMD, _SUBVOLUME_CMD, _LIST_CMD, self.top_root])
+        finally:
+            self.umount_top()
+
+    def destroy(self):
+        self.umount_all()
+        for subvol in self.all_volumes():
+            os.rmdir(f"{self.mount_root}/{subvol}")
+        for subdir in os.listdir(self.mount_root):
+            os.rmdir(os.path.join(self.mount_root, subdir))
+        os.rmdir(self.mount_root)
+
+        # Delete nested subvolumes before their parents
+        for subvol in sorted(self.list_subvolumes(), key=len, reverse=True):
+            self.delete_subvolume(subvol)
+        os.rmdir(self.top_root)
 
         self._lb.destroy_all()
