@@ -996,7 +996,7 @@ def diff_snapsets(
             from_root = manager.mounts.get_sys_mount()
         else:
             mounts = manager.mounts.find_mounts(Selection(name=diff_from))
-            if not mounts or not mounts[0].mounted:
+            if not mounts:
                 snapsets = manager.find_snapshot_sets(Selection(name=diff_from))
                 if not snapsets:
                     raise SnapmNotFoundError(
@@ -1012,7 +1012,7 @@ def diff_snapsets(
             to_root = manager.mounts.get_sys_mount()
         else:
             mounts = manager.mounts.find_mounts(Selection(name=diff_to))
-            if not mounts or not mounts[0].mounted:
+            if not mounts:
                 snapsets = manager.find_snapshot_sets(Selection(name=diff_to))
                 if not snapsets:
                     raise SnapmNotFoundError(
@@ -1844,7 +1844,8 @@ def _mount_cmd(cmd_args):
         _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
         return 1
     snapset = matches[0]
-    manager.mounts.mount(snapset)
+
+    manager.mounts.mount(snapset, mount_base=cmd_args.mount_root)
     return 0
 
 
@@ -1852,8 +1853,9 @@ def _umount_cmd(cmd_args):
     """
     Unmount snapshot set command handler.
 
-    Unmount the specified snapshot set (by default from
-    /run/snapm/mounts/<name>).
+    Unmount the specified snapshot set. Snapshot sets mounted at a custom
+    location are discovered automatically; --mount-root is only needed to
+    select between them if the set is mounted at more than one path.
 
     :param cmd_args: Command line arguments for the command
     :returns: integer status code returned from ``main()``
@@ -1865,7 +1867,8 @@ def _umount_cmd(cmd_args):
         _log_error("Cannot find snapshot set matching name=%s", cmd_args.name)
         return 1
     snapset = matches[0]
-    manager.mounts.umount(snapset)
+
+    manager.mounts.umount(snapset, mount_base=cmd_args.mount_root)
     return 0
 
 
@@ -1895,7 +1898,7 @@ def _exec_cmd(cmd_args):
 
     pre_existing = manager.mounts.find_mounts(selection=select)
     mount = manager.mounts.mount(snapset)  # idempotent
-    did_mount = not any(m.mounted for m in pre_existing)
+    did_mount = not pre_existing
 
     try:
         ret = mount.exec(cmd_args.command)
@@ -1904,7 +1907,9 @@ def _exec_cmd(cmd_args):
         ret = 1
     finally:
         if did_mount:
-            manager.mounts.umount(snapset)
+            # Select the mount we made by path: a snapshot set may be
+            # mounted at more than one, and umount() refuses to guess.
+            manager.mounts.umount(snapset, mount_base=os.path.dirname(mount.root))
 
     if ret:
         _log_error(
@@ -3134,6 +3139,13 @@ def _add_snapset_subparser(type_subparser):
         action="store",
         help="The name of the snapshot set to be mounted",
     )
+    snapset_mount_parser.add_argument(
+        "--mount-root",
+        metavar="PATH",
+        type=str,
+        default=None,
+        help="Custom root directory for the snapshot set mount tree",
+    )
     snapset_mount_parser.set_defaults(func=_mount_cmd)
 
     # snapset umount subcommand
@@ -3146,6 +3158,16 @@ def _add_snapset_subparser(type_subparser):
         type=str,
         action="store",
         help="The name of the snapshot set to be unmounted",
+    )
+    snapset_umount_parser.add_argument(
+        "--mount-root",
+        metavar="PATH",
+        type=str,
+        default=None,
+        help=(
+            "Select the mount to unmount when the snapshot set is mounted "
+            "at more than one path"
+        ),
     )
     snapset_umount_parser.set_defaults(func=_umount_cmd)
 

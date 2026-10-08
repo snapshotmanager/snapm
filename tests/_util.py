@@ -2,10 +2,47 @@ import hashlib
 import tempfile
 import subprocess
 import logging
+import shutil
 from pathlib import Path
 import os
 
 log = logging.getLogger()
+
+
+def rmtree_one_file_system(path):
+    """
+    Remove ``path`` and its contents without crossing a mount point.
+
+    ``shutil.rmtree()`` descends into anything mounted beneath the tree it
+    is removing. A mount test that fails while a snapshot set is still
+    mounted would otherwise delete parts of the host file system through
+    the API bind mounts below the mount root, so refuse to remove a tree
+    that still has something mounted in it and leave it in place to be
+    cleaned up and examined by hand.
+
+    :param path: The directory to remove. Nothing is done if it does not
+                 exist.
+    :raises AssertionError: If anything is mounted beneath ``path``.
+    """
+    if not os.path.exists(path):
+        return
+
+    top_dev = os.lstat(path).st_dev
+    found = []
+    for dirpath, dirnames, _ in os.walk(path):
+        for name in list(dirnames):
+            child = os.path.join(dirpath, name)
+            if os.lstat(child).st_dev != top_dev or os.path.ismount(child):
+                # Do not descend into it, and do not remove anything.
+                dirnames.remove(name)
+                found.append(child)
+
+    if found:
+        raise AssertionError(
+            f"Refusing to remove {path}: still mounted: {', '.join(found)}"
+        )
+
+    shutil.rmtree(path)
 
 
 def generate_test_name(subsystem, context):
