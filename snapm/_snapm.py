@@ -441,9 +441,9 @@ class SnapmSnapsetExistsError(SnapmExistsError):
 
     _default_template = "Snapshot set named {name!r} already exists"
 
-    def __init__(self, name: str, msg: Optional[str] = None) -> None:
+    def __init__(self, name: str) -> None:
         self.snapset_name = name
-        super().__init__(name, msg)
+        super().__init__(name)
 
 
 class SnapmScheduleExistsError(SnapmExistsError):
@@ -454,9 +454,9 @@ class SnapmScheduleExistsError(SnapmExistsError):
 
     _default_template = "Schedule named {name!r} already exists"
 
-    def __init__(self, name: str, msg: Optional[str] = None) -> None:
+    def __init__(self, name: str) -> None:
         self.schedule_name = name
-        super().__init__(name, msg)
+        super().__init__(name)
 
 
 class SnapmBootEntryExistsError(SnapmExistsError):
@@ -467,9 +467,9 @@ class SnapmBootEntryExistsError(SnapmExistsError):
 
     _default_template = "Boot entry already associated with snapshot set {name!r}"
 
-    def __init__(self, name: str, msg: Optional[str] = None) -> None:
+    def __init__(self, name: str) -> None:
         self.snapset_name = name
-        super().__init__(name, msg)
+        super().__init__(name)
 
 
 class SnapmRevertEntryExistsError(SnapmExistsError):
@@ -480,9 +480,9 @@ class SnapmRevertEntryExistsError(SnapmExistsError):
 
     _default_template = "Revert entry already associated with snapshot set {name!r}"
 
-    def __init__(self, name: str, msg: Optional[str] = None) -> None:
+    def __init__(self, name: str) -> None:
         self.snapset_name = name
-        super().__init__(name, msg)
+        super().__init__(name)
 
 
 class SnapmBusyError(SnapmError):
