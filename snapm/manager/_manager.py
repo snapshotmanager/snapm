@@ -1307,16 +1307,18 @@ class Manager:
         :raises: ``SnapmExistsError`` if the name is already in use, or
                  ``SnapmInvalidIdentifierError`` if the name fails validation.
         """
-        if name in self.by_name:
-            raise SnapmExistsError(f"Snapshot set named '{name}' already exists")
+        if not name:
+            raise SnapmInvalidIdentifierError("Snapshot set name cannot be empty")
+        if name in (".", ".."):
+            raise SnapmInvalidIdentifierError("Snapshot set name cannot be '.' or '..'")
         for char in name:
             # Underscore is specifically disallowed in snapset names.
             if char == "_" or char not in SNAPM_VALID_NAME_CHARS:
                 raise SnapmInvalidIdentifierError(
                     f"Snapshot set name cannot include '{char}'"
                 )
-        if name == ".":
-            raise SnapmInvalidIdentifierError("Snapshot set name cannot be '.'")
+        if name in self.by_name:
+            raise SnapmExistsError(f"Snapshot set named '{name}' already exists")
 
     # pylint: disable=too-many-branches,too-many-locals,too-many-statements
     @suspend_signals

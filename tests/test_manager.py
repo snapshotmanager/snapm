@@ -192,6 +192,35 @@ class ManagerTestsSimple(unittest.TestCase):
         with self.assertRaises(snapm.SnapmSystemError):
             _manager._check_snapm_runtime_dir()
 
+
+    def test__validate_snapset_name_empty_raises(self):
+        """Ensure Manager._validate_snapset_name() rejects an empty name"""
+        m = manager.Manager()
+        with self.assertRaises(snapm.SnapmInvalidIdentifierError):
+            m._validate_snapset_name("")
+
+    def test__validate_snapset_name_pathlike_raises(self):
+        """Ensure Manager._validate_snapset_name() rejects path-like names"""
+        m = manager.Manager()
+        with self.assertRaises(snapm.SnapmInvalidIdentifierError):
+            m._validate_snapset_name(".")
+        with self.assertRaises(snapm.SnapmInvalidIdentifierError):
+            m._validate_snapset_name("..")
+
+    def test__validate_snapset_name_bad_char_raises(self):
+        """Ensure Manager._validate_snapset_name() rejects invalid chars"""
+        m = manager.Manager()
+        for bad_char in ["_", "/", "?", "\t", "\n", " ", "#", "🙃"]:
+            with self.assertRaises(snapm.SnapmInvalidIdentifierError):
+                m._validate_snapset_name(f"bad{bad_char}char")
+
+    def test__validate_snapset_name_exists_raises(self):
+        """Ensure Manager._validate_snapset_name() rejects an empty name"""
+        m = manager.Manager()
+        with self.assertRaises(snapm.SnapmExistsError):
+            m._validate_snapset_name("backup")
+
+
 @unittest.skipIf(not have_root(), "requires root privileges")
 class ManagerTests(unittest.TestCase):
     """
