@@ -580,6 +580,10 @@ Rename an existing snapset.
 
    snapm snapset rename <old_name> <new_name>
 
+A mounted snapshot set cannot be renamed: the mount point paths include
+the snapshot set name. Unmount the set with ``snapm snapset umount``
+before renaming it.
+
 snapset revert
 --------------
 
@@ -634,6 +638,9 @@ Split the snapshot set named 'name' into a new snapshot set named
 snapshot set. Sources that are not listed on the command line remain
 part of the original snapshot set. It is an error to split all sources
 from a snapshot set: in this case use 'snapm snapset rename' instead.
+
+A mounted snapshot set cannot be split or pruned: unmount it with
+``snapm snapset umount`` first.
 
 To split the source "/home" from the existing snapshot set "upgrade"
 into a new snapshot set named "noupgrade":

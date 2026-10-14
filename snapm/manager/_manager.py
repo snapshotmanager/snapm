@@ -315,6 +315,33 @@ def _check_snapset_status(snapset, operation):
         )
 
 
+def _check_snapset_mounted(snapset, operation):
+    """
+    Check that no member of ``snapset`` is mounted before carrying out
+    ``operation``.
+
+    Operations that change the name or membership of a snapshot set cannot
+    be carried out while the set is mounted: mount point paths embed the
+    snapshot set name and ``/proc/mounts`` records the device names that
+    were in use at mount time. ``SnapshotSet.rename()`` and
+    ``SnapshotSet.delete()`` enforce this too: checking here as well avoids
+    tearing down manager state and boot entries for an operation that is
+    going to be refused.
+
+    :param snapset: The snapshot set to test.
+    :type snapset: ``SnapshotSet``
+    :param operation: A human readable name for the operation.
+    :type operation: ``str``
+    :raises: ``SnapmBusyError`` if any member of ``snapset`` is mounted.
+    """
+    if snapset.snapshot_mounted:
+        _log_error("Cannot %s mounted snapshot set '%s'", operation, snapset.name)
+        raise SnapmBusyError(
+            f"Snapshots from snapshot set {snapset.name} are mounted: "
+            f"cannot {operation}"
+        )
+
+
 def _find_mount_point_for_devpath(devpath):
     """
     Return the first mount point found in /proc/mounts that corresponds to
@@ -1485,8 +1512,9 @@ class Manager:
 
         :param old_name: The name of the snapshot set to be renamed.
         :param new_name: The new name of the snapshot set.
-        :raises: ``SnapmExistsError`` if the name is already in use, or
-                 ``SnapmInvalidIdentifierError`` if the name fails validation.
+        :raises: ``SnapmExistsError`` if the name is already in use,
+                 ``SnapmInvalidIdentifierError`` if the name fails validation,
+                 or ``SnapmBusyError`` if the snapshot set is mounted.
         """
         if old_name not in self.by_name:
             raise SnapmNotFoundError(f"Cannot find snapshot set named {old_name}")
@@ -1495,6 +1523,7 @@ class Manager:
 
         snapset = self.by_name[old_name]
         _check_snapset_status(snapset, "rename")
+        _check_snapset_mounted(snapset, "rename")
 
         # Remove references to old set
         self.by_name.pop(snapset.name)
@@ -1784,6 +1813,7 @@ class Manager:
         :param name: The name of the snapshot set to split
         :param new_name: The name of the newly split off snapshot set
         :param sources: The list of sources to include in the new snapshot set
+        :raises: ``SnapmBusyError`` if the snapshot set is mounted.
         """
         if name not in self.by_name:
             raise SnapmNotFoundError(f"Cannot find snapshot set named {name}")
@@ -1797,6 +1827,12 @@ class Manager:
 
         snapset = self.by_name[name]
         _check_snapset_status(snapset, op)
+
+        # The SnapshotSet.rename() and SnapshotSet.delete() guards only fire
+        # once the set has been dismantled into its split and keep halves:
+        # refuse a mounted set up front so that the lookup tables are left
+        # untouched.
+        _check_snapset_mounted(snapset, op)
 
         if not source_specs:
             raise SnapmArgumentError(

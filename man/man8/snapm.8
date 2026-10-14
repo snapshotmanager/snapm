@@ -1177,6 +1177,10 @@ This command supports standard reporting arguments including \fB--options\fP,
 .br
 Rename an existing snapshot set. The snapshot set to be renamed is specified as
 \fBold_name\fP and the new name is given as \fBnew_name\fP.
+.IP
+A mounted snapshot set cannot be renamed: the mount point paths include the
+snapshot set name. Unmount the snapshot set with '\fBsnapm snapset umount\fP'
+before renaming it.
 .
 .TP
 .B snapm
@@ -1225,6 +1229,9 @@ Split the snapshot set named \fBname\fP into a new snapshot set named
 snapshot set. Sources that are not listed on the command line remain part of
 the original snapshot set. It is an error to split \fIall\fP sources from a
 snapshot set: in this case use '\fBsnapm snapset rename\fP' instead.
+.IP
+A mounted snapshot set cannot be split: unmount it with
+'\fBsnapm snapset umount\fP' first.
 .
 .TP
 .B snapm
@@ -1238,6 +1245,9 @@ This operation is irreversible.
 .IP
 It is an error to prune \fIall\fP sources from a snapshot set: in this case use
 \&'\fBsnapm snapset delete\fP' instead.
+.IP
+A mounted snapshot set cannot be pruned: unmount it with
+'\fBsnapm snapset umount\fP' first.
 .
 .TP
 .B snapm

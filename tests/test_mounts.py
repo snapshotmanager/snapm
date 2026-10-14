@@ -518,6 +518,115 @@ class MountsTests(MountsTestsBase):
         found = self.mounts.find_mounts(selection=snapm.Selection(name="no-such-snapset"))
         self.assertEqual(found, [])
 
+    def _sets_named(self, name):
+        """
+        Return the list of snapshot sets known to the manager with the name
+        ``name``. A refused split must not leave a second set behind in the
+        manager's snapshot set list.
+        """
+        return [s for s in self.manager.snapshot_sets if s.name == name]
+
+    def test_rename_mounted_snapset_raises(self):
+        """
+        Tests that Manager.rename_snapshot_set() refuses a mounted snapshot
+        set and leaves the manager's lookup tables and the mount tree alone.
+        """
+        mount_obj = self.mounts.mount(self.snapset)
+        snapset_uuid = self.snapset.uuid
+
+        # The rename is refused by the manager, before any boot entry or
+        # lookup table teardown takes place.
+        with self.assertLogs("snapm.manager._manager", level="ERROR") as cm:
+            with self.assertRaises(snapm.SnapmBusyError):
+                self.manager.rename_snapshot_set(self.snapset_name, "mntset1")
+
+        self.assertIn("Cannot rename mounted snapshot set", "\n".join(cm.output))
+        self.assertNotIn("Failed to rename snapshot set", "\n".join(cm.output))
+
+        # The snapshot set is still known by its original name and UUID
+        self.assertEqual(self.snapset.name, self.snapset_name)
+        self.assertIs(self.manager.by_name[self.snapset_name], self.snapset)
+        self.assertIs(self.manager.by_uuid[snapset_uuid], self.snapset)
+        self.assertNotIn("mntset1", self.manager.by_name)
+        self.assertEqual(self.manager.snapshot_sets.count(self.snapset), 1)
+
+        # The mount tree is untouched
+        self.assertTrue(mount_obj.mounted)
+        self.assertTrue(os.path.ismount(mount_obj.root))
+        self.assertEqual(self.snapset.mount_root, mount_obj.root)
+
+        self.mounts.umount(self.snapset)
+
+    def test_snapset_rename_mounted_raises(self):
+        """
+        Tests that the SnapshotSet.rename() guard refuses a mounted snapshot
+        set independently of the Manager level check.
+        """
+        self.mounts.mount(self.snapset)
+
+        with self.assertRaises(snapm.SnapmBusyError):
+            self.snapset.rename("mntset1")
+
+        # No member was renamed
+        self.assertEqual(self.snapset.name, self.snapset_name)
+        for snapshot in self.snapset.snapshots:
+            self.assertIn(self.snapset_name, snapshot.name)
+
+        self.mounts.umount(self.snapset)
+
+    def test_split_mounted_snapset_raises(self):
+        """
+        Tests that Manager.split_snapshot_set() refuses a mounted snapshot
+        set without disturbing the set's membership.
+        """
+        mount_obj = self.mounts.mount(self.snapset)
+        sources = self.snapset.sources
+
+        # Splitting "/opt" leaves "/" in the original set, so the split is
+        # otherwise legal: assert on the refusal logged by the mount check
+        # rather than on the exception type alone, which the empty set rule
+        # would raise too if the set were ever reduced to a single source.
+        self.assertGreater(len(sources), 1)
+
+        with self.assertLogs("snapm.manager._manager", level="ERROR") as cm:
+            with self.assertRaises(snapm.SnapmBusyError):
+                self.manager.split_snapshot_set(self.snapset_name, "mntset1", ["/opt"])
+
+        self.assertIn("Cannot split mounted snapshot set", "\n".join(cm.output))
+
+        self.assertIs(self.manager.by_name[self.snapset_name], self.snapset)
+        self.assertNotIn("mntset1", self.manager.by_name)
+        self.assertEqual(self._sets_named(self.snapset_name), [self.snapset])
+        self.assertEqual(self.snapset.sources, sources)
+        self.assertTrue(mount_obj.mounted)
+
+        self.mounts.umount(self.snapset)
+
+    def test_prune_mounted_snapset_raises(self):
+        """
+        Tests that pruning a mounted snapshot set is refused: the pruned
+        members must not be deleted out from under the mount tree.
+        """
+        mount_obj = self.mounts.mount(self.snapset)
+        sources = self.snapset.sources
+
+        # As for the split above: pruning "/opt" leaves "/" behind, so the
+        # prune is refused for being mounted and nothing else.
+        self.assertGreater(len(sources), 1)
+
+        with self.assertLogs("snapm.manager._manager", level="ERROR") as cm:
+            with self.assertRaises(snapm.SnapmBusyError):
+                self.manager.split_snapshot_set(self.snapset_name, None, ["/opt"])
+
+        self.assertIn("Cannot prune mounted snapshot set", "\n".join(cm.output))
+
+        self.assertIs(self.manager.by_name[self.snapset_name], self.snapset)
+        self.assertEqual(self._sets_named(self.snapset_name), [self.snapset])
+        self.assertEqual(self.snapset.sources, sources)
+        self.assertTrue(mount_obj.mounted)
+
+        self.mounts.umount(self.snapset)
+
     def test_exec_on_unmounted(self):
         """
         Tests that exec fails on an unmounted snapset.

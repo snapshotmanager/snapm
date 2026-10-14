@@ -1392,12 +1392,21 @@ class SnapshotSet:
         """
         Rename this ``SnapshotSet`` to ``new_name``.
 
-        :raises: ``SnapmError`` if a call to rename any member of the snapshot
+        :raises: ``SnapmBusyError`` if the snapshot set is mounted, or
+                 ``SnapmError`` if a call to rename any member of the snapshot
                  set fails.
         """
         _log_info(
             "Attempting rename for snapshot set '%s' to '%s'", self.name, new_name
         )
+        # Mount point paths embed the snapshot set name and /proc/mounts
+        # records the device names in use at mount time: renaming the set
+        # members out from under a live mount tree orphans it.
+        if self.snapshot_mounted:
+            raise SnapmBusyError(
+                f"Snapshots from snapshot set {self.name} are mounted: cannot rename"
+            )
+
         old_name = self.name
         snapshots = self.snapshots
         new_snapshots = []
