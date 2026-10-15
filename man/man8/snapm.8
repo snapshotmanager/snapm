@@ -1372,6 +1372,18 @@ omit \fB--mount-root\fP to mount beneath it. \fBsnapm\fP does not create the
 directory, and does not remove it when the snapshot set is unmounted.
 Its permissions are the administrator's to set, and any contents it has are
 shadowed while the snapshot set is mounted.
+.sp
+Every mount in the tree carries the \fBx-snapm.managed=\fP\fIuuid\fP mount
+option, naming the snapshot set that is mounted, so that the mounts
+\fBsnapm\fP made can be listed wherever they are:
+.sp
+.EX
+# findmnt -m -o TARGET,OPTIONS -O x-snapm.managed
+.EE
+.sp
+The option is in the "x-" namespace, so it is kept in
+\fI/run/mount/utab\fP by \fBmount\fP(8) rather than by the kernel, and
+\fBfindmnt\fP(8) only reports it in \fB--mtab\fP mode.
 .
 .TP
 .B snapm

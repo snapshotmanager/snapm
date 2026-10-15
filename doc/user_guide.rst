@@ -277,6 +277,34 @@ was already mounted when ``snapm`` was upgraded to a version that
 writes these records has no record either, and has to be unmounted with
 ``umount -R`` by hand.
 
+Finding snapm mounts
+--------------------
+
+Every mount ``snapm`` makes carries the mount option
+``x-snapm.managed=<uuid>``, naming the snapshot set that is mounted.
+The option is in the ``x-`` namespace, so the kernel never sees it:
+``mount`` keeps it in ``/run/mount/utab``, and ``findmnt`` reports it
+alongside the kernel's own options in ``--mtab`` mode. This lists every
+mount ``snapm`` made, wherever in the file system it appears:
+
+.. code-block:: bash
+
+   # findmnt -m -o TARGET,OPTIONS -O x-snapm.managed
+   TARGET      OPTIONS
+   /mnt        rw,relatime,seclabel,nouuid,x-snapm.managed=f48e...
+   /mnt/opt    rw,relatime,seclabel,x-snapm.managed=f48e...
+   /mnt/proc   rw,nosuid,nodev,noexec,relatime,x-snapm.managed=f48e...
+
+Add the snapshot set UUID to the filter to list the mounts of one set:
+
+.. code-block:: bash
+
+   sudo findmnt -m -o TARGET -O x-snapm.managed=$(
+       sudo snapm snapset show --json backup | jq -r '.[0].UUID')
+
+The option is a label for the administrator's benefit. ``snapm`` itself
+decides what it owns from the records in ``/run/snapm/mount-state``.
+
 Keep the mount point and the directory containing it owned by root and
 inaccessible to other users while the snapshot set is mounted, and open
 up access as the final step. A directory another user can write to lets
