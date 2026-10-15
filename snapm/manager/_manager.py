@@ -401,8 +401,9 @@ def _check_snapset_mounted(snapset, operation):
 
     Operations that change the name or membership of a snapshot set cannot
     be carried out while the set is mounted: mount point paths embed the
-    snapshot set name and ``/proc/mounts`` records the device names that
-    were in use at mount time. ``SnapshotSet.rename()`` and
+    snapshot set name, and renaming a set changes the UUID that its mount
+    provenance record is keyed on, so a live mount tree is left behind
+    belonging to nothing. ``SnapshotSet.rename()`` and
     ``SnapshotSet.delete()`` enforce this too: checking here as well avoids
     tearing down manager state and boot entries for an operation that is
     going to be refused.
