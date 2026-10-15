@@ -65,6 +65,13 @@ _SYSTEMD_VALID_CHARS = string.ascii_letters + string.digits + ":_."
 #: The longest file name permitted in a record directory.
 _NAME_MAX = 255
 
+#: Suffix for a record that is still being written.
+_TEMP_SUFFIX = ".tmp"
+
+#: The longest record name that still leaves room for the suffix a record
+#: wears while it is being written.
+_RECORD_NAME_MAX = _NAME_MAX - len(_TEMP_SUFFIX)
+
 #: The number of hexadecimal digits of path digest appended to a record name
 #: that has to be truncated to fit.
 _DIGEST_CHARS = 16
@@ -108,9 +115,9 @@ def systemd_escape_path(path: str) -> str:
             escaped.extend(f"\\x{byte:02x}" for byte in char.encode("utf8"))
     name = "".join(escaped)
 
-    if len(name.encode("utf8")) > _NAME_MAX:
+    if len(name.encode("utf8")) > _RECORD_NAME_MAX:
         digest = sha256(path.encode("utf8")).hexdigest()[:_DIGEST_CHARS]
-        keep = _NAME_MAX - len(digest) - 1
+        keep = _RECORD_NAME_MAX - len(digest) - 1
         # Truncate on a byte boundary that is still valid UTF-8.
         name = name.encode("utf8")[:keep].decode("utf8", "ignore")
         name = f"{name}-{digest}"
@@ -236,6 +243,16 @@ class MountStateDir:
 
         for name in names:
             path = os.path.join(self.path, name)
+            if name.endswith(_TEMP_SUFFIX):
+                # A record a previous command was interrupted partway
+                # through writing. It describes nothing: the rename that
+                # would have made it a record never happened.
+                _log_debug_mounts("Removing partial mount state record '%s'", path)
+                try:
+                    os.unlink(path)
+                except OSError as err:  # pragma: no cover
+                    _log_warn("Could not remove '%s': %s", path, err)
+                continue
             try:
                 with open(path, "r", encoding="utf8") as record_file:
                     record = MountStateRecord.from_dict(json.load(record_file))
@@ -285,7 +302,7 @@ class MountStateDir:
         :raises SnapmPathError: If the record cannot be written.
         """
         path = self._record_path(record.mount_path)
-        temp_path = f"{path}.tmp"
+        temp_path = f"{path}{_TEMP_SUFFIX}"
         try:
             with open(temp_path, "w", encoding="utf8") as record_file:
                 json.dump(asdict(record), record_file, indent=4, sort_keys=True)

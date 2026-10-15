@@ -74,11 +74,33 @@ class SystemdEscapePathTests(unittest.TestCase):
             mountstate.systemd_escape_path(base + suffix) for suffix in ("/one", "/two")
         }
 
-        # Both names fit in a file name, and the shared prefix does not make
-        # the two paths collide.
+        # Both names fit in a file name with room left for the suffix a
+        # record wears while it is being written, and the shared prefix
+        # does not make the two paths collide.
         self.assertEqual(len(names), 2)
         for name in names:
-            self.assertLessEqual(len(name.encode("utf8")), 255)
+            self.assertLessEqual(len(f"{name}.tmp".encode("utf8")), 255)
+
+    def test_records_an_over_long_path(self):
+        """Test that a path too long to name a file is still recordable."""
+        mount_path = "/mnt/" + "a" * 300
+        state = mountstate.MountStateDir(tempfile.mkdtemp(dir="/var/tmp"))
+        self.addCleanup(shutil.rmtree, state.path)
+        state.add(
+            mountstate.MountStateRecord(
+                mount_path=mount_path,
+                snapset_name="set0",
+                snapset_uuid="00000000-0000-5000-a000-000000000000",
+                root_device="/dev/testvg/set0-root",
+                root_devno=64513,
+                created_mount_point=True,
+            )
+        )
+
+        reread = mountstate.MountStateDir(state.path)
+        self.assertEqual(
+            [record.mount_path for record in reread.records], [mount_path]
+        )
 
 
 class MountStateRecordTests(unittest.TestCase):
@@ -203,6 +225,20 @@ class MountStateDirTests(unittest.TestCase):
         self.state.discard("/no/such/path")
 
         self.assertEqual(len(self.state.records), 1)
+
+    def test_load_removes_a_partial_record(self):
+        """Test that a record left half-written is cleaned up, not read."""
+        self.state.add(self._record("/srv/rescue"))
+        partial = os.path.join(self.path, "mnt-interrupted.tmp")
+        with open(partial, "w", encoding="utf8") as record_file:
+            record_file.write("{\"mount_path\": \"/mnt/inte")
+
+        reread = mountstate.MountStateDir(self.path)
+
+        self.assertEqual(
+            [record.mount_path for record in reread.records], ["/srv/rescue"]
+        )
+        self.assertFalse(os.path.exists(partial))
 
     def test_load_skips_an_unreadable_record(self):
         """Test that a malformed record is skipped, not fatal."""
