@@ -442,6 +442,10 @@ Delete an existing snapset by name or uuid.
 
    snapm snapset delete <name|uuid>
 
+A mounted snapshot set cannot be deleted since the underlying devices
+are busy. Unmount the set with ``snapm snapset umount`` before deleting
+it.
+
 snapset diff
 ------------
 

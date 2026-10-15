@@ -1070,6 +1070,9 @@ sets not specified by the schedule parameters.
 .br
 Delete the specified snapshot set. The snapshot set to delete may be specified
 either by its \fBname\fP or \fBUUID\fP.
+.IP
+A mounted snapshot set cannot be deleted since the underlying devices are
+busy. Unmount the set with \fBsnapm snapset umount\fP before deleting it.
 .
 .TP
 .B snapm
