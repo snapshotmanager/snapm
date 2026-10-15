@@ -37,6 +37,7 @@ jobs:
           flake8
           pylint
           lvm2
+          btrfs-progs
       - name: Install pip dependencies
         run: >
           sudo pip install dbus-client-gen dbus-python-client-gen justbytes
