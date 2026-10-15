@@ -5,10 +5,13 @@
 # This file is part of the snapm project.
 #
 # SPDX-License-Identifier: Apache-2.0
+from contextlib import contextmanager
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import MagicMock, mock_open, patch
 import logging
+import stat
 from uuid import UUID
 import os
 
@@ -408,6 +411,187 @@ class SnapmTestsSimple(unittest.TestCase):
             # Test case: Mount point has origin mounted (implies snapshot is NOT mounted there)
             # This happens if we haven't mounted the snapshot yet or reverted.
             self.assertTrue(s.origin_mounted)
+
+
+def _block_device_aliases(count):
+    """Return up to ``count`` (canonical path, alias path) block device pairs.
+
+    The ``/dev/block/MAJ:MIN`` links give every block device a second name
+    that differs textually from its canonical path: the same situation as an
+    LVM volume appearing as ``/dev/VG/LV`` in one place and
+    ``/dev/mapper/VG-LV`` in another. Each pair names a distinct device.
+    """
+    try:
+        aliases = sorted(os.listdir("/dev/block"))
+    except OSError:
+        return []
+    devices = []
+    for alias in aliases:
+        alias_path = os.path.join("/dev/block", alias)
+        canonical = os.path.realpath(alias_path)
+        if canonical == alias_path:
+            continue
+        try:
+            if not stat.S_ISBLK(os.stat(canonical).st_mode):
+                continue
+        except OSError:
+            continue
+        devices.append((canonical, alias_path))
+        if len(devices) == count:
+            break
+    return devices
+
+
+class MountInfoReaderTests(unittest.TestCase):
+    """Test the MountInfoReader class."""
+
+    @staticmethod
+    @contextmanager
+    def _mountinfo(lines):
+        """Yield a MountInfoReader over a synthetic mountinfo file."""
+        with tempfile.NamedTemporaryFile(
+            mode="w", delete=False, suffix=".mountinfo"
+        ) as f:
+            for line in lines:
+                f.write(line + "\n")
+            path = f.name
+        try:
+            yield snapm.MountInfoReader(path=path)
+        finally:
+            os.unlink(path)
+
+    def test_parses_a_mountinfo_line(self):
+        """Test that each mountinfo field is parsed into the entry."""
+        with self._mountinfo(
+            ["36 35 98:0 /sub /mnt rw,noatime - ext3 /dev/root rw,errors=continue"]
+        ) as mountinfo:
+            (entry,) = mountinfo.entries
+
+        self.assertEqual(entry.mount_id, 36)
+        self.assertEqual(entry.parent_id, 35)
+        self.assertEqual(entry.devno, os.makedev(98, 0))
+        self.assertEqual(entry.root, "/sub")
+        self.assertEqual(entry.where, "/mnt")
+        self.assertEqual(entry.options, "rw,noatime")
+        self.assertEqual(entry.fstype, "ext3")
+        self.assertEqual(entry.what, "/dev/root")
+        self.assertEqual(entry.super_options, "rw,errors=continue")
+
+    def test_parses_optional_fields(self):
+        """Test that the variable optional fields are stepped over.
+
+        The fields following the '-' separator are located relative to it,
+        since any number of optional fields may precede it.
+        """
+        with self._mountinfo(
+            [
+                "36 35 98:0 / /one rw shared:1 - ext4 /dev/one rw",
+                "37 35 98:1 / /two rw shared:2 master:1 propagate_from:1 - ext4 /dev/two rw",
+                "38 35 98:2 / /three rw - ext4 /dev/three rw",
+            ]
+        ) as mountinfo:
+            self.assertEqual(
+                [entry.where for entry in mountinfo],
+                ["/one", "/two", "/three"],
+            )
+            self.assertEqual(
+                [entry.what for entry in mountinfo],
+                ["/dev/one", "/dev/two", "/dev/three"],
+            )
+
+    def test_unescapes_path_fields(self):
+        """Test that the octal escapes in path fields are decoded."""
+        with self._mountinfo(
+            [
+                r"36 35 98:0 /a\040b /mnt/a\040b rw - ext4 /dev/mapper/a\134x2db rw",
+            ]
+        ) as mountinfo:
+            (entry,) = mountinfo.entries
+
+        self.assertEqual(entry.root, "/a b")
+        self.assertEqual(entry.where, "/mnt/a b")
+        self.assertEqual(entry.what, "/dev/mapper/a\\x2db")
+
+    def test_skips_malformed_lines(self):
+        """Test that malformed lines are skipped rather than raising."""
+        with self._mountinfo(
+            [
+                "",
+                "nonsense",
+                "36 35 98:0 / /short rw",
+                "37 35 98:1 / /notrunc rw - ext4",
+                "38 35 bad:dev / /baddev rw - ext4 /dev/bad rw",
+                "39 35 98:2 / /good rw - ext4 /dev/good rw",
+            ]
+        ) as mountinfo:
+            self.assertEqual([entry.where for entry in mountinfo], ["/good"])
+
+    def test_read_error_raises_system_error(self):
+        """Test that an unreadable mountinfo file raises SnapmSystemError."""
+        with self.assertRaises(snapm.SnapmSystemError):
+            snapm.MountInfoReader(path="/proc/self/no-such-mountinfo")
+
+    def test_lookup_mount_point_returns_the_topmost_mount(self):
+        """Test that the last entry wins when mounts are stacked."""
+        with self._mountinfo(
+            [
+                "36 35 98:0 / /mnt rw - ext4 /dev/under rw",
+                "37 36 98:1 / /mnt rw - ext4 /dev/over rw",
+            ]
+        ) as mountinfo:
+            self.assertEqual(mountinfo.lookup_mount_point("/mnt").what, "/dev/over")
+            self.assertIsNone(mountinfo.lookup_mount_point("/nowhere"))
+
+    def test_lookup_devno_returns_every_mount_of_a_device(self):
+        """Test that a device mounted twice yields both of its mounts."""
+        with self._mountinfo(
+            [
+                "36 35 98:0 / /one rw - ext4 /dev/dup rw",
+                "37 35 98:1 / /other rw - ext4 /dev/other rw",
+                "38 35 98:0 / /two rw - ext4 /dev/dup rw",
+            ]
+        ) as mountinfo:
+            found = mountinfo.lookup_devno(os.makedev(98, 0))
+            self.assertEqual([entry.where for entry in found], ["/one", "/two"])
+            self.assertEqual(mountinfo.lookup_devno(os.makedev(99, 0)), [])
+
+    def test_lookup_device_matches_an_alternate_device_name(self):
+        """Test that lookup_device() matches on device number, not name.
+
+        The device name a file system was mounted by and the name snapm
+        knows it as frequently differ, and a logical volume renamed after it
+        was mounted keeps its old name in the mount table (#1030).
+        """
+        devices = _block_device_aliases(2)
+        if len(devices) < 2:
+            self.skipTest("Fewer than two aliased block devices available")
+        (canonical, alias), (other, _) = devices
+        st_rdev = os.stat(canonical).st_rdev
+
+        with self._mountinfo(
+            [
+                f"36 35 {os.major(st_rdev)}:{os.minor(st_rdev)} / /mnt rw - ext4"
+                f" {canonical} rw",
+            ]
+        ) as mountinfo:
+            # The alias names the same device by a different path.
+            found = mountinfo.lookup_device(alias)
+            self.assertEqual([entry.where for entry in found], ["/mnt"])
+            self.assertTrue(mountinfo.device_mounted(canonical))
+            # A different device is not mounted.
+            self.assertEqual(mountinfo.lookup_device(other), [])
+            self.assertFalse(mountinfo.device_mounted(other))
+
+    def test_lookup_device_ignores_non_block_devices(self):
+        """Test that lookup_device() yields nothing for a non-block path."""
+        with self._mountinfo(["36 35 98:0 / /mnt rw - ext4 /dev/one rw"]) as mountinfo:
+            self.assertEqual(mountinfo.lookup_device("/etc/fstab"), [])
+            self.assertEqual(mountinfo.lookup_device("/no/such/device"), [])
+
+    def test_repr(self):
+        """Test the MountInfoReader string representation."""
+        with self._mountinfo([]) as mountinfo:
+            self.assertEqual(repr(mountinfo), f"MountInfoReader(path='{mountinfo.path}')")
 
 
 @unittest.skipIf(not have_root(), "requires root privileges")
