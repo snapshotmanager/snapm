@@ -613,6 +613,50 @@ class Mount(MountBase):
                 self.snapset.mount_points, submounts, name_map=name_map
             )
 
+    def _bind_api_filesystems(self):
+        """
+        Recursively bind mount the host's API file systems into this mount.
+        """
+        for what in _BIND_MOUNTS:
+            if not os.path.exists(what) or not os.path.ismount(what):
+                continue
+            where = os.path.join(self.root, what.lstrip("/"))
+            if not os.path.isdir(where):
+                _log_warn(
+                    "Bind mount point %s does not exist in snapshot set %s, skipping mount",
+                    where,
+                    self.snapset.name,
+                )
+                continue
+            _mount(what, where, rbind=True, rprivate=True)
+
+    def _rollback_mount(self, err: Exception):
+        """
+        Unmount whatever a failed mount operation left behind.
+
+        :param err: The error that failed the mount operation.
+        :type err: ``Exception``
+        """
+        _log_warn(
+            "Mount operation failed for %s at %s: %s. Rolling back.",
+            self.snapset.name,
+            self.root,
+            err,
+        )
+        # Discover all submounts and unmount in depth-first order.
+        pmr = ProcMountsReader()
+        rollback_mounts = [submount.where for submount in pmr.submounts(self.root)]
+        rollback_mounts.append(self.root)  # Include root itself
+        rollback_mounts.sort(key=lambda mp: mp.count("/"), reverse=True)
+
+        for mount_path in rollback_mounts:
+            if not os.path.ismount(mount_path):
+                continue
+            try:
+                _umount(mount_path)
+            except SnapmUmountError as cleanup_err:
+                _log_warn("Failed to roll back mount '%s': %s", mount_path, cleanup_err)
+
     def _do_mount(self):
         """
         Mount the configured snapshot set and its submounts at `self.root`.
@@ -649,40 +693,10 @@ class Mount(MountBase):
                 _mount(what, where, fstype=fstype, options=options)
 
             # 4. Recursively bind mount API file systems from the host.
-            for what in _BIND_MOUNTS:
-                if os.path.exists(what) and os.path.ismount(what):
-                    where = os.path.join(self.root, what.lstrip("/"))
-                    if not os.path.isdir(where):
-                        _log_warn(
-                            "Bind mount point %s does not exist in snapshot set %s, skipping mount",
-                            where,
-                            self.snapset.name,
-                        )
-                        continue
-                    _mount(what, where, rbind=True, rprivate=True)
+            self._bind_api_filesystems()
 
         except (ValueError, SnapmError, StopIteration) as err:
-            # Rollback: discover all submounts and unmount in depth-first order
-            _log_warn(
-                "Mount operation failed for %s at %s: %s. Rolling back.",
-                self.snapset.name,
-                self.root,
-                err,
-            )
-            pmr = ProcMountsReader()
-            rollback_mounts = [submount.where for submount in pmr.submounts(self.root)]
-            rollback_mounts.append(self.root)  # Include root itself
-            rollback_mounts.sort(key=lambda mp: mp.count("/"), reverse=True)
-
-            for mount_path in rollback_mounts:
-                if not os.path.ismount(mount_path):
-                    continue
-                try:
-                    _umount(mount_path)
-                except SnapmUmountError as cleanup_err:
-                    _log_warn(
-                        "Failed to roll back mount '%s': %s", mount_path, cleanup_err
-                    )
+            self._rollback_mount(err)
             raise
 
     def _do_umount(self):
