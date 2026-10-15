@@ -1691,8 +1691,12 @@ class MountsDiscoveryTests(unittest.TestCase):
             any("no longer known" in call[0][0] for call in log_warn.call_args_list)
         )
 
-    def test_discover_matches_a_renamed_snapshot_set_by_uuid(self):
-        """Test that a record is matched to its set by UUID, not by name."""
+    def test_discover_matches_a_record_by_uuid(self):
+        """Test that a record is matched to its set by UUID, not by name.
+
+        The name in a record is there to make the record readable; the
+        UUID is what identifies the set.
+        """
         root_dev, root_path = self._real_mount_point()
         if root_dev is None:
             self.skipTest("No non-root block device mount available")

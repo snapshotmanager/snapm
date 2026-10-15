@@ -1193,8 +1193,10 @@ class Mounts:
                 self._discard_record(record)
                 continue
 
-            # A set is identified by UUID: the name is only a fallback for a
-            # record written before the set was last discovered by UUID.
+            # A set is identified by its UUID, which is what the record was
+            # written with. The name is a fallback only: it is recorded to
+            # make the record readable, and a set cannot be renamed while
+            # it is mounted.
             snapset = by_uuid.get(record.snapset_uuid) or by_name.get(
                 record.snapset_name
             )
