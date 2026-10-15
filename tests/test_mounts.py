@@ -1152,6 +1152,27 @@ def _fake_snapset(members, name="testset0"):
     )
 
 
+def _mountinfo_lines(mounts_lines):
+    """Translate '/proc/mounts' style lines into mountinfo lines.
+
+    Mount table lookups match on device number, so each line is given the
+    device number of the device it names: a device that does not exist gets
+    the zero device number, which no block device has.
+    """
+    lines = []
+    for mount_id, line in enumerate(mounts_lines, start=36):
+        what, where, fstype = line.split()[:3]
+        try:
+            st_rdev = os.stat(what).st_rdev
+        except OSError:
+            st_rdev = 0
+        lines.append(
+            f"{mount_id} 1 {os.major(st_rdev)}:{os.minor(st_rdev)} / {where} "
+            f"rw - {fstype} {what} rw"
+        )
+    return lines
+
+
 @contextmanager
 def _mounts_file(lines):
     """Yield the path to a synthetic mounts file containing ``lines``."""
@@ -1377,58 +1398,6 @@ class ProcMountsReaderTests(unittest.TestCase):
         finally:
             os.unlink(mock_mounts_file)
 
-    def test_lookup_device_matches_alternate_device_name(self):
-        """Test that lookup_device matches on device number, not path.
-
-        A snapshot's ``devpath`` and the device name recorded in
-        ``/proc/mounts`` frequently differ for the same device, so matching has
-        to be by device number.
-        """
-        devices = _alias_block_devices(1)
-        if not devices:
-            self.skipTest("No aliased block device available")
-        canonical, alias_path = devices[0]
-
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
-            f.write("tmpfs /run tmpfs rw 0 0\n")
-            f.write(f"{canonical} /mnt/target ext4 rw 0 0\n")
-            f.write("/dev/does-not-exist /mnt/other ext4 rw 0 0\n")
-            mock_mounts_file = f.name
-
-        try:
-            reader = mounts.ProcMountsReader(path=mock_mounts_file)
-
-            # Looked up under its other name, the device still matches.
-            found = list(reader.lookup_device(alias_path))
-            self.assertEqual(len(found), 1)
-            self.assertEqual(found[0].where, "/mnt/target")
-
-            # And under the name the mounts file itself uses.
-            found = list(reader.lookup_device(canonical))
-            self.assertEqual(len(found), 1)
-            self.assertEqual(found[0].where, "/mnt/target")
-
-        finally:
-            os.unlink(mock_mounts_file)
-
-    def test_lookup_device_ignores_non_block_devices(self):
-        """Test that lookup_device yields nothing for a non-block path."""
-        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.mounts') as f:
-            f.write("tmpfs /run tmpfs rw 0 0\n")
-            mock_mounts_file = f.name
-
-        try:
-            reader = mounts.ProcMountsReader(path=mock_mounts_file)
-
-            # A regular file is not a block device.
-            self.assertEqual(list(reader.lookup_device(mock_mounts_file)), [])
-
-            # Neither is a path that does not exist at all.
-            self.assertEqual(list(reader.lookup_device("/dev/no/such/device")), [])
-
-        finally:
-            os.unlink(mock_mounts_file)
-
 
 class SnapsetMountRootsTests(unittest.TestCase):
     """
@@ -1440,9 +1409,9 @@ class SnapsetMountRootsTests(unittest.TestCase):
     @staticmethod
     @contextmanager
     def _reader(lines):
-        """Yield a ProcMountsReader over a synthetic mounts file."""
-        with _mounts_file(lines) as path:
-            yield mounts.ProcMountsReader(path=path)
+        """Yield a MountInfoReader over a synthetic mount table."""
+        with _mounts_file(_mountinfo_lines(lines)) as path:
+            yield snapm.MountInfoReader(path=path)
 
     def setUp(self):
         self.devices = _alias_block_devices(2)
@@ -1460,8 +1429,8 @@ class SnapsetMountRootsTests(unittest.TestCase):
                 f"{root_dev} /mnt/custom/testset0 ext4 rw 0 0",
                 f"{opt_dev} /mnt/custom/testset0/opt ext4 rw 0 0",
             ]
-        ) as pmr:
-            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+        ) as mountinfo:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, mountinfo)
 
         self.assertEqual(roots, ["/mnt/custom/testset0"])
 
@@ -1487,8 +1456,8 @@ class SnapsetMountRootsTests(unittest.TestCase):
                 f"{var_dev} /mnt/custom/testset0/var ext4 rw 0 0",
                 f"{opt_dev} /mnt/custom/testset0/opt ext4 rw 0 0",
             ]
-        ) as pmr:
-            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+        ) as mountinfo:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, mountinfo)
 
         self.assertEqual(roots, ["/mnt/custom/testset0"])
 
@@ -1512,8 +1481,8 @@ class SnapsetMountRootsTests(unittest.TestCase):
                 f"{data_dev} /data ext4 rw 0 0",
                 f"{opt_dev} /data/opt ext4 rw 0 0",
             ]
-        ) as pmr:
-            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+        ) as mountinfo:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, mountinfo)
 
         self.assertEqual(roots, [])
 
@@ -1533,8 +1502,8 @@ class SnapsetMountRootsTests(unittest.TestCase):
                 f"{root_dev} / ext4 rw 0 0",
                 f"{opt_dev} /opt ext4 rw 0 0",
             ]
-        ) as pmr:
-            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+        ) as mountinfo:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, mountinfo)
 
         self.assertEqual(roots, [])
 
@@ -1548,8 +1517,8 @@ class SnapsetMountRootsTests(unittest.TestCase):
                 f"{root_dev} /mnt/one/testset0 ext4 rw 0 0",
                 f"{root_dev} /srv/two/testset0 ext4 rw 0 0",
             ]
-        ) as pmr:
-            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+        ) as mountinfo:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, mountinfo)
 
         self.assertEqual(roots, ["/mnt/one/testset0", "/srv/two/testset0"])
 
@@ -1563,8 +1532,8 @@ class SnapsetMountRootsTests(unittest.TestCase):
                 "tmpfs /run tmpfs rw 0 0",
                 "/dev/does-not-exist /mnt/other ext4 rw 0 0",
             ]
-        ) as pmr:
-            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+        ) as mountinfo:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, mountinfo)
 
         self.assertEqual(roots, [])
         # Neither member device appears in the mounts file.
@@ -1580,8 +1549,8 @@ class SnapsetMountRootsTests(unittest.TestCase):
                 f"{root_dev} /mnt/custom/testset0 ext4 rw 0 0",
                 f"{swap_dev} /mnt/elsewhere ext4 rw 0 0",
             ]
-        ) as pmr:
-            roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+        ) as mountinfo:
+            roots = mounts.Mounts._snapset_mount_roots(snapset, mountinfo)
 
         self.assertEqual(roots, ["/mnt/custom/testset0"])
 
@@ -1594,9 +1563,9 @@ class SnapsetMountRootsTests(unittest.TestCase):
         (root_dev, root_alias), _ = self.devices
         snapset = self._snapset([("/", root_alias), ("/opt", "")])
 
-        with self._reader([f"{root_dev} /mnt/custom/testset0 ext4 rw 0 0"]) as pmr:
-            with unittest.mock.patch.object(mounts, "_log_debug_mounts") as log_debug:
-                roots = mounts.Mounts._snapset_mount_roots(snapset, pmr)
+        with self._reader([f"{root_dev} /mnt/custom/testset0 ext4 rw 0 0"]) as mountinfo:
+            with unittest.mock.patch.object(snapm._snapm, "_log_debug") as log_debug:
+                roots = mounts.Mounts._snapset_mount_roots(snapset, mountinfo)
 
         self.assertEqual(roots, ["/mnt/custom/testset0"])
         for call in log_debug.call_args_list:
@@ -1611,15 +1580,22 @@ class MountsDiscoveryTests(unittest.TestCase):
     @staticmethod
     @contextmanager
     def _proc_mounts(lines):
-        """Make ``ProcMountsReader()`` read a synthetic mounts file."""
-        reader = mounts.ProcMountsReader
-        with _mounts_file(lines) as path:
-            with unittest.mock.patch.object(
-                mounts,
-                "ProcMountsReader",
-                lambda *args, **kwargs: reader(path=path),
-            ):
-                yield
+        """Make both mount table readers read synthetic mount tables."""
+        pmr = mounts.ProcMountsReader
+        mir = snapm.MountInfoReader
+        with _mounts_file(lines) as mounts_path:
+            with _mounts_file(_mountinfo_lines(lines)) as mountinfo_path:
+                with unittest.mock.patch.object(
+                    mounts,
+                    "ProcMountsReader",
+                    lambda *args, **kwargs: pmr(path=mounts_path),
+                ):
+                    with unittest.mock.patch.object(
+                        mounts,
+                        "MountInfoReader",
+                        lambda *args, **kwargs: mir(path=mountinfo_path),
+                    ):
+                        yield
 
     @staticmethod
     def _real_mount_point():

@@ -11,7 +11,7 @@ Mount integration for snapshot manager
 from subprocess import run, CalledProcessError, TimeoutExpired
 from typing import Dict, Iterable, List, Optional, Union
 from abc import ABC, abstractmethod
-from stat import S_ISBLK, S_ISDIR, S_ISLNK, S_IWGRP, S_IWOTH
+from stat import S_ISDIR, S_ISLNK, S_IWGRP, S_IWOTH
 import collections
 import logging
 import shlex
@@ -29,7 +29,9 @@ from snapm import (
     SnapmUmountError,
     Selection,
     SnapshotSet,
+    MountInfoReader,
     select_snapshot_set,
+    device_number,
     FsTabReader,
     unescape_mounts,
     get_device_fstype,
@@ -364,37 +366,6 @@ class ProcMountsReader:
 
         for entry in self.entries:
             if getattr(entry, key) == value:
-                yield entry
-
-    def lookup_device(self, devpath):
-        """
-        Find and generate all entries backed by the block device at ``devpath``.
-
-        Entries are matched on device number rather than on the device path, so
-        that the ``/dev/VG/LV`` paths used by ``Snapshot.devpath`` match the
-        ``/dev/mapper/VG-LV`` names reported in ``/proc/mounts``.
-
-        :param devpath: The path to the block device to search for.
-        :type devpath: str
-        :yields: A ``MountsEntry`` for each entry backed by ``devpath``.
-        """
-        try:
-            st = os.stat(devpath)
-        except OSError as err:
-            _log_debug_mounts("Cannot stat device %s: %s", devpath, err)
-            return
-        if not S_ISBLK(st.st_mode):
-            _log_debug_mounts("Path %s is not a block device", devpath)
-            return
-
-        for entry in self.entries:
-            if not entry.what.startswith("/dev/"):
-                continue
-            try:
-                entry_st = os.stat(entry.what)
-            except OSError:  # pragma: no cover
-                continue
-            if S_ISBLK(entry_st.st_mode) and entry_st.st_rdev == st.st_rdev:
                 yield entry
 
     def submounts(self, root):
@@ -1053,11 +1024,12 @@ class Mounts:
             self._update_mount_root(mount.snapset)
 
     @staticmethod
-    def _snapset_root_device(
-        snapset: SnapshotSet, pmr: ProcMountsReader
-    ) -> Optional[str]:
+    def _snapset_root_devno(
+        snapset: SnapshotSet, mountinfo: MountInfoReader
+    ) -> Optional[int]:
         """
-        Find the device that is mounted at the mount root of ``snapset``.
+        Find the device number of the device that is mounted at the mount
+        root of ``snapset``.
 
         This is the snapshot set's root member if it has one, and the host
         root file system otherwise: see ``Mount._do_mount()``, which always
@@ -1065,23 +1037,24 @@ class Mounts:
         root before mounting the remaining members beneath it.
 
         :param snapset: The snapshot set to check.
-        :param pmr: A ``ProcMountsReader`` instance to use.
-        :returns: A device path, or ``None`` if no device can be determined.
+        :param mountinfo: A ``MountInfoReader`` instance to use.
+        :returns: A device number, or ``None`` if none can be determined.
         """
         for snapshot in snapset.snapshots:
             if snapshot.mount_point == "/":
                 # An inactive root member has no devpath: the snapshot set
                 # cannot be mounted without it.
-                return snapshot.devpath or None
-        for entry in pmr.lookup("where", "/"):
-            return entry.what
-        return None  # pragma: no cover
+                return device_number(snapshot.devpath) if snapshot.devpath else None
+        root = mountinfo.lookup_mount_point("/")
+        return root.devno if root is not None else None  # pragma: no cover
 
     @staticmethod
-    def _snapset_mount_roots(snapset: SnapshotSet, pmr: ProcMountsReader) -> List[str]:
+    def _snapset_mount_roots(
+        snapset: SnapshotSet, mountinfo: MountInfoReader
+    ) -> List[str]:
         """
         Find the paths at which the snapshot set ``snapset`` is currently
-        mounted by looking up its member devices in ``/proc/mounts``.
+        mounted by looking up its member devices in the mount table.
 
         Each member snapshot is mounted at ``<root>/<mount point>`` within the
         snapshot set mount tree, so the mount root is recovered by stripping
@@ -1094,13 +1067,13 @@ class Mounts:
         condition ``Mount._do_mount()`` establishes when the set is mounted.
 
         :param snapset: The snapshot set to locate.
-        :param pmr: A ``ProcMountsReader`` instance to use.
+        :param mountinfo: A ``MountInfoReader`` instance to use.
         :returns: A sorted list of distinct mount roots for ``snapset``.
         """
-        root_device = Mounts._snapset_root_device(snapset, pmr)
-        if root_device is None:
+        root_devno = Mounts._snapset_root_devno(snapset, mountinfo)
+        if root_devno is None:
             return []
-        mount_roots = {entry.where for entry in pmr.lookup_device(root_device)}
+        mount_roots = {entry.where for entry in mountinfo.lookup_devno(root_devno)}
 
         roots = set()
         for snapshot in snapset.snapshots:
@@ -1110,7 +1083,7 @@ class Mounts:
             if not snapshot.devpath:
                 # A snapshot with no devpath is inactive and cannot be mounted.
                 continue
-            for entry in pmr.lookup_device(snapshot.devpath):
+            for entry in mountinfo.lookup_device(snapshot.devpath):
                 if mount_point == "/":
                     candidate = entry.where
                 else:
@@ -1130,16 +1103,16 @@ class Mounts:
         Discover and validate existing snapshot set mounts.
 
         Mounts are located by matching each snapshot set's member devices
-        against ``/proc/mounts``, so snapshot sets mounted at a custom mount
+        against the mount table, so snapshot sets mounted at a custom mount
         base are found without needing the mount root to be persisted
         anywhere.
         """
         _log_info("Discovering snapshot set mounts")
         self._mounts.clear()
-        pmr = ProcMountsReader()
+        mountinfo = MountInfoReader()
 
         for snapset in self._manager.snapshot_sets:
-            roots = self._snapset_mount_roots(snapset, pmr)
+            roots = self._snapset_mount_roots(snapset, mountinfo)
             if len(roots) > 1:
                 _log_warn(
                     "Snapshot set %s is mounted at multiple paths: %s",

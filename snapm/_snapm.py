@@ -1347,7 +1347,9 @@ class SnapshotSet:
                   ``SnapshotSet`` are currently mounted, or ``False``
                   otherwise.
         """
-        return any(s.origin_mounted for s in self.snapshots)
+        # Read the mount table once for the whole set.
+        mountinfo = MountInfoReader()
+        return any(s.is_origin_mounted(mountinfo) for s in self.snapshots)
 
     @property
     def snapshot_mounted(self):
@@ -1359,7 +1361,9 @@ class SnapshotSet:
                   ``SnapshotSet`` are currently mounted, or ``False``
                   otherwise.
         """
-        return any(s.snapshot_mounted for s in self.snapshots)
+        # Read the mount table once for the whole set.
+        mountinfo = MountInfoReader()
+        return any(s.is_snapshot_mounted(mountinfo) for s in self.snapshots)
 
     @property
     def mounted(self):
@@ -1887,6 +1891,42 @@ class Snapshot(ABC):
         self.provider.set_autoactivate(self.name, auto=value)
         self.invalidate_cache()
 
+    def is_origin_mounted(self, mountinfo: "MountInfoReader") -> bool:
+        """
+        Test whether the origin volume for this ``Snapshot`` is mounted at
+        the snapshot's mount point according to ``mountinfo``.
+
+        :param mountinfo: The mount table to test against.
+        :type mountinfo: ``MountInfoReader``
+        :returns: ``True`` if this snapshot's origin is currently mounted
+                  or ``False`` otherwise.
+        :rtype: ``bool``
+        """
+        if not self.mount_point:
+            return False
+        devno = device_number(self.origin)
+        if devno is None:
+            return False
+        entry = mountinfo.lookup_mount_point(self.mount_point)
+        return entry is not None and entry.devno == devno
+
+    def is_snapshot_mounted(self, mountinfo: "MountInfoReader") -> bool:
+        """
+        Test whether the snapshot volume for this ``Snapshot`` is mounted
+        anywhere according to ``mountinfo``.
+
+        :param mountinfo: The mount table to test against.
+        :type mountinfo: ``MountInfoReader``
+        :returns: ``True`` if this snapshot is currently mounted or ``False``
+                  otherwise.
+        :rtype: ``bool``
+        """
+        if self.status != SnapStatus.ACTIVE:
+            return False
+        if not self.mount_point:
+            return False
+        return mountinfo.device_mounted(self.devpath)
+
     @property
     def origin_mounted(self):
         """
@@ -1896,16 +1936,7 @@ class Snapshot(ABC):
         :returns: ``True`` if this snapshot's origin is currently mounted
                   or ``False`` otherwise.
         """
-        if not self.mount_point:
-            return False
-        with open("/proc/self/mounts", "r", encoding="utf8") as mounts:
-            for line in mounts:
-                fields = line.split()
-                if self.mount_point == unescape_mounts(fields[1]):
-                    devpath = unescape_mounts(fields[0])
-                    if os.path.exists(self.origin) and os.path.exists(devpath):
-                        return os.path.samefile(self.origin, devpath)
-        return False
+        return self.is_origin_mounted(MountInfoReader())
 
     @property
     def snapshot_mounted(self):
@@ -1916,18 +1947,7 @@ class Snapshot(ABC):
         :returns: ``True`` if this snapshot is currently mounted or ``False``
                   otherwise.
         """
-        if self.status != SnapStatus.ACTIVE:
-            return False
-        if not self.mount_point:
-            return False
-        with open("/proc/self/mounts", "r", encoding="utf8") as mounts:
-            for line in mounts:
-                fields = line.split()
-                devpath = unescape_mounts(fields[0])
-                if os.path.exists(devpath) and os.path.exists(self.devpath):
-                    if os.path.samefile(self.devpath, devpath):
-                        return True
-        return False
+        return self.is_snapshot_mounted(MountInfoReader())
 
     @property
     def mounted(self):
