@@ -903,8 +903,13 @@ class Mounts:
                                 owned by this process and writable by its
                                 owner alone.
         """
+        # stat(), not lstat(): the mounts directory was resolved with
+        # realpath() when this object was built, so there is no final symbolic
+        # link left here for lstat() to catch (#1029). A symbolic link planted
+        # in place of the mounts directory itself is refused by
+        # _check_snapm_dir(), before the Manager creates this object.
         try:
-            st = os.lstat(self._root)
+            st = os.stat(self._root)
         except OSError as err:
             raise SnapmPathError(
                 f"Mounts directory is not accessible: {self._root}"
