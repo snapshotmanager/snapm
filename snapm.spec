@@ -110,6 +110,7 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_tmpfilesdir}
 
 %{__install} -d -m 0700 ${RPM_BUILD_ROOT}/%{_rundir}/%{name}
 %{__install} -d -m 0700 ${RPM_BUILD_ROOT}/%{_rundir}/%{name}/mounts
+%{__install} -d -m 0700 ${RPM_BUILD_ROOT}/%{_rundir}/%{name}/mount-state
 %{__install} -d -m 0700 ${RPM_BUILD_ROOT}/%{_rundir}/%{name}/lock
 
 %check
@@ -132,6 +133,7 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_tmpfilesdir}
 %attr(644, -, -) %{_tmpfilesdir}/%{name}.conf
 %dir %{_rundir}/%{name}/
 %dir %{_rundir}/%{name}/mounts
+%dir %{_rundir}/%{name}/mount-state
 %dir %{_rundir}/%{name}/lock
 
 %files -n python3-snapm

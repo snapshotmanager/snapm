@@ -127,6 +127,12 @@ _SNAPM_MOUNTS_DIR = join(SNAPM_RUNTIME_DIR, "mounts")
 #: Permissions for mounts directory
 _SNAPM_MOUNTS_DIR_MODE = 0o700
 
+#: Path to the snapshot set mount state records
+_SNAPM_MOUNT_STATE_DIR = join(SNAPM_RUNTIME_DIR, "mount-state")
+
+#: Permissions for the mount state directory
+_SNAPM_MOUNT_STATE_DIR_MODE = 0o700
+
 #: Directory for snapshot set lock files
 _SNAPM_LOCK_DIR = join(SNAPM_RUNTIME_DIR, "lock")
 
@@ -590,6 +596,16 @@ def _check_mounts_dir() -> str:
     )
 
 
+def _check_mount_state_dir() -> str:
+    """
+    Check for the presence of the snapm mount state directory and create it
+    if necessary.
+    """
+    return _check_snapm_dir(
+        _SNAPM_MOUNT_STATE_DIR, _SNAPM_MOUNT_STATE_DIR_MODE, "Mount state directory"
+    )
+
+
 def _categorize_snapshot_sets(
     sets: List[SnapshotSet],
 ) -> Dict[int, List[str]]:
@@ -1039,6 +1055,15 @@ class Manager:
                 f"Failed to create mounts directory at {_SNAPM_MOUNTS_DIR}: {err}"
             ) from err
 
+        # Verify existence of the mount state record directory
+        try:
+            self._mount_state_dir = _check_mount_state_dir()
+        except (OSError, SnapmSystemError) as err:
+            raise SnapmSystemError(
+                f"Failed to create mount state directory at "
+                f"{_SNAPM_MOUNT_STATE_DIR}: {err}"
+            ) from err
+
         snapm_config = SnapmConfig.from_file(_SNAPM_CFG_PATH)
         self.disable_plugins = snapm_config.disable_plugins
 
@@ -1070,7 +1095,7 @@ class Manager:
 
         self.discover_snapshot_sets()
         self.scheduler = Scheduler(self, _SCHEDULE_D_PATH)
-        self.mounts = Mounts(self, self._mounts_dir)
+        self.mounts = Mounts(self, self._mounts_dir, self._mount_state_dir)
 
     def _load_plugin_config(self, plugin_name: str) -> ConfigParser:
         """
