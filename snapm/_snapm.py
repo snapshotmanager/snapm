@@ -1449,7 +1449,7 @@ class SnapshotSet:
                  set members.
         """
         _log_info("Attempting delete for snapshot set '%s'", self.name)
-        if any(snapshot.snapshot_mounted for snapshot in self.snapshots):
+        if self.snapshot_mounted:
             raise SnapmBusyError(
                 f"Snapshots from snapshot set {self.name} are mounted: cannot delete"
             )

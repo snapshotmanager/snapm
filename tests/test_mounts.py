@@ -526,6 +526,53 @@ class MountsTests(MountsTestsBase):
         """
         return [s for s in self.manager.snapshot_sets if s.name == name]
 
+    def test_delete_mounted_snapset_raises(self):
+        """
+        Tests that Manager.delete_snapshot_set() refuses a mounted snapshot
+        set and leaves the manager's lookup tables and the mount tree alone.
+        """
+        mount_obj = self.mounts.mount(self.snapset)
+        snapset_uuid = self.snapset.uuid
+
+        # The delete is refused by the manager, before any boot entry or
+        # lookup table teardown takes place.
+        with self.assertLogs("snapm.manager._manager", level="ERROR") as cm:
+            with self.assertRaises(snapm.SnapmBusyError):
+                self.manager.delete_snapshot_set(name=self.snapset_name)
+
+        self.assertIn("Cannot delete mounted snapshot set", "\n".join(cm.output))
+        self.assertNotIn("Failed to delete snapshot set", "\n".join(cm.output))
+
+        # The snapshot set is still known by its original name and UUID
+        self.assertEqual(self.snapset.name, self.snapset_name)
+        self.assertIs(self.manager.by_name[self.snapset_name], self.snapset)
+        self.assertIs(self.manager.by_uuid[snapset_uuid], self.snapset)
+        self.assertIn("mntset0", self.manager.by_name)
+        self.assertEqual(self.manager.snapshot_sets.count(self.snapset), 1)
+
+        # The mount tree is untouched
+        self.assertTrue(mount_obj.mounted)
+        self.assertTrue(os.path.ismount(mount_obj.root))
+        self.assertEqual(self.snapset.mount_root, mount_obj.root)
+
+        self.mounts.umount(self.snapset)
+
+    def test_snapset_delete_mounted_raises(self):
+        """
+        Tests that the SnapshotSet.delete() guard refuses a mounted snapshot
+        set independently of the Manager level check.
+        """
+        self.mounts.mount(self.snapset)
+
+        with self.assertRaises(snapm.SnapmBusyError):
+            self.snapset.delete()
+
+        # No member was deleted
+        for snapshot in self.snapset.snapshots:
+            self.assertIn(self.snapset_name, snapshot.name)
+
+        self.mounts.umount(self.snapset)
+
     def test_rename_mounted_snapset_raises(self):
         """
         Tests that Manager.rename_snapshot_set() refuses a mounted snapshot

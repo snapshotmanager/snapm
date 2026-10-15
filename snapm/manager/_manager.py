@@ -1598,6 +1598,7 @@ class Manager:
         :type recategorize: ``bool``
         """
         snapset = self._snapset_from_name_or_uuid(name=name, uuid=uuid)
+        _check_snapset_mounted(snapset, "delete")
         delete_snapset_boot_entry(snapset)
         delete_snapset_revert_entry(snapset)
         snapset.delete()
