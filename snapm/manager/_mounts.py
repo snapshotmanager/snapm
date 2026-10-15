@@ -436,7 +436,6 @@ class MountBase(ABC):
         self,
         mount_points: Iterable[str],
         submounts: List[str],
-        # pmr: Optional[ProcMountsReader] = None,
         name_map: Optional[Dict[str, str]] = None,
     ):
         """
