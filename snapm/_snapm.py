@@ -2246,11 +2246,23 @@ class MountInfoReader:
     because it reports the device number of each mount directly, so finding
     the mounts of a device costs one ``stat()`` of that device instead of
     one ``stat()`` for every entry in the table.
+
+    The device number the kernel reports for a mount is that of the mounted
+    file system, which is the ``st_rdev`` of the backing device only for a
+    file system backed by a single block device. A file system with an
+    anonymous superblock (btrfs, overlay) is given a device number with a
+    major of zero that matches no block device at all, so those mounts are
+    additionally indexed by the device named in the mount table: see
+    ``_index_entry()``. That name is the one recorded at mount time, so for
+    an anonymous superblock a device renamed after it was mounted is still
+    reported as unmounted.
     """
 
     #: One parsed mount table entry. ``devno`` is the device number of the
     #: file system mounted at ``where``, in the form returned by
-    #: ``os.stat().st_rdev``; ``root`` is the directory within that file
+    #: ``os.stat().st_dev``, which is the ``st_rdev`` of the backing device
+    #: for a file system backed by a single block device and an anonymous
+    #: device number otherwise; ``root`` is the directory within that file
     #: system that is mounted, which is '/' for anything but a bind mount.
     MountInfoEntry = collections.namedtuple(
         "MountInfoEntry",
@@ -2334,6 +2346,32 @@ class MountInfoReader:
             fields[sep + 3],
         )
 
+    def _index_entry(self, entry: "MountInfoReader.MountInfoEntry"):
+        """
+        Add ``entry`` to the device number index.
+
+        The index is keyed by the device numbers a caller can arrive with,
+        which are the ``st_rdev`` of a block device it holds a path to. A
+        file system with an anonymous superblock reports a device number
+        with a major of zero that is not the ``st_rdev`` of anything, so
+        such an entry is indexed under the device number of the device
+        named in the mount table as well, and is found by both.
+
+        The two sets of keys cannot collide: an anonymous device number has
+        a major of zero and the device number of a block device does not.
+
+        :param entry: The parsed mount table entry to index.
+        :type entry: ``MountInfoReader.MountInfoEntry``
+        """
+        self._by_devno.setdefault(entry.devno, []).append(entry)
+
+        if os.major(entry.devno) != 0 or not entry.what.startswith("/dev/"):
+            return
+
+        devno = device_number(entry.what)
+        if devno is not None:
+            self._by_devno.setdefault(devno, []).append(entry)
+
     def _read_mountinfo(self):
         """
         Read and parse the mountinfo file, populating ``self.entries`` and
@@ -2351,7 +2389,7 @@ class MountInfoReader:
                     if entry is None:
                         continue
                     self.entries.append(entry)
-                    self._by_devno.setdefault(entry.devno, []).append(entry)
+                    self._index_entry(entry)
         except OSError as err:
             _log_error("Could not read the file '%s': %s", self.path, err)
             raise SnapmSystemError(
@@ -2386,8 +2424,12 @@ class MountInfoReader:
         """
         Return the mounts of the device with device number ``devno``.
 
-        :param devno: The device number to look up, in the form returned by
-                      ``os.stat().st_rdev``.
+        Mounts of a file system with an anonymous superblock are returned
+        for the device they were mounted by: the index carries them under
+        that device as well as under the device number the kernel reports.
+
+        :param devno: The device number of a block device to look up, in
+                      the form returned by ``os.stat().st_rdev``.
         :type devno: ``int``
         :returns: The mounts of ``devno``, in mount table order, or an empty
                   list if the device is not mounted.

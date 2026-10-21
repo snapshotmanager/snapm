@@ -614,6 +614,53 @@ class MountInfoReaderTests(unittest.TestCase):
             self.assertEqual(mountinfo.lookup_device(other), [])
             self.assertFalse(mountinfo.device_mounted(other))
 
+    def test_lookup_device_matches_an_anonymous_superblock(self):
+        """Test that a mount with an anonymous device number is found.
+
+        A file system with an anonymous superblock (btrfs, overlay) is
+        given a device number with a major of zero, which is the st_rdev
+        of no block device at all. The mount is found by the device it was
+        mounted by instead.
+        """
+        devices = _block_device_aliases(2)
+        if len(devices) < 2:
+            self.skipTest("Fewer than two aliased block devices available")
+        (canonical, alias), (other, _) = devices
+
+        with self._mountinfo(
+            [f"36 35 0:69 / /mnt rw - btrfs {canonical} rw"]
+        ) as mountinfo:
+            found = mountinfo.lookup_device(canonical)
+            self.assertEqual([entry.where for entry in found], ["/mnt"])
+            # The alias names the same device by a different path.
+            self.assertTrue(mountinfo.device_mounted(alias))
+            # The anonymous device number still resolves on its own.
+            self.assertEqual(
+                [entry.where for entry in mountinfo.lookup_devno(os.makedev(0, 69))],
+                ["/mnt"],
+            )
+            # A different device is not mounted.
+            self.assertEqual(mountinfo.lookup_device(other), [])
+            self.assertFalse(mountinfo.device_mounted(other))
+
+    def test_anonymous_superblock_without_a_device_is_not_indexed(self):
+        """Test that a mount source that is not a device path is skipped.
+
+        An overlay or tmpfs mount has an anonymous device number and a
+        source that names no device, so there is nothing to index it by.
+        """
+        with self._mountinfo(
+            [
+                "36 35 0:70 / /mnt rw - overlay overlay rw",
+                "37 35 0:71 / /run rw - tmpfs tmpfs rw",
+            ]
+        ) as mountinfo:
+            self.assertEqual(
+                [entry.where for entry in mountinfo.lookup_devno(os.makedev(0, 70))],
+                ["/mnt"],
+            )
+            self.assertEqual(mountinfo.lookup_device("overlay"), [])
+
     def test_lookup_device_ignores_non_block_devices(self):
         """Test that lookup_device() yields nothing for a non-block path."""
         with self._mountinfo(["36 35 98:0 / /mnt rw - ext4 /dev/one rw"]) as mountinfo:
