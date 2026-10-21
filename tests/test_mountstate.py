@@ -124,6 +124,31 @@ class MountStateRecordTests(unittest.TestCase):
         for key, value in self.FIELDS.items():
             self.assertEqual(getattr(record, key), value)
 
+    def test_from_dict_reads_the_mount_devno(self):
+        """Test that the device number noted at mount time is read back."""
+        fields = dict(self.FIELDS, mount_devno=64514)
+        record = mountstate.MountStateRecord.from_dict(fields)
+        self.assertEqual(record.mount_devno, 64514)
+
+    def test_from_dict_defaults_an_unverified_mount_devno(self):
+        """Test that a record written before its mount has no devno.
+
+        The field is filled in once the mount has been made, so a record
+        without one describes a mount that was never confirmed.
+        """
+        self.assertNotIn("mount_devno", self.FIELDS)
+        record = mountstate.MountStateRecord.from_dict(dict(self.FIELDS))
+        self.assertIsNone(record.mount_devno)
+
+        fields = dict(self.FIELDS, mount_devno=None)
+        self.assertIsNone(mountstate.MountStateRecord.from_dict(fields).mount_devno)
+
+    def test_from_dict_rejects_a_bad_mount_devno(self):
+        """Test that a mount device number that is not a number is rejected."""
+        fields = dict(self.FIELDS, mount_devno="not-a-number")
+        with self.assertRaisesRegex(ValueError, "Malformed"):
+            mountstate.MountStateRecord.from_dict(fields)
+
     def test_from_dict_rejects_a_missing_field(self):
         """Test that a record missing a field is rejected."""
         for key in self.FIELDS:
