@@ -251,8 +251,13 @@ class MountStateDirTests(unittest.TestCase):
 
         self.assertEqual(len(self.state.records), 1)
 
-    def test_load_removes_a_partial_record(self):
-        """Test that a record left half-written is cleaned up, not read."""
+    def test_load_ignores_a_partial_record(self):
+        """Test that a record left half-written is not read, nor removed.
+
+        Reading the directory never writes to it: a temporary file may
+        belong to a command that is writing a record right now, so
+        removing it is left to reap_partial_records().
+        """
         self.state.add(self._record("/srv/rescue"))
         partial = os.path.join(self.path, "mnt-interrupted.tmp")
         with open(partial, "w", encoding="utf8") as record_file:
@@ -263,7 +268,23 @@ class MountStateDirTests(unittest.TestCase):
         self.assertEqual(
             [record.mount_path for record in reread.records], ["/srv/rescue"]
         )
+        self.assertTrue(os.path.exists(partial))
+
+    def test_reap_removes_a_partial_record(self):
+        """Test that reaping cleans up a record left half-written."""
+        self.state.add(self._record("/srv/rescue"))
+        partial = os.path.join(self.path, "mnt-interrupted.tmp")
+        with open(partial, "w", encoding="utf8") as record_file:
+            record_file.write("{\"mount_path\": \"/mnt/inte")
+
+        self.state.reap_partial_records()
+
         self.assertFalse(os.path.exists(partial))
+        # The records proper are left alone.
+        reread = mountstate.MountStateDir(self.path)
+        self.assertEqual(
+            [record.mount_path for record in reread.records], ["/srv/rescue"]
+        )
 
     def test_load_skips_an_unreadable_record(self):
         """Test that a malformed record is skipped, not fatal."""

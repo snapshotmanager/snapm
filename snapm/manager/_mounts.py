@@ -1197,6 +1197,32 @@ class Mounts:
                 )
         self._state.discard(record.mount_path)
 
+    def _reap_stale_records(self) -> None:
+        """
+        Remove the mount state records that no longer describe a mount,
+        along with the mount points snapm created for them.
+
+        Discovery leaves them alone, so this is where they go. A record is
+        written before the mount it describes is made, which means a
+        record for a path with nothing mounted on it is as likely to
+        belong to a mount another process is making right now as to one
+        that is over. Reaping from the commands that mount and unmount,
+        rather than from discovery, keeps every read-only command out of
+        the way of a mount in progress: a 'snapset list' or a scheduled
+        garbage collection can no longer unlink the record of a mount
+        that is halfway made, nor remove the directory it is about to be
+        mounted on.
+
+        Two commands that both mount or unmount can still overlap here.
+        Closing that needs the mount state directory to be locked, which
+        this does not do.
+        """
+        self._state.reap_partial_records()
+        mountinfo = MountInfoReader()
+        for record in self._state.records:
+            if not self._record_is_live(record, mountinfo):
+                self._discard_record(record)
+
     def discover_mounts(self):
         """
         Discover and validate existing snapshot set mounts.
@@ -1207,8 +1233,10 @@ class Mounts:
         table, and a snapshot that an administrator mounted by hand is not
         mistaken for a mount of snapm's (#1025).
 
-        Records describing a mount that is no longer present are discarded,
-        along with the mount points snapm created for them.
+        Nothing here writes. A record describing a mount that is no longer
+        present is passed over rather than discarded: discovery runs for
+        every command, including those that only report, and removing a
+        record is ``_reap_stale_records()``'s to do.
         """
         _log_info("Discovering snapshot set mounts")
         self._mounts.clear()
@@ -1220,7 +1248,11 @@ class Mounts:
 
         for record in self._state.records:
             if not self._record_is_live(record, mountinfo):
-                self._discard_record(record)
+                _log_debug_mounts(
+                    "Ignoring mount state record for '%s': not a managed"
+                    " mount point",
+                    record.mount_path,
+                )
                 continue
 
             # A set is identified by its UUID, which is what the record was
@@ -1296,8 +1328,11 @@ class Mounts:
 
         # Discard any entry for a path that is no longer mounted, along with
         # the mount point it names, so that the set can be mounted there
-        # again.
+        # again. This command writes to the record directory, so it is also
+        # the point at which the records discovery passed over are tidied
+        # up.
         self._prune_stale_mounts(snapset)
+        self._reap_stale_records()
 
         # A snapshot set may be mounted at more than one path at a time. An
         # explicit mount root asks for a mount at a specific path, so only a
@@ -1426,8 +1461,11 @@ class Mounts:
                                     exactly one of them.
         """
         # Only the paths the set is still mounted at are candidates, and only
-        # they make the request ambiguous.
+        # they make the request ambiguous. This command writes to the record
+        # directory, so it is also the point at which the records discovery
+        # passed over are tidied up.
         self._prune_stale_mounts(snapset)
+        self._reap_stale_records()
 
         candidates = self._snapset_mounts(snapset)
         if mount_root is not None:

@@ -1620,7 +1620,7 @@ class MountsDiscoveryTests(unittest.TestCase):
         self.assertEqual([mount.root for mount in discovered._mounts], [root_path])
         self.assertEqual(self._records(), [root_path])
 
-    def test_discover_discards_a_record_with_a_stale_devno(self):
+    def test_discover_passes_over_a_record_with_a_stale_devno(self):
         """Test that a mount point something else was mounted on is dropped.
 
         A record carrying the device number of the mount it describes must
@@ -1640,8 +1640,13 @@ class MountsDiscoveryTests(unittest.TestCase):
             ]
         ):
             discovered = self._discover([snapset])
+            self.assertEqual(discovered._mounts, [])
+            # Discovery leaves it; the next unmount reaps it.
+            self.assertEqual(self._records(), [root_path])
 
-        self.assertEqual(discovered._mounts, [])
+            with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
+                discovered.umount(snapset)
+
         self.assertEqual(self._records(), [])
 
     def test_discover_ignores_a_mount_with_no_record(self):
@@ -1675,8 +1680,13 @@ class MountsDiscoveryTests(unittest.TestCase):
         # The administrator's mount point is left alone.
         self.assertTrue(os.path.isdir(root_path))
 
-    def test_discover_discards_a_record_for_an_unmounted_path(self):
-        """Test that a record for a path nothing is mounted at is dropped."""
+    def test_discover_passes_over_a_record_for_an_unmounted_path(self):
+        """Test that a record for a path nothing is mounted at is not used.
+
+        Discovery runs for every command, including those that only
+        report, so it reads the record directory without writing to it:
+        the record stays until a command that mounts or unmounts reaps it.
+        """
         ((root_dev, _),) = self._devices_other_than("/dev/null", 1)
         snapset = _fake_snapset([("/", root_dev)])
         mount_path = os.path.join(self.root, snapset.name)
@@ -1688,11 +1698,35 @@ class MountsDiscoveryTests(unittest.TestCase):
 
         self.assertEqual(discovered._mounts, [])
         self.assertEqual(snapset.mount_root, "")
+        # Nothing was written: the record and the mount point are both
+        # still here.
+        self.assertEqual(self._records(), [mount_path])
+        self.assertTrue(os.path.isdir(mount_path))
+
+    def test_umount_reaps_a_record_for_an_unmounted_path(self):
+        """Test that a command that writes clears up the stale records.
+
+        A command that mounts or unmounts is going to write to the record
+        directory in any case, so it is the one that discards the records
+        describing mounts that are over, and the mount points snapm made
+        for them.
+        """
+        ((root_dev, _),) = self._devices_other_than("/dev/null", 1)
+        snapset = _fake_snapset([("/", root_dev)])
+        mount_path = os.path.join(self.root, snapset.name)
+        os.mkdir(mount_path)
+        self._record(mount_path, snapset, root_dev, created=True)
+
+        with self._mount_table([f"{root_dev} / ext4 rw 0 0"]):
+            discovered = self._discover([snapset])
+            with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
+                discovered.umount(snapset)
+
         # The record and the mount point snapm created go together.
         self.assertEqual(self._records(), [])
         self.assertFalse(os.path.exists(mount_path))
 
-    def test_discover_keeps_a_nominated_mount_point(self):
+    def test_reap_keeps_a_nominated_mount_point(self):
         """Test that discarding a record leaves a nominated point in place."""
         ((root_dev, _),) = self._devices_other_than("/dev/null", 1)
         snapset = _fake_snapset([("/", root_dev)])
@@ -1701,12 +1735,14 @@ class MountsDiscoveryTests(unittest.TestCase):
 
         with self._mount_table([f"{root_dev} / ext4 rw 0 0"]):
             discovered = self._discover([snapset])
+            with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
+                discovered.umount(snapset)
 
         self.assertEqual(discovered._mounts, [])
         self.assertEqual(self._records(), [])
         self.assertTrue(os.path.isdir(mount_path))
 
-    def test_discover_discards_a_record_for_a_replaced_mount(self):
+    def test_discover_passes_over_a_record_for_a_replaced_mount(self):
         """Test that another file system at the recorded path is not ours.
 
         Snapm's mount can be taken down and something else mounted on the
@@ -1729,7 +1765,9 @@ class MountsDiscoveryTests(unittest.TestCase):
             discovered = self._discover([snapset])
 
         self.assertEqual(discovered._mounts, [])
-        self.assertEqual(self._records(), [])
+        # Discovery writes nothing: the record goes when a command that
+        # mounts or unmounts reaps it.
+        self.assertEqual(self._records(), [root_path])
         # The mount that replaced snapm's is not snapm's to remove.
         self.assertTrue(os.path.isdir(root_path))
 

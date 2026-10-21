@@ -207,9 +207,10 @@ class MountStateDir:
     The set of mount state records in a runtime directory.
 
     Records are read once when the directory is opened and kept in memory
-    afterwards: the directory is only written by snapm, under the manager
-    lock, so the copy in memory and the copy on disk cannot diverge while a
-    command runs.
+    afterwards. Reading never writes: the directory is only written by the
+    commands that mount and unmount a snapshot set, so a command that
+    merely reports on mount state cannot disturb a mount another process
+    is in the middle of making.
     """
 
     def __init__(self, path: str):
@@ -259,13 +260,11 @@ class MountStateDir:
             path = os.path.join(self.path, name)
             if name.endswith(_TEMP_SUFFIX):
                 # A record a previous command was interrupted partway
-                # through writing. It describes nothing: the rename that
-                # would have made it a record never happened.
-                _log_debug_mounts("Removing partial mount state record '%s'", path)
-                try:
-                    os.unlink(path)
-                except OSError as err:  # pragma: no cover
-                    _log_warn("Could not remove '%s': %s", path, err)
+                # through writing, or one a command running now is partway
+                # through writing. Either way it is not a record yet.
+                # Removing it is a write, and is left to
+                # reap_partial_records().
+                _log_debug_mounts("Ignoring partial mount state record '%s'", path)
                 continue
             try:
                 with open(path, "r", encoding="utf8") as record_file:
@@ -279,6 +278,39 @@ class MountStateDir:
                 record.mount_path,
             )
             self._records[record.mount_path] = record
+
+    def reap_partial_records(self) -> None:
+        """
+        Remove the temporary files left behind by a command that was
+        interrupted partway through writing a record.
+
+        A record is written under a temporary name and renamed into place,
+        so a temporary file names nothing: the rename that would have made
+        it a record never happened. Removing it is the only part of
+        reading this directory that writes to it, and is kept separate so
+        that a command which only reports on mount state leaves the
+        directory alone.
+
+        A temporary file belonging to a command that is writing a record
+        right now is indistinguishable from one left by a command that
+        died, so this must only be called from a command that is itself
+        about to write here.
+        """
+        try:
+            names = os.listdir(self.path)
+        except OSError as err:  # pragma: no cover
+            _log_warn("Could not read mount state directory '%s': %s", self.path, err)
+            return
+
+        for name in names:
+            if not name.endswith(_TEMP_SUFFIX):
+                continue
+            path = os.path.join(self.path, name)
+            _log_debug_mounts("Removing partial mount state record '%s'", path)
+            try:
+                os.unlink(path)
+            except OSError as err:  # pragma: no cover
+                _log_warn("Could not remove '%s': %s", path, err)
 
     @property
     def records(self) -> List[MountStateRecord]:
