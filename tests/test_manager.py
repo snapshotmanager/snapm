@@ -169,10 +169,30 @@ class ManagerTestsSimple(unittest.TestCase):
         self.assertEqual(mp, "")
 
     def test_find_mount_point_for_devpath_reads_the_mount_table(self):
-        """Test that a mount table is read when none is passed in."""
-        # The root file system is always mounted at '/'.
-        root = snapm.MountInfoReader().lookup_mount_point("/")
-        self.assertEqual(_manager._find_mount_point_for_devpath(root.what), "/")
+        """Test that a mount table is read when none is passed in.
+
+        The mount to look up has to be chosen rather than assumed. The
+        root file system will not do on every host: an overlay or
+        container root has a source that names no device, some cloud
+        images record a '/dev/root' that does not exist, and a root that
+        is not the first mount of its device in table order resolves to
+        the earlier mount rather than to '/'. Take the first mount that
+        does satisfy all of that, and skip when the host has none.
+        """
+        mountinfo = snapm.MountInfoReader()
+        for entry in mountinfo:
+            if not entry.what.startswith("/dev/"):
+                continue
+            found = mountinfo.lookup_device(entry.what)
+            # Only the first mount of the device is the expected answer.
+            if found and found[0].where == entry.where:
+                break
+        else:
+            self.skipTest("No mount of a resolvable block device available")
+
+        self.assertEqual(
+            _manager._find_mount_point_for_devpath(entry.what), entry.where
+        )
 
     @patch("snapm.manager._manager.SNAPM_RUNTIME_DIR", "/run/snapm_test")
     @patch("snapm.manager._manager.exists")
