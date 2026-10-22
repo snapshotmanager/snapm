@@ -2420,6 +2420,34 @@ class MountsUmountSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
             self.mounts.umount(self.snapset)
 
+    def test_umount_completes_when_the_mount_point_will_not_go(self):
+        """Test that a mount point that cannot be removed is not fatal.
+
+        The unmount has already succeeded by this point. A directory
+        that will not go is untidy rather than a failure, and the record
+        and the table entry have to go either way: leaving them would
+        leave both describing a mount that is no longer there.
+        """
+        mount = self._add_mount(default_root=True)
+        # Something else is in the way, so rmdir() fails with ENOTEMPTY.
+        in_the_way = os.path.join(mount.root, "occupied")
+        os.mkdir(in_the_way)
+
+        # Nothing is really mounted here, so the reap would otherwise
+        # discard the record before the unmount reaches the mount point.
+        with unittest.mock.patch.object(
+            mounts.Mounts, "_record_is_live", staticmethod(lambda record, mi: True)
+        ):
+            with self.assertLogs(mounts._log, level="WARNING") as caught:
+                self.mounts.umount(self.snapset)
+
+        self.assertIn("Could not remove mount point", "\n".join(caught.output))
+        # The unmount reported success and finished its cleanup.
+        self.assertEqual(self.mounts._mounts, [])
+        self.assertEqual(self.mounts._state.get(mount.root), None)
+        self.assertEqual(self.snapset.mount_root, "")
+        self.assertTrue(os.path.isdir(in_the_way))
+
     def test_umount_mount_root_selects_nothing(self):
         """Test that a mount root matching no mount fails."""
         self._add_mount("one")

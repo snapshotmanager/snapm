@@ -1551,7 +1551,16 @@ class Mounts:
         mount = candidates[0]
         mount.umount()
         if self._owns_mount_point(mount.root):
-            os.rmdir(mount.root)
+            try:
+                os.rmdir(mount.root)
+            except OSError as err:
+                # The unmount succeeded: the directory left behind is
+                # untidy, not a failure, and the cleanup below has to run
+                # either way. Reporting this as an error would report a
+                # successful unmount as a failed one, and leaving the
+                # record and the entry in place would leave both
+                # describing a mount that is gone.
+                _log_warn("Could not remove mount point '%s': %s", mount.root, err)
 
         # The mount is gone: so is snapm's claim on the path.
         self._state.discard(mount.root)
