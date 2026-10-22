@@ -1231,6 +1231,50 @@ class Mounts:
                 )
         self._state.discard(record.mount_path)
 
+    def _refresh_state(self) -> None:
+        """
+        Re-read the mount state records now that the lock is held.
+
+        The copy in memory was read when this object was built, which is
+        before the lock was taken and may be a long time before for a
+        caller that keeps a ``Manager`` around. Another command may have
+        mounted or unmounted something since, so everything that follows
+        has to be decided from the records as they are now rather than as
+        they were at discovery.
+
+        :raises SnapmPathError: If the record directory cannot be read.
+        """
+        self._state.load()
+
+    def _recorded_mounts(self, mounts: List[Mount]) -> List[Mount]:
+        """
+        Return those of ``mounts`` that still have a provenance record.
+
+        An entry says that the path was snapm's when it was discovered.
+        By the time the lock is taken another command may have unmounted
+        it and discarded its record, and an administrator may have
+        mounted something else there; the path is still a mount point, so
+        ``_forget_stale_mounts()`` keeps the entry and nothing else
+        distinguishes the two. Acting on it would unmount a file system
+        that is not snapm's, which is the outcome the records exist to
+        prevent (#1025).
+
+        :param mounts: The candidate mounts to filter.
+        :returns: Those of ``mounts`` with a record, in the order given.
+        """
+        recorded = []
+        for mount in mounts:
+            if self._state.get(mount.root) is not None:
+                recorded.append(mount)
+            else:
+                _log_warn(
+                    "Ignoring mount at '%s': it is no longer recorded as a "
+                    "mount of snapshot set %s",
+                    mount.root,
+                    mount.snapset.name,
+                )
+        return recorded
+
     def _reap_stale_records(self) -> None:
         """
         Remove the mount state records that no longer describe a mount,
@@ -1369,6 +1413,8 @@ class Mounts:
         :param snapset: The snapshot set to operate on.
         :param mount_root: Optional path to mount the snapshot set at.
         """
+        self._refresh_state()
+
         if mount_root is None:
             self._check_mounts_dir()
             mount_path = self._default_mount_path(snapset)
@@ -1386,8 +1432,9 @@ class Mounts:
         # A snapshot set may be mounted at more than one path at a time. An
         # explicit mount root asks for a mount at a specific path, so only a
         # mount already rooted there will do: with no mount root any mount of
-        # the set is acceptable.
-        candidates = self._snapset_mounts(snapset)
+        # the set is acceptable. Only a path that still has a record is
+        # one of snapm's mounts.
+        candidates = self._recorded_mounts(self._snapset_mounts(snapset))
         if mount_root is not None:
             candidates = [mount for mount in candidates if mount.root == mount_path]
         if candidates:
@@ -1524,6 +1571,8 @@ class Mounts:
         :param mount_root: Optional mount point selecting the mount to
                            unmount.
         """
+        self._refresh_state()
+
         # Only the paths the set is still mounted at are candidates, and only
         # they make the request ambiguous. This command writes to the record
         # directory, so it is also the point at which the records discovery
@@ -1531,7 +1580,7 @@ class Mounts:
         self._remove_stale_mounts(self._forget_stale_mounts(snapset))
         self._reap_stale_records()
 
-        candidates = self._snapset_mounts(snapset)
+        candidates = self._recorded_mounts(self._snapset_mounts(snapset))
         if mount_root is not None:
             # Mounts are recorded at the path mount(8) resolved them to, so
             # match the resolved path here too (#1029).
