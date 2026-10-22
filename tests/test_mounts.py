@@ -1717,6 +1717,43 @@ class MountsDiscoveryTests(unittest.TestCase):
         self.assertEqual(self._records(), [])
         self.assertFalse(os.path.exists(mount_path))
 
+    def test_discover_does_not_match_a_record_by_name(self):
+        """Test that a set is matched by UUID and not by name.
+
+        A record names its set as well as identifying it, so that the
+        directory can be read. If the set a record was written for is
+        gone and a new set has since been created with the same name,
+        matching on the name would hand the new set a mount tree that is
+        not its own, and 'snapset umount' would then take it down under
+        the new set's name.
+        """
+        root_dev, root_path = self._real_mount_point()
+        if root_dev is None:
+            self.skipTest("No non-root block device mount available")
+        mounted = _fake_snapset([("/", root_dev)])
+        self._record(root_path, mounted, root_dev)
+
+        # A different set that has since taken the same name.
+        replacement = _fake_snapset([("/", root_dev)])
+        replacement.uuid = uuid5(snapm.NAMESPACE_SNAPSHOT_SET, "a-different-set")
+        self.assertEqual(replacement.name, mounted.name)
+        self.assertNotEqual(replacement.uuid, mounted.uuid)
+
+        with self._mount_table(
+            [
+                f"{root_dev} / ext4 rw 0 0",
+                f"{root_dev} {root_path} ext4 rw 0 0",
+            ]
+        ):
+            discovered = self._discover([replacement])
+
+        # The mount belongs to neither: it is not attached to the set that
+        # merely shares its name.
+        self.assertEqual(discovered._mounts, [])
+        self.assertEqual(replacement.mount_root, "")
+        # The record is kept: it still describes a mount that is up.
+        self.assertEqual(self._records(), [root_path])
+
     def test_discover_ignores_a_mount_with_no_record(self):
         """Test that a snapshot mounted by hand is not a snapshot set mount.
 

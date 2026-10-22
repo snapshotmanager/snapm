@@ -1277,7 +1277,6 @@ class Mounts:
         mountinfo = MountInfoReader()
 
         by_uuid = {str(s.uuid): s for s in self._manager.snapshot_sets}
-        by_name = {s.name: s for s in self._manager.snapshot_sets}
 
         for record in self._state.records:
             if not self._record_is_live(record, mountinfo):
@@ -1288,13 +1287,12 @@ class Mounts:
                 )
                 continue
 
-            # A set is identified by its UUID, which is what the record was
-            # written with. The name is a fallback only: it is recorded to
-            # make the record readable, and a set cannot be renamed while
-            # it is mounted.
-            snapset = by_uuid.get(record.snapset_uuid) or by_name.get(
-                record.snapset_name
-            )
+            # A set is identified by the UUID the record was written with,
+            # and by nothing else. The name is recorded to make the record
+            # readable: matching on it would attach the mount to whichever
+            # set holds the name now, which need not be the set that was
+            # mounted.
+            snapset = by_uuid.get(record.snapset_uuid)
             if snapset is None:
                 # The mount is still up but the set it belongs to is gone,
                 # so there is nothing to attach the mount to. The record is
