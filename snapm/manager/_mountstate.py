@@ -96,6 +96,31 @@ MOUNT_STATE_LOCK_TIMEOUT = 30.0
 _LOCK_POLL_INTERVAL = 0.1
 
 
+def _lock_holder(fd: int) -> str:
+    """
+    Describe the process holding the lock file open on ``fd``, for use in
+    the message raised when the lock cannot be taken.
+
+    The holder writes its pid once it has the lock, so there is a short
+    window in which the file is still empty, and the pid is only as good
+    as the holder's last write. Say nothing rather than guess: this names
+    the process to look at with ps(1), it does not prove anything.
+
+    :param fd: An open file descriptor on the lock file.
+    :type fd: ``int``
+    :returns: A phrase naming the holder, or the empty string if there is
+              nothing to say.
+    :rtype: ``str``
+    """
+    try:
+        pid = os.pread(fd, 32, 0).decode("utf8").strip()
+    except (OSError, UnicodeDecodeError):  # pragma: no cover
+        return ""
+    if not pid.isdigit():
+        return ""
+    return f" (held by pid {pid})"
+
+
 @contextmanager
 def mount_state_lock(lock_dir: str, timeout: float = MOUNT_STATE_LOCK_TIMEOUT):
     """
@@ -142,10 +167,11 @@ def mount_state_lock(lock_dir: str, timeout: float = MOUNT_STATE_LOCK_TIMEOUT):
             break
         except BlockingIOError as err:
             if time.monotonic() >= deadline:
+                holder = _lock_holder(fd)
                 os.close(fd)
                 raise SnapmBusyError(
                     f"Timed out after {timeout:g}s waiting for the mount "
-                    f"state lock at '{lockfile}'"
+                    f"state lock at '{lockfile}'{holder}"
                 ) from err
             time.sleep(_LOCK_POLL_INTERVAL)
         except OSError as err:  # pragma: no cover

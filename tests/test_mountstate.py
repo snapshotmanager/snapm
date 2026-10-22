@@ -5,6 +5,7 @@
 # This file is part of the snapm project.
 #
 # SPDX-License-Identifier: Apache-2.0
+import fcntl
 import json
 import os
 import shutil
@@ -128,9 +129,31 @@ class MountStateLockTests(unittest.TestCase):
         acquisition conflicts with the first even in the same process.
         """
         with mountstate.mount_state_lock(self.path):
-            with self.assertRaisesRegex(snapm.SnapmBusyError, "mount state lock"):
+            with self.assertRaises(snapm.SnapmBusyError) as caught:
                 with mountstate.mount_state_lock(self.path, timeout=0.2):
                     self.fail("Took the mount state lock twice")
+
+        message = str(caught.exception)
+        self.assertIn("mount state lock", message)
+        # The message names the process to go and look at.
+        self.assertIn(f"held by pid {os.getpid()}", message)
+
+    def test_lock_timeout_without_a_holder_pid(self):
+        """Test that a holder that has not written its pid is not named.
+
+        A holder writes its pid once it has the lock, so the file is
+        briefly empty: the message says nothing rather than guessing.
+        """
+        lockfile = os.path.join(self.path, "mount-state.lock")
+        fd = os.open(lockfile, os.O_RDWR | os.O_CREAT, 0o600)
+        self.addCleanup(os.close, fd)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        with self.assertRaises(snapm.SnapmBusyError) as caught:
+            with mountstate.mount_state_lock(self.path, timeout=0.2):
+                self.fail("Took a mount state lock that was held")
+
+        self.assertNotIn("held by", str(caught.exception))
 
     def test_lock_is_released_on_exit(self):
         """Test that the lock can be taken again once it is released."""
