@@ -921,9 +921,9 @@ Rename an existing snapset.
 
 A mounted snapshot set cannot be renamed: its mount point path embeds
 the set name by default, and the record of the mount in
-``/run/snapm/mount-state`` is keyed on the set UUID, which a rename
-changes. Unmount the set with ``snapm snapset umount`` before renaming
-it.
+``/run/snapm/mount-state`` identifies the set by its name and UUID, both
+of which a rename changes. Unmount the set with ``snapm snapset umount``
+before renaming it.
 
 snapset revert
 --------------
