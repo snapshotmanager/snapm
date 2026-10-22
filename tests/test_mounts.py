@@ -318,13 +318,23 @@ class MountsTestsBase(unittest.TestCase):
         self.addCleanup(state_dir_obj.cleanup)
         self.mount_state_dir = state_dir_obj.name
 
+        # 5c. Setup temp directory for the mount state lock
+        lock_dir_obj = tempfile.TemporaryDirectory(prefix="snapm_mnt_lock_")
+        self.addCleanup(lock_dir_obj.cleanup)
+        self.mount_lock_dir = lock_dir_obj.name
+
         # 6. Setup Manager and find the SnapshotSet
         self.manager = snapm.manager.Manager()
         self.manager.discover_snapshot_sets()
         self.snapset = self.manager.by_name[self.snapset_name]
 
         # 7. Initialize the Mounts object
-        self.mounts = mounts.Mounts(self.manager, self.mounts_root_dir, self.mount_state_dir)
+        self.mounts = mounts.Mounts(
+            self.manager,
+            self.mounts_root_dir,
+            self.mount_state_dir,
+            self.mount_lock_dir,
+        )
 
         # 8. Cleanup mounts - registered last so that it runs first, before
         # the mount root is removed. rmtree_one_file_system() refuses to
@@ -417,7 +427,12 @@ class MountsTests(MountsTestsBase):
         self.assertEqual(len(self.mounts._mounts), 1)
 
         # 2. Create a *new* Mounts instance pointing to the same directory
-        new_mounts = mounts.Mounts(self.manager, self.mounts_root_dir, self.mount_state_dir)
+        new_mounts = mounts.Mounts(
+            self.manager,
+            self.mounts_root_dir,
+            self.mount_state_dir,
+            self.mount_lock_dir,
+        )
 
         # 3. Check if it discovered the mount
         self.assertEqual(len(new_mounts._mounts), 1)
@@ -532,7 +547,12 @@ class MountsTests(MountsTestsBase):
         # 2. Run discovery. Mounts are found from the provenance records
         #    snapm writes as it makes them, so a directory that merely carries
         #    the snapshot set name is never mistaken for a mount.
-        new_mounts = mounts.Mounts(self.manager, self.mounts_root_dir, self.mount_state_dir)
+        new_mounts = mounts.Mounts(
+            self.manager,
+            self.mounts_root_dir,
+            self.mount_state_dir,
+            self.mount_lock_dir,
+        )
 
         # 3. Check that no mount was discovered
         self.assertEqual(len(new_mounts._mounts), 0)
@@ -757,7 +777,12 @@ class MountsTests(MountsTestsBase):
         self.addCleanup(lambda: os.path.isdir(dummy_path) and os.rmdir(dummy_path))
 
         # 3. Run discovery
-        new_mounts = mounts.Mounts(self.manager, self.mounts_root_dir, self.mount_state_dir)
+        new_mounts = mounts.Mounts(
+            self.manager,
+            self.mounts_root_dir,
+            self.mount_state_dir,
+            self.mount_lock_dir,
+        )
 
         # 4. Only the real snapshot set mount is discovered
         self.assertEqual(len(new_mounts._mounts), 1)
@@ -777,7 +802,12 @@ class MountsTests(MountsTestsBase):
 
         # 3. Re-run discovery with the missing submount
         with self.assertLogs(mounts._log, level='WARNING') as cm:
-            new_mounts = mounts.Mounts(self.manager, self.mounts_root_dir, self.mount_state_dir)
+            new_mounts = mounts.Mounts(
+                self.manager,
+                self.mounts_root_dir,
+                self.mount_state_dir,
+                self.mount_lock_dir,
+            )
 
             log_output = "\n".join(cm.output)
             self.assertIn("Missing snapshot set submounts", log_output)
@@ -801,7 +831,12 @@ class MountsTests(MountsTestsBase):
 
         # 3. Re-run discovery with the mock
         with self.assertLogs(mounts._log, level='WARNING') as cm:
-            _ = mounts.Mounts(self.manager, self.mounts_root_dir, self.mount_state_dir)
+            _ = mounts.Mounts(
+                self.manager,
+                self.mounts_root_dir,
+                self.mount_state_dir,
+                self.mount_lock_dir,
+            )
 
             log_output = "\n".join(cm.output)
             self.assertNotIn("Missing snapshot set submounts", log_output)
@@ -1511,6 +1546,7 @@ class MountsDiscoveryTests(unittest.TestCase):
             self.skipTest("Fewer than four aliased block devices available")
         self.root = self._tmpdir("snapm_discover_root_")
         self.state = self._tmpdir("snapm_discover_state_")
+        self.lock = self._tmpdir("snapm_discover_lock_")
 
     def _record(
         self, mount_path, snapset, root_device, created=False, mount_devno=None
@@ -1535,7 +1571,7 @@ class MountsDiscoveryTests(unittest.TestCase):
     def _discover(self, snapsets):
         """Build a Mounts object over the test mounts and state directories."""
         manager = SimpleNamespace(snapshot_sets=snapsets)
-        return mounts.Mounts(manager, self.root, self.state)
+        return mounts.Mounts(manager, self.root, self.state, self.lock)
 
     def _records(self):
         """Return the mount paths the state directory still has records for."""
@@ -1648,6 +1684,38 @@ class MountsDiscoveryTests(unittest.TestCase):
                 discovered.umount(snapset)
 
         self.assertEqual(self._records(), [])
+
+    def test_umount_waits_for_the_mount_state_lock(self):
+        """Test that a command that writes mount state takes the lock.
+
+        Mounting and unmounting are serialised against each other, so a
+        command that cannot take the lock gives up rather than writing
+        over a mount another command is in the middle of making.
+        """
+        ((root_dev, _),) = self._devices_other_than("/dev/null", 1)
+        snapset = _fake_snapset([("/", root_dev)])
+        mount_path = os.path.join(self.root, snapset.name)
+        os.mkdir(mount_path)
+        self._record(mount_path, snapset, root_dev, created=True)
+
+        with self._mount_table([f"{root_dev} / ext4 rw 0 0"]):
+            discovered = self._discover([snapset])
+            discovered._lock_timeout = 0.2
+
+            with mountstate.mount_state_lock(self.lock):
+                with self.assertRaisesRegex(snapm.SnapmBusyError, "mount state lock"):
+                    discovered.umount(snapset)
+
+            # Nothing was reaped while the lock was held elsewhere.
+            self.assertEqual(self._records(), [mount_path])
+            self.assertTrue(os.path.isdir(mount_path))
+
+            # With the lock free the unmount proceeds and reaps as usual.
+            with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
+                discovered.umount(snapset)
+
+        self.assertEqual(self._records(), [])
+        self.assertFalse(os.path.exists(mount_path))
 
     def test_discover_ignores_a_mount_with_no_record(self):
         """Test that a snapshot mounted by hand is not a snapshot set mount.
@@ -1903,7 +1971,8 @@ class MountsMountSelectionTests(unittest.TestCase):
         manager = SimpleNamespace(snapshot_sets=[])
         self.root = self._tmpdir("snapm_mount_root_")
         self.state = self._tmpdir("snapm_mount_state_")
-        self.mounts = mounts.Mounts(manager, self.root, self.state)
+        self.lock = self._tmpdir("snapm_mount_lock_")
+        self.mounts = mounts.Mounts(manager, self.root, self.state, self.lock)
         self.snapset = SimpleNamespace(
             name="testset0",
             uuid=UUID("00000000-0000-5000-a000-000000000000"),
@@ -2268,7 +2337,10 @@ class MountsUmountSelectionTests(unittest.TestCase):
         state_obj = tempfile.TemporaryDirectory(prefix="snapm_umount_state_")
         self.addCleanup(state_obj.cleanup)
         self.state = state_obj.name
-        self.mounts = mounts.Mounts(manager, self.root, self.state)
+        lock_obj = tempfile.TemporaryDirectory(prefix="snapm_umount_lock_")
+        self.addCleanup(lock_obj.cleanup)
+        self.lock = lock_obj.name
+        self.mounts = mounts.Mounts(manager, self.root, self.state, self.lock)
         self.snapset = SimpleNamespace(
             name="testset0",
             uuid=UUID("00000000-0000-5000-a000-000000000000"),

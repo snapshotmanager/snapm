@@ -36,15 +36,20 @@ authoritative copy: nothing here has to reverse the escaping.
 """
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
+from contextlib import contextmanager
 from hashlib import sha256
 import logging
 import string
+import fcntl
 import json
+import time
 import os
 
 from snapm import (
     SNAPM_SUBSYSTEM_MOUNTS,
+    SnapmBusyError,
     SnapmPathError,
+    SnapmSystemError,
 )
 
 _log = logging.getLogger(__name__)
@@ -76,6 +81,94 @@ _RECORD_NAME_MAX = _NAME_MAX - len(_TEMP_SUFFIX)
 #: The number of hexadecimal digits of path digest appended to a record name
 #: that has to be truncated to fit.
 _DIGEST_CHARS = 16
+
+
+#: The name of the lock file serialising changes to the mount state.
+_LOCK_NAME = "mount-state.lock"
+
+#: How long to wait for the mount state lock before giving up. A mount is
+#: a mount(8) call and a bind mount for each API file system, so the wait
+#: has to outlast one of those; it is not meant to outlast a mount(8) that
+#: has hung on an unresponsive device.
+MOUNT_STATE_LOCK_TIMEOUT = 30.0
+
+#: How long to wait between attempts to take the mount state lock.
+_LOCK_POLL_INTERVAL = 0.1
+
+
+@contextmanager
+def mount_state_lock(lock_dir: str, timeout: float = MOUNT_STATE_LOCK_TIMEOUT):
+    """
+    Hold the mount state lock for the duration of the ``with`` statement.
+
+    The lock makes one change to the mount state atomic with respect to
+    another: a snapshot set is mounted, or unmounted, or the records of
+    mounts that are over are reaped, and no two of those interleave. It
+    covers the ``mount(8)`` and ``umount(8)`` calls as well as the records
+    that describe them, because a record is written before the mount it
+    describes is made and is only meaningful once the mount has been
+    attempted.
+
+    It is taken non-blocking, with retries up to the limit specified by
+    ``timeout``, at intervals of ``_LOCK_POLL_INTERVAL``.
+
+    This lock is below the manager lock in the locking order. A caller
+    holding the manager lock may take this one; a caller holding this one
+    must not take the manager lock. Nothing in ``Mounts`` calls a
+    ``Manager`` method that locks, so the order cannot be inverted from
+    here.
+
+    :param lock_dir: The directory holding the lock file.
+    :type lock_dir: ``str``
+    :param timeout: How long to wait for the lock, in seconds.
+    :type timeout: ``float``
+    :raises SnapmBusyError: If the lock is still held after ``timeout``.
+    :raises SnapmSystemError: If the lock file cannot be opened or locked.
+    """
+    lockfile = os.path.join(lock_dir, _LOCK_NAME)
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(lockfile, flags, 0o600)
+    except OSError as err:
+        raise SnapmSystemError(
+            f"Failed to create mount state lockfile {lockfile}: {err}"
+        ) from err
+
+    _log_debug_mounts("Locking mount state via '%s'", lockfile)
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError as err:
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                raise SnapmBusyError(
+                    f"Timed out after {timeout:g}s waiting for the mount "
+                    f"state lock at '{lockfile}'"
+                ) from err
+            time.sleep(_LOCK_POLL_INTERVAL)
+        except OSError as err:  # pragma: no cover
+            os.close(fd)
+            raise SnapmSystemError(
+                f"Failed to lock mount state lockfile {lockfile}: {err}"
+            ) from err
+
+    try:
+        os.ftruncate(fd, 0)
+        os.write(fd, f"{os.getpid()}\n".encode("utf8"))
+    except OSError:  # pragma: no cover
+        pass
+
+    try:
+        yield
+    finally:
+        _log_debug_mounts("Unlocking mount state (%s)", lockfile)
+        try:
+            os.ftruncate(fd, 0)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 
 def systemd_escape_path(path: str) -> str:
@@ -397,7 +490,9 @@ class MountStateDir:
 
 
 __all__ = [
+    "MOUNT_STATE_LOCK_TIMEOUT",
     "MountStateDir",
     "MountStateRecord",
+    "mount_state_lock",
     "systemd_escape_path",
 ]

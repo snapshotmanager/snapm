@@ -1096,7 +1096,9 @@ class Manager:
 
         self.discover_snapshot_sets()
         self.scheduler = Scheduler(self, _SCHEDULE_D_PATH)
-        self.mounts = Mounts(self, self._mounts_dir, self._mount_state_dir)
+        self.mounts = Mounts(
+            self, self._mounts_dir, self._mount_state_dir, self._lock_dir
+        )
 
     def _load_plugin_config(self, plugin_name: str) -> ConfigParser:
         """

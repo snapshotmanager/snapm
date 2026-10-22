@@ -103,6 +103,51 @@ class SystemdEscapePathTests(unittest.TestCase):
         )
 
 
+class MountStateLockTests(unittest.TestCase):
+    """
+    Tests for the lock that serialises changes to the mount state.
+    """
+
+    def setUp(self):
+        dir_obj = tempfile.TemporaryDirectory(prefix="snapm_mount_lock_")
+        self.addCleanup(dir_obj.cleanup)
+        self.path = dir_obj.name
+
+    def test_lock_creates_the_lock_file(self):
+        """Test that taking the lock creates a lock file naming the holder."""
+        with mountstate.mount_state_lock(self.path):
+            lockfile = os.path.join(self.path, "mount-state.lock")
+            self.assertTrue(os.path.exists(lockfile))
+            with open(lockfile, "r", encoding="utf8") as f:
+                self.assertEqual(f.read().strip(), str(os.getpid()))
+
+    def test_lock_excludes_a_second_holder(self):
+        """Test that the lock is exclusive and gives up after the timeout.
+
+        An flock() is held by the open file description, so a second
+        acquisition conflicts with the first even in the same process.
+        """
+        with mountstate.mount_state_lock(self.path):
+            with self.assertRaisesRegex(snapm.SnapmBusyError, "mount state lock"):
+                with mountstate.mount_state_lock(self.path, timeout=0.2):
+                    self.fail("Took the mount state lock twice")
+
+    def test_lock_is_released_on_exit(self):
+        """Test that the lock can be taken again once it is released."""
+        with mountstate.mount_state_lock(self.path, timeout=0.2):
+            pass
+        with mountstate.mount_state_lock(self.path, timeout=0.2):
+            pass
+
+    def test_lock_is_released_after_an_error(self):
+        """Test that an exception inside the lock still releases it."""
+        with self.assertRaises(ValueError):
+            with mountstate.mount_state_lock(self.path, timeout=0.2):
+                raise ValueError("boom")
+        with mountstate.mount_state_lock(self.path, timeout=0.2):
+            pass
+
+
 class MountStateRecordTests(unittest.TestCase):
     """
     Tests for the mount state record type.
