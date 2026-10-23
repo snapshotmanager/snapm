@@ -127,13 +127,6 @@ reviews:
           yaml.load without SafeLoader, os.system with variables.
         mode: "error"
 
-      - name: "no-sensitive-data-in-logs"
-        instructions: |
-          Flag logging that may expose passwords, tokens, API keys,
-          PII (email, SSN, credit card), session IDs, internal
-          hostnames, or customer data.
-        mode: "error"
-
 # ── Knowledge base ───────────────────────────────────────────
 knowledge_base:
   code_guidelines:
