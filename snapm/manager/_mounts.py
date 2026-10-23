@@ -1233,14 +1233,18 @@ class Mounts:
 
     def _refresh_state(self) -> None:
         """
-        Re-read the mount state records now that the lock is held.
+        Re-read the mount state records.
 
-        The copy in memory was read when this object was built, which is
-        before the lock was taken and may be a long time before for a
-        caller that keeps a ``Manager`` around. Another command may have
-        mounted or unmounted something since, so everything that follows
-        has to be decided from the records as they are now rather than as
-        they were at discovery.
+        The copy in memory was read when this object was built, which may
+        be a long time ago for a caller that keeps a ``Manager`` around,
+        and another command may have mounted or unmounted something
+        since. What follows has to be decided from the records as they
+        are now rather than as they were at discovery.
+
+        A command that is about to change the mount state does this with
+        the lock held, so that what it read stays true for as long as it
+        acts on it. A command that only reports does it without, and
+        answers with what was true when it looked.
 
         :raises SnapmPathError: If the record directory cannot be read.
         """
@@ -1253,15 +1257,16 @@ class Mounts:
         An entry says what was mounted at a path when it was discovered,
         and nothing but the record says what is mounted there now: the
         path being a mount point only says that something is. By the time
-        the lock is taken another command may have unmounted it, and an
+        the entry is used another command may have unmounted it, and an
         administrator or another command may have mounted something else
         there, including a different snapshot set.
 
         An entry is kept only when a record for its path exists, names
         the same snapshot set, and still describes what is mounted there.
         Anything else is a mount this object no longer knows the truth
-        about, and acting on it would unmount a file system that is not
-        the one asked for (#1025).
+        about: acting on one would unmount a file system that is not the
+        one asked for, and reporting one would name a mount as a set's
+        that it is not (#1025).
 
         :param mounts: The candidate mounts to filter.
         :returns: Those of ``mounts`` the records account for, in order.
@@ -1645,16 +1650,27 @@ class Mounts:
         Return a list of `Mount` objects describing the currently mounted
         snapshot sets managed by this `Mounts` instance.
 
-        Snapshot sets unmounted outside snapm are dropped before matching, so
-        that every mount returned is one that is still mounted. Dropping
-        them writes nothing, so reporting on mounts neither takes the mount
-        state lock nor waits on one: what the dropped entries left on disk
-        is removed by the next command that mounts or unmounts.
+        Snapshot sets unmounted outside snapm are dropped before matching,
+        and the records are read again and consulted, so that every mount
+        returned is one that is still mounted and still the mount the
+        entry says it is. Without that a report can name a path that
+        another command has since unmounted and mounted a different
+        snapshot set on.
+
+        None of this writes, so reporting on mounts neither takes the
+        mount state lock nor waits on one. The answer is what was true
+        when it was read: a report cannot be made to stay true, only to
+        have been true, and holding the lock would not change that.
         """
+        self._refresh_state()
         self._forget_stale_mounts()
         selection = selection or Selection()
         selection.check_valid_selection(snapshot_set=True)
-        return [m for m in self._mounts if select_snapshot_set(selection, m.snapset)]
+        return [
+            mount
+            for mount in self._recorded_mounts(self._mounts)
+            if select_snapshot_set(selection, mount.snapset)
+        ]
 
     def get_sys_mount(self) -> SysMount:
         """

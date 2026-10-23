@@ -2465,6 +2465,33 @@ class MountsUmountSelectionTests(unittest.TestCase):
         self.assertEqual(unmounted, [])
         self.assertTrue(os.path.isdir(mount.root))
 
+    def test_find_mounts_omits_a_path_now_recorded_to_another_set(self):
+        """Test that a report does not name another set's mount as ours.
+
+        Reporting reads the records again rather than answering from the
+        view built at discovery, so a path that another command has
+        unmounted and mounted a different set on is left out instead of
+        being reported as this set's mount.
+        """
+        mine = self._add_mount("mine")
+        taken = self._add_mount("taken")
+
+        # Another command has since mounted a different set at 'taken'.
+        mountstate.MountStateDir(self.state).add(
+            mountstate.MountStateRecord(
+                mount_path=taken.root,
+                snapset_name="testset1",
+                snapset_uuid=str(uuid5(snapm.NAMESPACE_SNAPSHOT_SET, "testset1")),
+                root_device="/dev/testvg/testset1-root",
+                root_devno=0x1234,
+                created_mount_point=True,
+            )
+        )
+
+        found = self.mounts.find_mounts(snapm.Selection(name=self.snapset.name))
+
+        self.assertEqual(found, [mine])
+
     def test_umount_refuses_a_path_now_recorded_to_another_set(self):
         """Test that a record naming a different set does not match.
 
