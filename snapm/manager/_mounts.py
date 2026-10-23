@@ -1248,31 +1248,51 @@ class Mounts:
 
     def _recorded_mounts(self, mounts: List[Mount]) -> List[Mount]:
         """
-        Return those of ``mounts`` that still have a provenance record.
+        Return those of ``mounts`` the records still account for.
 
-        An entry says that the path was snapm's when it was discovered.
-        By the time the lock is taken another command may have unmounted
-        it and discarded its record, and an administrator may have
-        mounted something else there; the path is still a mount point, so
-        ``_forget_stale_mounts()`` keeps the entry and nothing else
-        distinguishes the two. Acting on it would unmount a file system
-        that is not snapm's, which is the outcome the records exist to
-        prevent (#1025).
+        An entry says what was mounted at a path when it was discovered,
+        and nothing but the record says what is mounted there now: the
+        path being a mount point only says that something is. By the time
+        the lock is taken another command may have unmounted it, and an
+        administrator or another command may have mounted something else
+        there, including a different snapshot set.
+
+        An entry is kept only when a record for its path exists, names
+        the same snapshot set, and still describes what is mounted there.
+        Anything else is a mount this object no longer knows the truth
+        about, and acting on it would unmount a file system that is not
+        the one asked for (#1025).
 
         :param mounts: The candidate mounts to filter.
-        :returns: Those of ``mounts`` with a record, in the order given.
+        :returns: Those of ``mounts`` the records account for, in order.
         """
+        mountinfo = MountInfoReader()
         recorded = []
         for mount in mounts:
-            if self._state.get(mount.root) is not None:
-                recorded.append(mount)
-            else:
+            record = self._state.get(mount.root)
+            if record is None:
                 _log_warn(
                     "Ignoring mount at '%s': it is no longer recorded as a "
                     "mount of snapshot set %s",
                     mount.root,
                     mount.snapset.name,
                 )
+            elif record.snapset_uuid != str(mount.snapset.uuid):
+                _log_warn(
+                    "Ignoring mount at '%s': it is now recorded as a mount "
+                    "of snapshot set %s, not %s",
+                    mount.root,
+                    record.snapset_name,
+                    mount.snapset.name,
+                )
+            elif not self._record_is_live(record, mountinfo):
+                _log_warn(
+                    "Ignoring mount at '%s': its record no longer describes "
+                    "what is mounted there",
+                    mount.root,
+                )
+            else:
+                recorded.append(mount)
         return recorded
 
     def _reap_stale_records(self) -> None:

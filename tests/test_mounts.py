@@ -2465,6 +2465,39 @@ class MountsUmountSelectionTests(unittest.TestCase):
         self.assertEqual(unmounted, [])
         self.assertTrue(os.path.isdir(mount.root))
 
+    def test_umount_refuses_a_path_now_recorded_to_another_set(self):
+        """Test that a record naming a different set does not match.
+
+        Another command may unmount one set from a path and mount a
+        different one there. A record then exists at that path, so its
+        presence alone says nothing: the path has to be recorded as a
+        mount of the set being unmounted, or unmounting it takes down
+        somebody else's snapshot set and discards its record (#1025).
+        """
+        mount = self._add_mount(default_root=True)
+        unmounted = []
+        mount.umount = lambda: unmounted.append(mount.root)
+
+        # Another command has since mounted a different set here.
+        other = mountstate.MountStateRecord(
+            mount_path=mount.root,
+            snapset_name="testset1",
+            snapset_uuid=str(uuid5(snapm.NAMESPACE_SNAPSHOT_SET, "testset1")),
+            root_device="/dev/testvg/testset1-root",
+            root_devno=0x1234,
+            created_mount_point=True,
+        )
+        self.assertNotEqual(other.snapset_uuid, str(self.snapset.uuid))
+        mountstate.MountStateDir(self.state).add(other)
+
+        with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
+            self.mounts.umount(self.snapset)
+
+        # The other set's mount and its record are both left alone.
+        self.assertEqual(unmounted, [])
+        self.assertTrue(os.path.isdir(mount.root))
+        self.assertIsNotNone(mountstate.MountStateDir(self.state).get(mount.root))
+
     def test_umount_completes_when_the_mount_point_will_not_go(self):
         """Test that a mount point that cannot be removed is not fatal.
 
