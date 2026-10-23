@@ -75,12 +75,12 @@ class SystemdEscapePathTests(unittest.TestCase):
             mountstate.systemd_escape_path(base + suffix) for suffix in ("/one", "/two")
         }
 
-        # Both names fit in a file name with room left for the suffix a
+        # Both names fit in a file name with room left for the prefix a
         # record wears while it is being written, and the shared prefix
         # does not make the two paths collide.
         self.assertEqual(len(names), 2)
         for name in names:
-            self.assertLessEqual(len(f"{name}.tmp".encode("utf8")), 255)
+            self.assertLessEqual(len(f".tmp-{name}".encode("utf8")), 255)
 
     def test_records_an_over_long_path(self):
         """Test that a path too long to name a file is still recordable."""
@@ -327,7 +327,7 @@ class MountStateDirTests(unittest.TestCase):
         removing it is left to reap_partial_records().
         """
         self.state.add(self._record("/srv/rescue"))
-        partial = os.path.join(self.path, "mnt-interrupted.tmp")
+        partial = os.path.join(self.path, ".tmp-mnt-interrupted")
         with open(partial, "w", encoding="utf8") as record_file:
             record_file.write("{\"mount_path\": \"/mnt/inte")
 
@@ -341,7 +341,7 @@ class MountStateDirTests(unittest.TestCase):
     def test_reap_removes_a_partial_record(self):
         """Test that reaping cleans up a record left half-written."""
         self.state.add(self._record("/srv/rescue"))
-        partial = os.path.join(self.path, "mnt-interrupted.tmp")
+        partial = os.path.join(self.path, ".tmp-mnt-interrupted")
         with open(partial, "w", encoding="utf8") as record_file:
             record_file.write("{\"mount_path\": \"/mnt/inte")
 
@@ -353,6 +353,25 @@ class MountStateDirTests(unittest.TestCase):
         self.assertEqual(
             [record.mount_path for record in reread.records], ["/srv/rescue"]
         )
+
+    def test_a_record_named_like_a_temporary_file_survives(self):
+        """Test that a path ending in the temporary marker is still a record.
+
+        A set named 'backup.tmp', or a mount root ending in '.tmp',
+        escapes to a name ending in '.tmp': that must not read as a
+        record that is half-written, or the mount it describes is
+        orphaned by the next command that reaps.
+        """
+        record = self._record("/run/snapm/mounts/backup.tmp", name="backup.tmp")
+        self.state.add(record)
+
+        self.assertEqual(os.listdir(self.path), ["run-snapm-mounts-backup.tmp"])
+
+        reread = mountstate.MountStateDir(self.path)
+        self.assertEqual(reread.records, [record])
+
+        reread.reap_partial_records()
+        self.assertEqual(mountstate.MountStateDir(self.path).records, [record])
 
     def test_load_skips_an_unreadable_record(self):
         """Test that a malformed record is skipped, not fatal."""

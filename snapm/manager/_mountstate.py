@@ -33,6 +33,10 @@ escapes a path into a unit name, so that the record for a path can be found
 directly and an administrator listing the directory can see what is mounted
 where. The path inside the record is the unescaped one, and is the
 authoritative copy: nothing here has to reverse the escaping.
+
+A record being written is hidden behind a prefix until it is renamed into
+place. The escaping never produces a name that begins with a dot, so no
+record can be mistaken for one that is half-written.
 """
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
@@ -71,12 +75,20 @@ _SYSTEMD_VALID_CHARS = string.ascii_letters + string.digits + ":_."
 #: The longest file name permitted in a record directory.
 _NAME_MAX = 255
 
-#: Suffix for a record that is still being written.
-_TEMP_SUFFIX = ".tmp"
+#: Prefix for a record that is still being written.
+#:
+#: It has to be something the escaping cannot produce, or a record would be
+#: mistaken for a file being written and reaped out from under a live mount.
+#: A prefix can be: the escaping never yields a name beginning with '.',
+#: because a leading '.' is escaped. A suffix cannot, because '.' is a
+#: character the escaping leaves alone wherever else it appears, so a
+#: snapshot set named 'backup.tmp', or a mount root ending in '.tmp', would
+#: escape to a record name ending in it.
+_TEMP_PREFIX = ".tmp-"
 
-#: The longest record name that still leaves room for the suffix a record
+#: The longest record name that still leaves room for the prefix a record
 #: wears while it is being written.
-_RECORD_NAME_MAX = _NAME_MAX - len(_TEMP_SUFFIX)
+_RECORD_NAME_MAX = _NAME_MAX - len(_TEMP_PREFIX)
 
 #: The number of hexadecimal digits of path digest appended to a record name
 #: that has to be truncated to fit.
@@ -355,6 +367,19 @@ class MountStateDir:
         """
         return os.path.join(self.path, systemd_escape_path(mount_path))
 
+    def _temp_record_path(self, mount_path: str) -> str:
+        """
+        Return the path to the temporary file the record describing
+        ``mount_path`` is written to before it is renamed into place.
+
+        :param mount_path: The mount path to build a temporary path for.
+        :type mount_path: ``str``
+        :returns: The path to the temporary file.
+        :rtype: ``str``
+        """
+        name = systemd_escape_path(mount_path)
+        return os.path.join(self.path, f"{_TEMP_PREFIX}{name}")
+
     def load(self) -> None:
         """
         Read every record in the directory, discarding anything held from a
@@ -377,7 +402,7 @@ class MountStateDir:
 
         for name in names:
             path = os.path.join(self.path, name)
-            if name.endswith(_TEMP_SUFFIX):
+            if name.startswith(_TEMP_PREFIX):
                 # A record a previous command was interrupted partway
                 # through writing, or one a command running now is partway
                 # through writing. Either way it is not a record yet.
@@ -422,7 +447,7 @@ class MountStateDir:
             return
 
         for name in names:
-            if not name.endswith(_TEMP_SUFFIX):
+            if not name.startswith(_TEMP_PREFIX):
                 continue
             path = os.path.join(self.path, name)
             _log_debug_mounts("Removing partial mount state record '%s'", path)
@@ -467,7 +492,7 @@ class MountStateDir:
         :raises SnapmPathError: If the record cannot be written.
         """
         path = self._record_path(record.mount_path)
-        temp_path = f"{path}{_TEMP_SUFFIX}"
+        temp_path = self._temp_record_path(record.mount_path)
         try:
             with open(temp_path, "w", encoding="utf8") as record_file:
                 json.dump(asdict(record), record_file, indent=4, sort_keys=True)
