@@ -698,6 +698,101 @@ class MountInfoReaderTests(unittest.TestCase):
             self.assertEqual(repr(mountinfo), f"MountInfoReader(path='{mountinfo.path}')")
 
 
+class UtabReaderTests(unittest.TestCase):
+    """Test the UtabReader class."""
+
+    @staticmethod
+    @contextmanager
+    def _utab(lines):
+        """Yield a UtabReader over a synthetic userspace mount table."""
+        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".utab") as f:
+            for line in lines:
+                f.write(line + "\n")
+            path = f.name
+        try:
+            yield snapm.UtabReader(path=path)
+        finally:
+            os.unlink(path)
+
+    def test_parses_a_utab_line(self):
+        """Test that the fields read from an entry are parsed."""
+        with self._utab(
+            ["ID=42 SRC=/dev/vg/lv TARGET=/mnt ROOT=/ OPTS=x-snapm.managed=u,ro"]
+        ) as utab:
+            (entry,) = utab.entries
+
+        self.assertEqual(entry.what, "/dev/vg/lv")
+        self.assertEqual(entry.where, "/mnt")
+        self.assertEqual(entry.options, "x-snapm.managed=u,ro")
+
+    def test_parses_an_entry_with_no_options(self):
+        """Test that an entry recording no userspace options is read."""
+        with self._utab(["SRC=proc TARGET=/mnt/proc ROOT=/ BINDSRC=/proc"]) as utab:
+            (entry,) = utab.entries
+
+        self.assertEqual(entry.where, "/mnt/proc")
+        self.assertEqual(entry.options, "")
+        self.assertFalse(utab.has_option("/mnt/proc", "x-snapm.managed=u"))
+
+    def test_unescapes_path_fields(self):
+        """Test that the octal escapes in path fields are decoded."""
+        with self._utab([r"SRC=none TARGET=/mnt/a\040b ROOT=/ OPTS=x-y=z"]) as utab:
+            self.assertTrue(utab.has_option("/mnt/a b", "x-y=z"))
+
+    def test_skips_a_line_naming_no_mount_point(self):
+        """Test that a line with no target is skipped rather than raising."""
+        with self._utab(
+            [
+                "",
+                "nonsense",
+                "SRC=none ROOT=/ OPTS=x-y=z",
+                "SRC=none TARGET=/good ROOT=/ OPTS=x-y=z",
+            ]
+        ) as utab:
+            self.assertEqual([entry.where for entry in utab], ["/good"])
+
+    def test_a_table_that_is_not_there_is_empty(self):
+        """Test that a missing table describes no mounts.
+
+        Nothing asks this reader what is mounted, only whether a mount it
+        has already found carries an option: a system that keeps no
+        userspace mount table is not an error, it is one where no mount
+        carries one.
+        """
+        utab = snapm.UtabReader(path="/run/mount/no-such-utab")
+
+        self.assertEqual(utab.entries, [])
+        self.assertFalse(utab.has_option("/mnt", "x-snapm.managed=u"))
+
+    def test_lookup_mount_point_returns_the_topmost_mount(self):
+        """Test that the last entry wins when mounts are stacked."""
+        with self._utab(
+            [
+                "SRC=/dev/under TARGET=/mnt ROOT=/ OPTS=x-snapm.managed=one",
+                "SRC=/dev/over TARGET=/mnt ROOT=/ OPTS=x-snapm.managed=two",
+            ]
+        ) as utab:
+            self.assertEqual(utab.lookup_mount_point("/mnt").what, "/dev/over")
+            self.assertIsNone(utab.lookup_mount_point("/nowhere"))
+            self.assertTrue(utab.has_option("/mnt", "x-snapm.managed=two"))
+            self.assertFalse(utab.has_option("/mnt", "x-snapm.managed=one"))
+
+    def test_has_option_matches_whole_options(self):
+        """Test that an option is matched in full, not as a substring."""
+        with self._utab(
+            ["SRC=none TARGET=/mnt ROOT=/ OPTS=x-snapm.managed=uuid0,ro"]
+        ) as utab:
+            self.assertTrue(utab.has_option("/mnt", "x-snapm.managed=uuid0"))
+            self.assertTrue(utab.has_option("/mnt", "ro"))
+            self.assertFalse(utab.has_option("/mnt", "x-snapm.managed=uuid"))
+            self.assertFalse(utab.has_option("/mnt", "x-snapm.managed"))
+
+    def test_repr(self):
+        """Test the UtabReader string representation."""
+        with self._utab([]) as utab:
+            self.assertEqual(repr(utab), f"UtabReader(path='{utab.path}')")
+
+
 @unittest.skipIf(not have_root(), "requires root privileges")
 class SnapmTests(unittest.TestCase):
     """Test snapm module with devices"""
