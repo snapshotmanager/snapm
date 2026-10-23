@@ -398,18 +398,35 @@ class SnapmTestsSimple(unittest.TestCase):
         s = self._concrete_snapshot(snap_alias, origin_alias, "/mnt/origin")
 
         def mountinfo(lines):
+            # Index the entries the way MountInfoReader does: a mount with
+            # an anonymous superblock is found by the device number of the
+            # device it was mounted from as well as by the one the kernel
+            # reports for it.
+            def lookup_devno(devno):
+                return [
+                    entry
+                    for entry in lines.values()
+                    if entry.devno == devno
+                    or (
+                        os.major(entry.devno) == 0
+                        and os.stat(entry.what).st_rdev == devno
+                    )
+                ]
+
             return MagicMock(
                 wraps=None,
                 **{
                     "lookup_mount_point.side_effect": lambda path: lines.get(path),
-                    "device_mounted.side_effect": lambda dev: any(
-                        entry.devno == os.stat(dev).st_rdev for entry in lines.values()
+                    "lookup_devno.side_effect": lookup_devno,
+                    "device_mounted.side_effect": lambda dev: bool(
+                        lookup_devno(os.stat(dev).st_rdev)
                     ),
                 },
             )
 
-        def entry(devpath):
-            return SimpleNamespace(devno=os.stat(devpath).st_rdev, what=devpath)
+        def entry(devpath, anonymous=False):
+            devno = os.makedev(0, 42) if anonymous else os.stat(devpath).st_rdev
+            return SimpleNamespace(devno=devno, what=devpath)
 
         # The origin is mounted at the snapshot's mount point and the
         # snapshot itself is mounted elsewhere.
@@ -428,6 +445,14 @@ class SnapmTestsSimple(unittest.TestCase):
         table = mountinfo({"/mnt/origin": entry(snap_dev)})
         self.assertTrue(s.is_snapshot_mounted(table))
         self.assertFalse(s.is_origin_mounted(table))
+
+        # The origin carries a file system with an anonymous superblock:
+        # the device number the kernel reports for the mount is the
+        # st_rdev of nothing, so the origin is found through the index
+        # rather than by comparing with it.
+        table = mountinfo({"/mnt/origin": entry(origin_dev, anonymous=True)})
+        self.assertTrue(s.is_origin_mounted(table))
+        self.assertFalse(s.is_snapshot_mounted(table))
 
     def test_snapshot_mounted_checks_without_a_mount_point(self):
         """Test that a member with no mount point is never mounted."""

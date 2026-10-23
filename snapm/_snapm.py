@@ -1909,7 +1909,13 @@ class Snapshot(ABC):
         if devno is None:
             return False
         entry = mountinfo.lookup_mount_point(self.mount_point)
-        return entry is not None and entry.devno == devno
+        if entry is None:
+            return False
+        # Match through the device number index rather than against the
+        # device number of the mount: a file system with an anonymous
+        # superblock reports one that is the st_rdev of nothing, and would
+        # never equal the origin's however it is mounted.
+        return entry in mountinfo.lookup_devno(devno)
 
     def is_snapshot_mounted(self, mountinfo: "MountInfoReader") -> bool:
         """
