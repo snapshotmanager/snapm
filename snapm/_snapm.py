@@ -105,6 +105,9 @@ ETC_FSTAB = "/etc/fstab"
 #: Path to the mount table for the calling process
 PROC_MOUNTINFO = "/proc/self/mountinfo"
 
+#: Path to the userspace mount table maintained by libmount
+RUN_MOUNT_UTAB = "/run/mount/utab"
+
 DEFAULT_PERCENT_USED = 200.0
 DEFAULT_PERCENT_SIZE = 25.0
 
@@ -2500,6 +2503,177 @@ class MountInfoReader:
         return f"MountInfoReader(path='{self.path}')"
 
 
+class UtabReader:
+    """
+    A class to read and query the userspace mount table.
+
+    The kernel never sees a mount option in the "x-" namespace, so
+    mount(8) keeps those options in a table of its own, and umount(8)
+    removes the entry for a mount point as it unmounts it. An entry
+    therefore belongs to one mount: it appears when that mount is made
+    and goes when it is unmounted, where the kernel's own device numbers
+    and mount IDs describe a file system and are both reused by a later
+    mount of the same file system at the same path.
+
+    The table is maintained by libmount and its format is private to it,
+    so only the fields this needs are read and the rest of each entry is
+    passed over. A table that is not there is an empty one: nothing calls
+    this to find out what is mounted, only to ask whether a mount it has
+    already found carries an option, and on a system where no mount
+    carries one there is no table at all.
+
+    A table that is there and cannot be read is a different answer, and
+    ``readable`` tells the two apart. Without it a transient read error
+    would read as "this mount carries no option", which is the answer
+    that makes a caller act.
+    """
+
+    #: One parsed userspace mount table entry.
+    UtabEntry = collections.namedtuple("UtabEntry", ["what", "where", "options"])
+
+    def __init__(self, path: str = RUN_MOUNT_UTAB):
+        """
+        Initialise a ``UtabReader`` by reading and parsing ``path``.
+
+        :param path: The path to the userspace mount table to read.
+                     Defaults to '/run/mount/utab'.
+        :type path: ``str``
+        """
+        self.path = path
+        self.entries: List["UtabReader.UtabEntry"] = []
+
+        #: Whether the table was read. A table that is not there is
+        #: readable and empty; one that exists and could not be read is
+        #: neither, and what it would have said is unknown.
+        self.readable = True
+
+        self._read_utab()
+
+    def _parse_line(self, line: str) -> Optional["UtabReader.UtabEntry"]:
+        """
+        Parse one line of userspace mount table data.
+
+        A line is a series of space separated 'KEY=value' fields, with the
+        paths escaped as they are in fstab(5)::
+
+            SRC=/dev/vg/lv TARGET=/mnt ROOT=/ OPTS=x-snapm.managed=<uuid>
+
+        Which keys are present depends on the mount: a bind mount carries
+        a 'BINDSRC' as well, and a mount made with no userspace options
+        has no 'OPTS'. Anything but the mount point and the options is
+        ignored.
+
+        :param line: The line to parse.
+        :type line: ``str``
+        :returns: A ``UtabEntry``, or ``None`` if ``line`` names no mount
+                  point.
+        :rtype: ``Optional[UtabReader.UtabEntry]``
+        """
+        fields = {}
+        for field in line.split():
+            key, _, value = field.partition("=")
+            fields[key] = value
+
+        where = fields.get("TARGET")
+        if where is None:
+            _log_warn("Skipping malformed %s line: %s", self.path, line)
+            return None
+
+        return self.UtabEntry(
+            unescape_mounts(fields.get("SRC", "")),
+            unescape_mounts(where),
+            fields.get("OPTS", ""),
+        )
+
+    def _read_utab(self):
+        """
+        Read and parse the userspace mount table, populating
+        ``self.entries``.
+
+        A table that is not there describes no mounts, which is the answer
+        on a system where nothing is mounted with a userspace option at
+        all. It is not an error: the caller asks this whether a mount
+        carries an option, and the answer in that case is that it does
+        not.
+
+        Any other error leaves the table unread and ``readable`` false.
+        The entries stay empty so that nothing here has to cope with a
+        half-read table, and a caller that would act on a mount carrying
+        no option has to ask whether the table was read before believing
+        it.
+        """
+        try:
+            with open(self.path, "r", encoding="utf8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entry = self._parse_line(line)
+                    if entry is not None:
+                        self.entries.append(entry)
+        except FileNotFoundError as err:
+            _log_debug("No userspace mount table at '%s': %s", self.path, err)
+        except OSError as err:
+            self.readable = False
+            self.entries = []
+            _log_warn("Could not read the file '%s': %s", self.path, err)
+
+    def __iter__(self):
+        """
+        Allow iteration over the parsed userspace mount table entries.
+
+        :yields: A ``UtabEntry`` for each entry.
+        """
+        yield from self.entries
+
+    def lookup_mount_point(self, path: str) -> Optional["UtabReader.UtabEntry"]:
+        """
+        Return the userspace mount table entry for ``path``, or ``None``
+        if there is none.
+
+        The last entry for a path wins, as it does in
+        ``MountInfoReader.lookup_mount_point()``. The two are asked about
+        the same path and their answers are compared, so they have to
+        agree about which mount a path names when one is stacked over
+        another.
+
+        :param path: The mount point to look up.
+        :type path: ``str``
+        :returns: The ``UtabEntry`` for ``path``, or ``None``.
+        :rtype: ``Optional[UtabReader.UtabEntry]``
+        """
+        found = None
+        for entry in self.entries:
+            if entry.where == path:
+                found = entry
+        return found
+
+    def has_option(self, path: str, option: str) -> bool:
+        """
+        Test whether the mount at ``path`` carries the mount option
+        ``option``.
+
+        :param path: The mount point to test.
+        :type path: ``str``
+        :param option: The option to test for, including its value.
+        :type option: ``str``
+        :returns: ``True`` if the mount at ``path`` carries ``option``, or
+                  ``False`` otherwise.
+        :rtype: ``bool``
+        """
+        entry = self.lookup_mount_point(path)
+        if entry is None:
+            return False
+        return option in entry.options.split(",")
+
+    def __repr__(self):
+        """
+        Return a machine readable string representation of this
+        ``UtabReader``.
+        """
+        return f"UtabReader(path='{self.path}')"
+
+
 def get_device_path(by_type: str, identifier: str) -> Optional[str]:
     """
     Translates a filesystem UUID or label to its corresponding device path
@@ -2950,7 +3124,9 @@ __all__ = [
     "select_snapshot",
     "FsTabReader",
     "MountInfoReader",
+    "UtabReader",
     "PROC_MOUNTINFO",
+    "RUN_MOUNT_UTAB",
     "device_number",
     "unescape_mounts",
     "get_device_path",
