@@ -1268,11 +1268,20 @@ class Mounts:
         one asked for, and reporting one would name a mount as a set's
         that it is not (#1025).
 
+        An entry that is not kept is dropped from the mount table too, and
+        the mount root reported for its set is recomputed from what is
+        left. Filtering only the result would leave the set reported as
+        mounted at a path that ``umount()`` then declines to act on, which
+        is the same path by two names. Nothing here leaves this object or
+        touches the records, so this is as true of a command that only
+        reports as of one holding the lock.
+
         :param mounts: The candidate mounts to filter.
         :returns: Those of ``mounts`` the records account for, in order.
         """
         mountinfo = MountInfoReader()
         recorded = []
+        unrecorded = []
         for mount in mounts:
             record = self._state.get(mount.root)
             if record is None:
@@ -1298,6 +1307,15 @@ class Mounts:
                 )
             else:
                 recorded.append(mount)
+                continue
+            unrecorded.append(mount)
+
+        for mount in unrecorded:
+            if mount in self._mounts:
+                self._mounts.remove(mount)
+                # The discarded entry may have been the one reported for
+                # the set.
+                self._update_mount_root(mount.snapset)
         return recorded
 
     def _reap_stale_records(self) -> None:

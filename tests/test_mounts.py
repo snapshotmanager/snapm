@@ -2492,6 +2492,28 @@ class MountsUmountSelectionTests(unittest.TestCase):
 
         self.assertEqual(found, [mine])
 
+    def test_find_mounts_clears_a_mount_root_the_records_dropped(self):
+        """Test that the reported mount root follows the records.
+
+        A mount the records no longer account for is left out of the
+        report, so it must not go on being the path reported as the
+        set's mount root: the set would be listed as mounted somewhere
+        that 'snapset umount' then says it is not mounted at all.
+        """
+        mount = self._add_mount(default_root=True)
+        self.mounts._update_mount_root(self.snapset)
+        self.assertEqual(self.snapset.mount_root, mount.root)
+
+        # Another command unmounts the path and discards its record,
+        # leaving the copy read at discovery behind in memory.
+        mountstate.MountStateDir(self.state).discard(mount.root)
+
+        found = self.mounts.find_mounts(snapm.Selection(name=self.snapset.name))
+
+        self.assertEqual(found, [])
+        self.assertEqual(self.snapset.mount_root, "")
+        self.assertEqual(self.mounts._mounts, [])
+
     def test_umount_refuses_a_path_now_recorded_to_another_set(self):
         """Test that a record naming a different set does not match.
 
