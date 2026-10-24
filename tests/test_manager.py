@@ -8,6 +8,7 @@
 import unittest
 from unittest.mock import Mock, patch
 from datetime import datetime
+from types import SimpleNamespace
 import logging
 import os
 import os.path
@@ -149,20 +150,49 @@ class ManagerTestsSimple(unittest.TestCase):
             st = os.stat(_manager._SNAPM_MOUNTS_DIR)
             self.assertEqual(st.st_mode & 0o777, _manager._SNAPM_MOUNTS_DIR_MODE)
 
-    @patch("builtins.open", new_callable=unittest.mock.mock_open, read_data="/dev/sda1 /boot xfs rw 0 0\n/dev/mapper/vg-lv /home ext4 rw 0 0\n")
-    @patch("snapm.manager._manager.exists", return_value=True)
-    @patch("snapm.manager._manager.samefile", return_value=True)
-    def test_find_mount_point_for_devpath(self, mock_samefile, _mock_exists, _mock_open):
-        """Test resolving device path to mount point via /proc/mounts."""
-        mock_samefile.side_effect = lambda a, b: a == b
+    def test_find_mount_point_for_devpath(self):
+        """Test resolving device path to mount point by device number."""
+        mountinfo = SimpleNamespace(
+            lookup_device=lambda devpath: (
+                [SimpleNamespace(where="/home")]
+                if devpath == "/dev/mapper/vg-lv"
+                else []
+            )
+        )
 
         # Match found
-        mp = _manager._find_mount_point_for_devpath("/dev/mapper/vg-lv")
+        mp = _manager._find_mount_point_for_devpath("/dev/mapper/vg-lv", mountinfo)
         self.assertEqual(mp, "/home")
 
         # No match found
-        mp = _manager._find_mount_point_for_devpath("/dev/sdb1")
+        mp = _manager._find_mount_point_for_devpath("/dev/sdb1", mountinfo)
         self.assertEqual(mp, "")
+
+    def test_find_mount_point_for_devpath_reads_the_mount_table(self):
+        """Test that a mount table is read when none is passed in.
+
+        The mount to look up has to be chosen rather than assumed. The
+        root file system will not do on every host: an overlay or
+        container root has a source that names no device, some cloud
+        images record a '/dev/root' that does not exist, and a root that
+        is not the first mount of its device in table order resolves to
+        the earlier mount rather than to '/'. Take the first mount that
+        does satisfy all of that, and skip when the host has none.
+        """
+        mountinfo = snapm.MountInfoReader()
+        for entry in mountinfo:
+            if not entry.what.startswith("/dev/"):
+                continue
+            found = mountinfo.lookup_device(entry.what)
+            # Only the first mount of the device is the expected answer.
+            if found and found[0].where == entry.where:
+                break
+        else:
+            self.skipTest("No mount of a resolvable block device available")
+
+        self.assertEqual(
+            _manager._find_mount_point_for_devpath(entry.what), entry.where
+        )
 
     @patch("snapm.manager._manager.SNAPM_RUNTIME_DIR", "/run/snapm_test")
     @patch("snapm.manager._manager.exists")

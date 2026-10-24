@@ -11,7 +11,7 @@ Mount integration for snapshot manager
 from subprocess import run, CalledProcessError, TimeoutExpired
 from typing import Dict, Iterable, List, Optional, Union
 from abc import ABC, abstractmethod
-from stat import S_ISBLK, S_ISDIR, S_ISLNK, S_IWGRP, S_IWOTH
+from stat import S_ISDIR, S_ISLNK, S_IWGRP, S_IWOTH
 import collections
 import logging
 import shlex
@@ -29,13 +29,23 @@ from snapm import (
     SnapmUmountError,
     Selection,
     SnapshotSet,
+    MountInfoReader,
+    UtabReader,
     select_snapshot_set,
+    device_number,
     FsTabReader,
     unescape_mounts,
     get_device_fstype,
     resolve_device_spec,
     find_snapset_root,
     build_snapset_mount_list,
+)
+
+from ._mountstate import (
+    MOUNT_STATE_LOCK_TIMEOUT,
+    MountStateDir,
+    MountStateRecord,
+    mount_state_lock,
 )
 
 _log = logging.getLogger(__name__)
@@ -67,6 +77,9 @@ _SNAPM_MOUNT_HELPER_TIMEOUT = int(os.getenv("SNAPM_MOUNT_TIMEOUT", "60"))
 
 #: Path to container overlay bind mount
 _CONTAINERS_OVERLAY = "/var/lib/containers/storage/overlay"
+
+#: Mount option marking a mount as one snapm made (#1027)
+_SNAPM_MANAGED_OPTION = "x-snapm.managed"
 
 #: Taken from kernel source: fs/xfs/libxfs/xfs_log_format.h:
 _XFS_UQUOTA_ACCT = 0x0001  # user quota accounting ON
@@ -186,6 +199,42 @@ def _get_xfs_quota_options(devpath: str) -> str:
     return ",".join(options)
 
 
+def managed_option_for_uuid(snapset_uuid: str) -> str:
+    """
+    Return the mount option marking a mount as made by snapm for the
+    snapshot set with UUID ``snapset_uuid``.
+
+    This is the form the mount provenance records use: a record names
+    the set it describes by UUID, and has no ``SnapshotSet`` to hand.
+
+    :param snapset_uuid: The UUID of the snapshot set being mounted.
+    :type snapset_uuid: ``str``
+    :returns: The mount option marking a mount of that snapshot set.
+    :rtype: ``str``
+    """
+    return f"{_SNAPM_MANAGED_OPTION}={snapset_uuid}"
+
+
+def managed_option(snapset: SnapshotSet) -> str:
+    """
+    Return the mount option marking a mount as made by snapm for the
+    snapshot set ``snapset``.
+
+    The option is in the "x-" namespace, so the kernel never sees it:
+    mount(8) keeps it in /run/mount/utab and findmnt(8) reports it
+    alongside the kernel's own options. It names the snapshot set that is
+    mounted, and makes every mount snapm made findable wherever it is::
+
+        # findmnt -m -o TARGET,OPTIONS -O x-snapm.managed
+
+    :param snapset: The snapshot set being mounted.
+    :type snapset: ``SnapshotSet``
+    :returns: The mount option marking a mount of ``snapset``.
+    :rtype: ``str``
+    """
+    return managed_option_for_uuid(str(snapset.uuid))
+
+
 def _merge_options(opts_a, opts_b):
     """
     Merge two comma-separated mount options strings.
@@ -256,14 +305,33 @@ def _mount(
         mount_cmd.extend(["--type", fstype])
     if rbind:
         mount_cmd.append("--rbind")
-    if rprivate:
-        mount_cmd.append("--make-rprivate")
-    if unbindable:
-        mount_cmd.append("--make-unbindable")
 
     mount_cmd.extend(["--options", options, what, where])
-    _log_debug_mounts("Calling %s", " ".join(mount_cmd))
+    _run_mount(mount_cmd, what, where)
 
+    # Change the propagation type with a second call to mount(8). Given on
+    # the same command line as the mount, a "--make-*" flag is applied by a
+    # second mount(2) that rewrites the userspace mount table entry, taking
+    # the "x-" options recorded with the mount out with it (#1027).
+    for flag in filter(
+        None,
+        [
+            "--make-rprivate" if rprivate else None,
+            "--make-unbindable" if unbindable else None,
+        ],
+    ):
+        _run_mount(["mount", flag, where], what, where)
+
+
+def _run_mount(mount_cmd: List[str], what: str, where: str):
+    """
+    Call the mount program and turn its failures into snapm exceptions.
+
+    :param mount_cmd: The mount command line to run.
+    :param what: The source of the mount operation, for error reporting.
+    :param where: The mount point, for error reporting.
+    """
+    _log_debug_mounts("Calling %s", " ".join(mount_cmd))
     try:
         run(
             mount_cmd,
@@ -366,37 +434,6 @@ class ProcMountsReader:
             if getattr(entry, key) == value:
                 yield entry
 
-    def lookup_device(self, devpath):
-        """
-        Find and generate all entries backed by the block device at ``devpath``.
-
-        Entries are matched on device number rather than on the device path, so
-        that the ``/dev/VG/LV`` paths used by ``Snapshot.devpath`` match the
-        ``/dev/mapper/VG-LV`` names reported in ``/proc/mounts``.
-
-        :param devpath: The path to the block device to search for.
-        :type devpath: str
-        :yields: A ``MountsEntry`` for each entry backed by ``devpath``.
-        """
-        try:
-            st = os.stat(devpath)
-        except OSError as err:
-            _log_debug_mounts("Cannot stat device %s: %s", devpath, err)
-            return
-        if not S_ISBLK(st.st_mode):
-            _log_debug_mounts("Path %s is not a block device", devpath)
-            return
-
-        for entry in self.entries:
-            if not entry.what.startswith("/dev/"):
-                continue
-            try:
-                entry_st = os.stat(entry.what)
-            except OSError:  # pragma: no cover
-                continue
-            if S_ISBLK(entry_st.st_mode) and entry_st.st_rdev == st.st_rdev:
-                yield entry
-
     def submounts(self, root):
         """Iterate over submounts under the given mount point root.
 
@@ -436,7 +473,6 @@ class MountBase(ABC):
         self,
         mount_points: Iterable[str],
         submounts: List[str],
-        # pmr: Optional[ProcMountsReader] = None,
         name_map: Optional[Dict[str, str]] = None,
     ):
         """
@@ -590,6 +626,7 @@ class Mount(MountBase):
         snapset: SnapshotSet,
         mount_root: str,
         discover: bool = False,
+        root_device: Optional[str] = None,
     ):
         """
         Initialize a new Mount instance for the given snapshot set. If ``discover``
@@ -605,6 +642,10 @@ class Mount(MountBase):
                          and discover its submounts. If False, prepare a new mount
                          object without validation.
         :type discover: ``bool``
+        :param root_device: The device to mount at ``mount_root``. One is
+                            looked up with ``find_snapset_root()`` when it is
+                            ``None``.
+        :type root_device: ``Optional[str]``
         :raises SnapmPathError: If mount_root is not a directory, or if discover is True
                                 and mount_root is not a mount point.
         """
@@ -614,6 +655,9 @@ class Mount(MountBase):
 
         # The snapshot set that this mount belongs to.
         self.snapset: Optional[SnapshotSet] = snapset
+
+        # The device to mount at self.root.
+        self.root_device: Optional[str] = root_device
 
         if discover:
             if not os.path.ismount(mount_root):
@@ -633,22 +677,81 @@ class Mount(MountBase):
                 self.snapset.mount_points, submounts, name_map=name_map
             )
 
+    def _bind_api_filesystems(self, options: str):
+        """
+        Recursively bind mount the host's API file systems into this mount.
+
+        :param options: Mount options to apply to each bind mount.
+        :type options: ``str``
+        """
+        for what in _BIND_MOUNTS:
+            if not os.path.exists(what) or not os.path.ismount(what):
+                continue
+            where = os.path.join(self.root, what.lstrip("/"))
+            if not os.path.isdir(where):
+                _log_warn(
+                    "Bind mount point %s does not exist in snapshot set %s, skipping mount",
+                    where,
+                    self.snapset.name,
+                )
+                continue
+            _mount(what, where, options=options, rbind=True, rprivate=True)
+
+    def _rollback_mount(self, err: Exception):
+        """
+        Unmount whatever a failed mount operation left behind.
+
+        :param err: The error that failed the mount operation.
+        :type err: ``Exception``
+        """
+        _log_warn(
+            "Mount operation failed for %s at %s: %s. Rolling back.",
+            self.snapset.name,
+            self.root,
+            err,
+        )
+        # Discover all submounts and unmount in depth-first order.
+        pmr = ProcMountsReader()
+        rollback_mounts = [submount.where for submount in pmr.submounts(self.root)]
+        rollback_mounts.append(self.root)  # Include root itself
+        rollback_mounts.sort(key=lambda mp: mp.count("/"), reverse=True)
+
+        for mount_path in rollback_mounts:
+            if not os.path.ismount(mount_path):
+                continue
+            try:
+                _umount(mount_path)
+            except SnapmUmountError as cleanup_err:
+                _log_warn("Failed to roll back mount '%s': %s", mount_path, cleanup_err)
+
     def _do_mount(self):
         """
         Mount the configured snapshot set and its submounts at `self.root`.
         """
+        # Tag every mount in the tree so that an administrator can list the
+        # mounts snapm made, wherever they are, with
+        # "findmnt -O x-snapm.managed" (#1027).
+        managed = managed_option(self.snapset)
+
         try:
             # 0. Initialise FsTabReader
             fstab = FsTabReader()
 
-            # 1. Find and mount the snapshot set root filesystem and make it unbindable.
-            root_device = find_snapset_root(self.snapset, fstab)
+            # 1. Find and mount the snapshot set root filesystem and make it
+            #    unbindable. The caller settles the root device when there is
+            #    a provenance record to agree with (#1031).
+            root_device = self.root_device or find_snapset_root(self.snapset, fstab)
             try:
                 root_opts = next(fstab.lookup("where", "/")).options
             except StopIteration:
                 _log_warn("No entry matching mount point '/' found in fstab")
                 root_opts = "defaults"
-            _mount(root_device, self.root, options=root_opts, unbindable=True)
+            _mount(
+                root_device,
+                self.root,
+                options=_merge_options(root_opts, managed),
+                unbindable=True,
+            )
 
             # 2. Build an auxiliary mount list from the SnapshotSet/FsTabReader.
             mount_list = build_snapset_mount_list(self.snapset, fstab)
@@ -664,43 +767,15 @@ class Mount(MountBase):
                         self.snapset.name,
                     )
                     continue
-                _mount(what, where, fstype=fstype, options=options)
+                _mount(
+                    what, where, fstype=fstype, options=_merge_options(options, managed)
+                )
 
             # 4. Recursively bind mount API file systems from the host.
-            for what in _BIND_MOUNTS:
-                if os.path.exists(what) and os.path.ismount(what):
-                    where = os.path.join(self.root, what.lstrip("/"))
-                    if not os.path.isdir(where):
-                        _log_warn(
-                            "Bind mount point %s does not exist in snapshot set %s, skipping mount",
-                            where,
-                            self.snapset.name,
-                        )
-                        continue
-                    _mount(what, where, rbind=True, rprivate=True)
+            self._bind_api_filesystems(managed)
 
         except (ValueError, SnapmError, StopIteration) as err:
-            # Rollback: discover all submounts and unmount in depth-first order
-            _log_warn(
-                "Mount operation failed for %s at %s: %s. Rolling back.",
-                self.snapset.name,
-                self.root,
-                err,
-            )
-            pmr = ProcMountsReader()
-            rollback_mounts = [submount.where for submount in pmr.submounts(self.root)]
-            rollback_mounts.append(self.root)  # Include root itself
-            rollback_mounts.sort(key=lambda mp: mp.count("/"), reverse=True)
-
-            for mount_path in rollback_mounts:
-                if not os.path.ismount(mount_path):
-                    continue
-                try:
-                    _umount(mount_path)
-                except SnapmUmountError as cleanup_err:
-                    _log_warn(
-                        "Failed to roll back mount '%s': %s", mount_path, cleanup_err
-                    )
+            self._rollback_mount(err)
             raise
 
     def _do_umount(self):
@@ -826,18 +901,27 @@ class Mounts:
     set mounts in the snapm runtime directory (normally /run/snapm/mounts).
     """
 
-    def __init__(self, manager, mounts_dir: str):
+    def __init__(self, manager, mounts_dir: str, state_dir: str, lock_dir: str):
         """
         Initialise a new `Mounts` object.
 
         :param manager: The `Manager` object that this instance belongs to.
         :param mounts_dir: The directory under which mounts are managed.
+        :param state_dir: The directory holding the mount provenance
+                          records (#1025).
+        :param lock_dir: The directory holding the lock that serialises
+                         changes to the mount state.
         """
         self._manager = manager
+        self._lock_dir = lock_dir
+        #: How long to wait for the mount state lock. Overridden by the
+        #: tests, which have no reason to wait out the default.
+        self._lock_timeout = MOUNT_STATE_LOCK_TIMEOUT
         # Every mount lookup is a string comparison against a path the
         # kernel reported, and the kernel reports resolved paths: canonicalise
         # the base once here so that the paths built from it match (#1029).
         self._root = os.path.realpath(mounts_dir)
+        self._state = MountStateDir(state_dir)
         self._mounts = []
         self._sys_mount = SysMount()
         self.discover_mounts()
@@ -858,8 +942,8 @@ class Mounts:
         A snapshot set may be mounted at more than one path at a time: the
         canonical mount is the first one discovered or created, and is the
         mount reported as the set's mount root. Entries describing a path
-        that is no longer mounted are discarded by
-        ``_prune_stale_mounts()``, which every caller runs first.
+        that is no longer mounted are dropped by
+        ``_forget_stale_mounts()``, which every caller runs first.
 
         :param snapset: The snapshot set to look up.
         :returns: A `Mount` object, or ``None`` if the set is not mounted.
@@ -904,8 +988,13 @@ class Mounts:
                                 owned by this process and writable by its
                                 owner alone.
         """
+        # stat(), not lstat(): the mounts directory was resolved with
+        # realpath() when this object was built, so there is no final symbolic
+        # link left here for lstat() to catch (#1029). A symbolic link planted
+        # in place of the mounts directory itself is refused by
+        # _check_snapm_dir(), before the Manager creates this object.
         try:
-            st = os.lstat(self._root)
+            st = os.stat(self._root)
         except OSError as err:
             raise SnapmPathError(
                 f"Mounts directory is not accessible: {self._root}"
@@ -926,15 +1015,16 @@ class Mounts:
         Test whether ``path`` is a mount point snapm created, and may
         therefore remove.
 
-        Only paths beneath the mounts directory are snapm's to create and
-        remove. A mount point nominated with ``--mount-root`` belongs to
-        whoever made it, and is refused if it is in the mounts directory,
-        so the two cannot be confused here.
+        The answer is the one recorded when the set was mounted there: a
+        default mount point in the mounts directory is snapm's to remove,
+        and a mount point nominated with ``--mount-root`` belongs to
+        whoever made it. A path with no record is not snapm's at all.
 
         :param path: The mount point to test.
         :returns: ``True`` if snapm created ``path``, or ``False`` otherwise.
         """
-        return os.path.dirname(path) == self._root
+        record = self._state.get(path)
+        return record is not None and record.created_mount_point
 
     def _check_mount_point(self, path: str) -> str:
         """
@@ -956,10 +1046,10 @@ class Mounts:
         real_path = os.path.realpath(path)
 
         # Mount points in the mounts directory are snapm's own, created and
-        # removed with the mount: a nominated one is neither. Allowing both
-        # kinds there makes _owns_mount_point() ambiguous (#1025). The test
-        # is made against the resolved path so that a link to a path in the
-        # mounts directory does not slip past it.
+        # removed with the mount: a nominated one is neither, and one
+        # planted there would collide with the default mount point of a set
+        # named for it. The test is made against the resolved path so that a
+        # link to a path in the mounts directory does not slip past it.
         if real_path == self._root or real_path.startswith(self._root + os.sep):
             raise SnapmPathError(
                 f"Mount point is within the snapm mounts directory "
@@ -1009,23 +1099,29 @@ class Mounts:
         canonical = self._canonical_mount(snapset)
         snapset.mount_root = canonical.root if canonical is not None else ""
 
-    def _prune_stale_mounts(self, snapset: Optional[SnapshotSet] = None) -> None:
+    def _forget_stale_mounts(
+        self, snapset: Optional[SnapshotSet] = None
+    ) -> List[Mount]:
         """
-        Discard the mount table entries that no longer describe a mount.
+        Drop the mount table entries that no longer describe a mount, and
+        return them.
 
         A snapshot set unmounted outside snapm, or one whose mount point
         could not be removed when it was unmounted, leaves an entry naming a
-        path with nothing mounted on it. Until it is discarded the set looks
+        path with nothing mounted on it. Until it is dropped the set looks
         mounted there: the path is reported as the set's mount root, it
         blocks mounting the set there again, and it counts towards the
         ambiguity check in ``umount()``.
 
-        The mount point goes with the entry when snapm created it and
-        nothing is mounted on it any more. A nominated mount root is left
-        alone: it belongs to whoever made it.
+        Nothing here leaves this object: the entries are removed from the
+        list in memory and the reported mount root is recomputed from what
+        is left, both of which follow from the mount table as it is now.
+        Removing what the dropped entries left on disk is
+        ``_remove_stale_mounts()``'s to do, and needs the lock.
 
-        :param snapset: Optional snapshot set to limit pruning to. All
-                        snapshot sets are pruned when it is ``None``.
+        :param snapset: Optional snapshot set to limit this to. All
+                        snapshot sets are considered when it is ``None``.
+        :returns: The entries that were dropped, in mount table order.
         """
         stale = [
             mount
@@ -1038,6 +1134,25 @@ class Mounts:
                 "Discarding stale mount for %s at '%s'", mount.snapset.name, mount.root
             )
             self._mounts.remove(mount)
+            # The discarded entry may have been the one reported for the set.
+            self._update_mount_root(mount.snapset)
+        return stale
+
+    def _remove_stale_mounts(self, stale: List[Mount]) -> None:
+        """
+        Remove what the mounts dropped by ``_forget_stale_mounts()`` left
+        behind: the record of each, and the mount point when snapm made it.
+
+        A nominated mount root is left alone: it belongs to whoever made
+        it.
+
+        This writes to the mount state, so the caller holds the mount
+        state lock.
+
+        :param stale: The dropped entries, as returned by
+                      ``_forget_stale_mounts()``.
+        """
+        for mount in stale:
             if self._owns_mount_point(mount.root):
                 try:
                     os.rmdir(mount.root)
@@ -1045,117 +1160,338 @@ class Mounts:
                     _log_warn(
                         "Could not remove stale mount point '%s': %s", mount.root, err
                     )
-            # The discarded entry may have been the one reported for the set.
-            self._update_mount_root(mount.snapset)
+            self._state.discard(mount.root)
 
     @staticmethod
-    def _snapset_root_device(
-        snapset: SnapshotSet, pmr: ProcMountsReader
-    ) -> Optional[str]:
+    def _record_is_live(
+        record: MountStateRecord, mountinfo: MountInfoReader, utab: UtabReader
+    ) -> bool:
         """
-        Find the device that is mounted at the mount root of ``snapset``.
+        Test whether the mount described by ``record`` is still mounted.
 
-        This is the snapshot set's root member if it has one, and the host
-        root file system otherwise: see ``Mount._do_mount()``, which always
-        mounts the device returned by ``find_snapset_root()`` at the mount
-        root before mounting the remaining members beneath it.
+        The recorded mount path has to still be a mount point, and the
+        device mounted there has to still be the one recorded. Checking the
+        device as well distinguishes a snapshot set that is still mounted
+        from a mount point that snapm's mount was taken off and something
+        else was then mounted on: unmounting the latter would take out a
+        mount that is not snapm's (#1025).
 
-        :param snapset: The snapshot set to check.
-        :param pmr: A ``ProcMountsReader`` instance to use.
-        :returns: A device path, or ``None`` if no device can be determined.
+        The device number recorded once the mount was made is the one the
+        kernel reports for the mount, so it is compared with the mount
+        table directly. A record with none was written by a command that
+        never reached the end of its mount, and names only the device it
+        set out to mount: match that through the mount table index, which
+        resolves a device to its mounts whether or not the file system
+        mounted from it has an anonymous superblock.
+
+        The device alone identifies a file system, not a mount of one. A
+        record outlives a mount taken down outside snapm until the next
+        command that writes reaps it, so an administrator who mounts the
+        same snapshot device at the same path in the meantime makes a
+        mount that answers to the recorded device, and snapm would then
+        treat it as its own and unmount it. Require the option that marks
+        a mount as snapm's as well, which mount(8) records with the mount
+        and umount(8) takes away with it: the administrator's mount does
+        not carry it, and the kernel's mount ID is no help here because it
+        is reused by the next mount at the same path.
+
+        :param record: The mount provenance record to verify.
+        :param mountinfo: A ``MountInfoReader`` instance to use.
+        :param utab: A ``UtabReader`` instance to use.
+        :returns: ``True`` if the recorded mount is still present.
         """
-        for snapshot in snapset.snapshots:
-            if snapshot.mount_point == "/":
-                # An inactive root member has no devpath: the snapshot set
-                # cannot be mounted without it.
-                return snapshot.devpath or None
-        for entry in pmr.lookup("where", "/"):
-            return entry.what
-        return None  # pragma: no cover
+        entry = mountinfo.lookup_mount_point(record.mount_path)
+        if entry is None:
+            _log_debug_mounts(
+                "Nothing is mounted at recorded mount path '%s'", record.mount_path
+            )
+            return False
+
+        if record.mount_devno is not None:
+            matched = entry.devno == record.mount_devno
+        else:
+            matched = entry in mountinfo.lookup_devno(record.root_devno)
+
+        if not matched:
+            _log_debug_mounts(
+                "Mount at '%s' is not the recorded device %s (%d:%d)",
+                record.mount_path,
+                record.root_device,
+                os.major(record.root_devno),
+                os.minor(record.root_devno),
+            )
+            return False
+
+        # A record written where the option could not be read has none to
+        # check: that is a system whose mount(8) keeps no userspace mount
+        # table, and the device is all there is to go on there.
+        option = managed_option_for_uuid(record.snapset_uuid)
+        if record.managed_option and not utab.has_option(record.mount_path, option):
+            _log_debug_mounts(
+                "Mount at '%s' is not the recorded mount: it does not carry %s",
+                record.mount_path,
+                option,
+            )
+            return False
+        return True
 
     @staticmethod
-    def _snapset_mount_roots(snapset: SnapshotSet, pmr: ProcMountsReader) -> List[str]:
+    def _mounted_devno(mount_path: str) -> Optional[int]:
         """
-        Find the paths at which the snapshot set ``snapset`` is currently
-        mounted by looking up its member devices in ``/proc/mounts``.
+        Return the device number the kernel reports for the file system
+        mounted at ``mount_path``.
 
-        Each member snapshot is mounted at ``<root>/<mount point>`` within the
-        snapshot set mount tree, so the mount root is recovered by stripping
-        the member's own mount point from the path reported for its device.
-
-        Stripping a suffix does not on its own prove that the result is a
-        snapshot set mount root: a member mounted by hand at ``/data/opt``
-        yields the root ``/data``. Candidate roots are therefore accepted only
-        if the snapshot set's root device is mounted there, which is the
-        condition ``Mount._do_mount()`` establishes when the set is mounted.
-
-        :param snapset: The snapshot set to locate.
-        :param pmr: A ``ProcMountsReader`` instance to use.
-        :returns: A sorted list of distinct mount roots for ``snapset``.
+        :param mount_path: The mount point to read the device number of.
+        :returns: The device number of the mount at ``mount_path``, or
+                  ``None`` if nothing is mounted there.
         """
-        root_device = Mounts._snapset_root_device(snapset, pmr)
-        if root_device is None:
-            return []
-        mount_roots = {entry.where for entry in pmr.lookup_device(root_device)}
+        entry = MountInfoReader().lookup_mount_point(mount_path)
+        if entry is None:  # pragma: no cover
+            _log_warn("Nothing is mounted at '%s' after mounting it", mount_path)
+            return None
+        return entry.devno
 
-        roots = set()
-        for snapshot in snapset.snapshots:
-            mount_point = snapshot.mount_point
-            if not mount_point:
+    @staticmethod
+    def _mount_is_marked(mount_path: str, snapset: SnapshotSet) -> bool:
+        """
+        Test whether the mount just made at ``mount_path`` carries the
+        option marking it as a mount of ``snapset`` made by snapm.
+
+        The option is passed to every mount in the tree, so a mount that
+        does not have it is one whose userspace mount table entry was
+        never written: mount(8) keeps no such table on this system, or
+        could not write to it. Verification notes the difference rather
+        than insisting, since requiring an option that is never recorded
+        would make every mount here unrecognisable to the next command.
+
+        :param mount_path: The mount point to read the options of.
+        :param snapset: The snapshot set mounted there.
+        :returns: ``True`` if the mount is marked as snapm's.
+        """
+        if UtabReader().has_option(mount_path, managed_option(snapset)):
+            return True
+        _log_warn(
+            "Mount of snapshot set %s at '%s' is not marked with %s: it can "
+            "only be told from another mount of the same device there by "
+            "the device itself",
+            snapset.name,
+            mount_path,
+            _SNAPM_MANAGED_OPTION,
+        )
+        return False
+
+    def _discard_record(self, record: MountStateRecord) -> None:
+        """
+        Discard the record for a mount that is no longer present, removing
+        the mount point with it if it was snapm's to remove.
+
+        :param record: The mount provenance record to discard.
+        """
+        _log_debug_mounts(
+            "Discarding stale mount state record for %s at '%s'",
+            record.snapset_name,
+            record.mount_path,
+        )
+        if record.created_mount_point:
+            try:
+                os.rmdir(record.mount_path)
+            except OSError as err:
+                _log_warn(
+                    "Could not remove stale mount point '%s': %s",
+                    record.mount_path,
+                    err,
+                )
+        self._state.discard(record.mount_path)
+
+    def _refresh_state(self) -> None:
+        """
+        Re-read the mount state records.
+
+        The copy in memory was read when this object was built, which may
+        be a long time ago for a caller that keeps a ``Manager`` around,
+        and another command may have mounted or unmounted something
+        since. What follows has to be decided from the records as they
+        are now rather than as they were at discovery.
+
+        A command that is about to change the mount state does this with
+        the lock held, so that what it read stays true for as long as it
+        acts on it. A command that only reports does it without, and
+        answers with what was true when it looked.
+
+        :raises SnapmPathError: If the record directory cannot be read.
+        """
+        self._state.load()
+
+    def _recorded_mounts(self, mounts: List[Mount]) -> List[Mount]:
+        """
+        Return those of ``mounts`` the records still account for.
+
+        An entry says what was mounted at a path when it was discovered,
+        and nothing but the record says what is mounted there now: the
+        path being a mount point only says that something is. By the time
+        the entry is used another command may have unmounted it, and an
+        administrator or another command may have mounted something else
+        there, including a different snapshot set.
+
+        An entry is kept only when a record for its path exists, names
+        the same snapshot set, and still describes what is mounted there.
+        Anything else is a mount this object no longer knows the truth
+        about: acting on one would unmount a file system that is not the
+        one asked for, and reporting one would name a mount as a set's
+        that it is not (#1025).
+
+        An entry that is not kept is dropped from the mount table too, and
+        the mount root reported for its set is recomputed from what is
+        left. Filtering only the result would leave the set reported as
+        mounted at a path that ``umount()`` then declines to act on, which
+        is the same path by two names. Nothing here leaves this object or
+        touches the records, so this is as true of a command that only
+        reports as of one holding the lock.
+
+        :param mounts: The candidate mounts to filter.
+        :returns: Those of ``mounts`` the records account for, in order.
+        """
+        mountinfo = MountInfoReader()
+        utab = UtabReader()
+        recorded = []
+        unrecorded = []
+        for mount in mounts:
+            record = self._state.get(mount.root)
+            if record is None:
+                _log_warn(
+                    "Ignoring mount at '%s': it is no longer recorded as a "
+                    "mount of snapshot set %s",
+                    mount.root,
+                    mount.snapset.name,
+                )
+            elif record.snapset_uuid != str(mount.snapset.uuid):
+                _log_warn(
+                    "Ignoring mount at '%s': it is now recorded as a mount "
+                    "of snapshot set %s, not %s",
+                    mount.root,
+                    record.snapset_name,
+                    mount.snapset.name,
+                )
+            elif not self._record_is_live(record, mountinfo, utab):
+                _log_warn(
+                    "Ignoring mount at '%s': its record no longer describes "
+                    "what is mounted there",
+                    mount.root,
+                )
+            else:
+                recorded.append(mount)
                 continue
-            if not snapshot.devpath:
-                # A snapshot with no devpath is inactive and cannot be mounted.
-                continue
-            for entry in pmr.lookup_device(snapshot.devpath):
-                if mount_point == "/":
-                    candidate = entry.where
-                else:
-                    suffix = "/" + mount_point.strip("/")
-                    if not entry.where.endswith(suffix):
-                        continue
-                    candidate = entry.where[: -len(suffix)]
-                if not candidate or candidate == "/":
-                    # A member mounted at its own mount point on the host.
-                    continue
-                if candidate in mount_roots:
-                    roots.add(candidate)
-        return sorted(roots)
+            unrecorded.append(mount)
+
+        for mount in unrecorded:
+            if mount in self._mounts:
+                self._mounts.remove(mount)
+                # The discarded entry may have been the one reported for
+                # the set.
+                self._update_mount_root(mount.snapset)
+        return recorded
+
+    def _reap_stale_records(self) -> None:
+        """
+        Remove the mount state records that no longer describe a mount,
+        along with the mount points snapm created for them.
+
+        Discovery leaves them alone, so this is where they go. A record is
+        written before the mount it describes is made, which means a
+        record for a path with nothing mounted on it is as likely to
+        belong to a mount another process is making right now as to one
+        that is over. Reaping from the commands that mount and unmount,
+        rather than from discovery, keeps every read-only command out of
+        the way of a mount in progress: a 'snapset list' or a scheduled
+        garbage collection can no longer unlink the record of a mount
+        that is halfway made, nor remove the directory it is about to be
+        mounted on.
+
+        The caller holds the mount state lock, so no other command is
+        mounting or unmounting while this runs.
+        """
+        self._state.reap_partial_records()
+        mountinfo = MountInfoReader()
+        utab = UtabReader()
+        for record in self._state.records:
+            if not self._record_is_live(record, mountinfo, utab):
+                self._discard_record(record)
 
     def discover_mounts(self):
         """
         Discover and validate existing snapshot set mounts.
 
-        Mounts are located by matching each snapshot set's member devices
-        against ``/proc/mounts``, so snapshot sets mounted at a custom mount
-        base are found without needing the mount root to be persisted
-        anywhere.
+        Mounts are found from the provenance records snapm writes as it
+        mounts a snapshot set, so a set mounted at a custom mount root is
+        found again without the path having to be derived from the mount
+        table, and a snapshot that an administrator mounted by hand is not
+        mistaken for a mount of snapm's (#1025).
+
+        Nothing here writes. A record describing a mount that is no longer
+        present is passed over rather than discarded: discovery runs for
+        every command, including those that only report, and removing a
+        record is ``_reap_stale_records()``'s to do.
         """
         _log_info("Discovering snapshot set mounts")
         self._mounts.clear()
-        pmr = ProcMountsReader()
+        self._state.load()
+        mountinfo = MountInfoReader()
+        utab = UtabReader()
+
+        by_uuid = {str(s.uuid): s for s in self._manager.snapshot_sets}
+
+        for record in self._state.records:
+            if not self._record_is_live(record, mountinfo, utab):
+                _log_debug_mounts(
+                    "Ignoring mount state record for '%s': not a managed"
+                    " mount point",
+                    record.mount_path,
+                )
+                continue
+
+            # A set is identified by the UUID the record was written with,
+            # and by nothing else. The name is recorded to make the record
+            # readable: matching on it would attach the mount to whichever
+            # set holds the name now, which need not be the set that was
+            # mounted.
+            snapset = by_uuid.get(record.snapset_uuid)
+            if snapset is None:
+                # The mount is still up but the set it belongs to is gone,
+                # so there is nothing to attach the mount to. The record is
+                # kept: it is the only description of a mount that still
+                # needs tearing down.
+                _log_warn(
+                    "Snapshot set %s (%s) is mounted at '%s' but is no longer "
+                    "known: unmount it by hand",
+                    record.snapset_name,
+                    record.snapset_uuid,
+                    record.mount_path,
+                )
+                continue
+
+            try:
+                mount = Mount(snapset, record.mount_path, discover=True)
+            except SnapmPathError as err:  # pragma: no cover
+                # The recorded path was a mount point a moment ago, so this
+                # is only reached if it is unmounted while discovery runs.
+                _log_info(
+                    "Ignoring invalid mount path: '%s' (%s)", record.mount_path, err
+                )
+                continue
+            self._mounts.append(mount)
+            _log_info(
+                "Found snapshot set mount at '%s' (mounted=%s)",
+                mount.root,
+                mount.mounted,
+            )
 
         for snapset in self._manager.snapshot_sets:
-            roots = self._snapset_mount_roots(snapset, pmr)
+            roots = [mount.root for mount in self._snapset_mounts(snapset)]
             if len(roots) > 1:
                 _log_warn(
                     "Snapshot set %s is mounted at multiple paths: %s",
                     snapset.name,
                     ", ".join(roots),
-                )
-            for root in roots:
-                try:
-                    mount = Mount(snapset, root, discover=True)
-                except SnapmPathError as err:  # pragma: no cover
-                    # Mount roots are mount points read from /proc/mounts, so
-                    # this is only reached if one is unmounted while discovery
-                    # is running.
-                    _log_info("Ignoring invalid mount path: '%s' (%s)", root, err)
-                    continue
-                self._mounts.append(mount)
-                _log_info(
-                    "Found snapshot set mount at '%s' (mounted=%s)",
-                    mount.root,
-                    mount.mounted,
                 )
             self._update_mount_root(snapset)
 
@@ -1169,6 +1505,10 @@ class Mounts:
         """
         Mount the snapshot set `snapset`.
 
+        The mount state lock is held for the whole operation, so that the
+        record written before the mount and the update written after it
+        are one change as far as any other command is concerned.
+
         :param snapset: The snapshot set to operate on.
         :param mount_root: Optional path to mount the snapshot set at, in
                            place of the default mount point beneath the
@@ -1176,6 +1516,23 @@ class Mounts:
                            exist: snapm neither creates it nor removes it
                            when the set is unmounted.
         """
+        with mount_state_lock(self._lock_dir, timeout=self._lock_timeout):
+            return self._locked_mount(snapset, mount_root=mount_root)
+
+    # pylint: disable=too-many-statements
+    def _locked_mount(
+        self,
+        snapset: SnapshotSet,
+        mount_root: Optional[str] = None,
+    ) -> Mount:
+        """
+        Mount the snapshot set `snapset` with the mount state lock held.
+
+        :param snapset: The snapshot set to operate on.
+        :param mount_root: Optional path to mount the snapshot set at.
+        """
+        self._refresh_state()
+
         if mount_root is None:
             self._check_mounts_dir()
             mount_path = self._default_mount_path(snapset)
@@ -1184,14 +1541,18 @@ class Mounts:
 
         # Discard any entry for a path that is no longer mounted, along with
         # the mount point it names, so that the set can be mounted there
-        # again.
-        self._prune_stale_mounts(snapset)
+        # again. This command writes to the record directory, so it is also
+        # the point at which the records discovery passed over are tidied
+        # up.
+        self._remove_stale_mounts(self._forget_stale_mounts(snapset))
+        self._reap_stale_records()
 
         # A snapshot set may be mounted at more than one path at a time. An
         # explicit mount root asks for a mount at a specific path, so only a
         # mount already rooted there will do: with no mount root any mount of
-        # the set is acceptable.
-        candidates = self._snapset_mounts(snapset)
+        # the set is acceptable. Only a path that still has a record is
+        # one of snapm's mounts.
+        candidates = self._recorded_mounts(self._snapset_mounts(snapset))
         if mount_root is not None:
             candidates = [mount for mount in candidates if mount.root == mount_path]
         if candidates:
@@ -1214,6 +1575,11 @@ class Mounts:
         # is refused, which stops one planted here in advance from
         # redirecting the mount; a link swapped in after this check still
         # wins, since mount(8) resolves the path again.
+        #
+        # A mount point in the mounts directory is snapm's to remove when
+        # the set is unmounted whether it was made here or left behind by an
+        # earlier mount; a nominated one never is.
+        created = mount_root is None
         if mount_root is None:
             try:
                 os.mkdir(mount_path)
@@ -1228,15 +1594,64 @@ class Mounts:
                     f"Could not create mount point {mount_path}: {err}"
                 ) from err
 
-        mount = Mount(snapset, mount_path)
         try:
+            # Settle the root device here and hand it to both the mount and
+            # the record, so that discovery verifies the device that was
+            # actually mounted rather than deriving a second answer that can
+            # differ from it (#1031).
+            root_device = find_snapset_root(snapset, FsTabReader())
+            root_devno = device_number(root_device)
+            if root_devno is None:
+                raise SnapmPathError(
+                    f"Root device for snapshot set {snapset.name} is not a "
+                    f"block device: {root_device}"
+                )
+
+            # Record the mount before making it. A record left behind by a
+            # mount that never happened is discarded by the next discovery
+            # pass, which verifies every record against the mount table; a
+            # mount made with no record is one snapm can never claim again.
+            record = MountStateRecord(
+                mount_path=mount_path,
+                snapset_name=snapset.name,
+                snapset_uuid=str(snapset.uuid),
+                root_device=root_device,
+                root_devno=root_devno,
+                created_mount_point=created,
+            )
+            self._state.add(record)
+
+            mount = Mount(snapset, mount_path, root_device=root_device)
             mount.mount()
+
+            # The mount is up: note the device number the kernel gave it,
+            # which is the one the mount table carries and is the only
+            # value that can be compared with it for a file system whose
+            # superblock is anonymous. Until this is written the record
+            # describes an intention; afterwards it describes a mount.
+            record.mount_devno = self._mounted_devno(mount_path)
+            record.managed_option = self._mount_is_marked(mount_path, snapset)
+            self._state.add(record)
         except (SnapmError, ValueError):
-            if self._owns_mount_point(mount_path):
-                try:
-                    os.rmdir(mount_path)
-                except OSError:
-                    pass  # pragma: no cover
+            # A rollback that cannot unmount what it mounted logs and
+            # carries on, so the tree may still be up at this point. The
+            # record is its only description: discard it only once nothing
+            # is mounted at the path, or the mount is left with nothing to
+            # find it by and has to be taken down by hand.
+            if os.path.ismount(mount_path):
+                _log_warn(
+                    "Snapshot set %s is still mounted at '%s' after a failed "
+                    "mount: keeping its mount state record",
+                    snapset.name,
+                    mount_path,
+                )
+            else:
+                self._state.discard(mount_path)
+                if created:
+                    try:
+                        os.rmdir(mount_path)
+                    except OSError:
+                        pass  # pragma: no cover
             raise
 
         self._mounts.append(mount)
@@ -1251,6 +1666,10 @@ class Mounts:
         """
         Unmount the snapshot set `snapset`.
 
+        The mount state lock is held for the whole operation, so that the
+        unmount and the discarding of the record that describes it are one
+        change as far as any other command is concerned.
+
         :param snapset: The snapshot set to operate on.
         :param mount_root: Optional mount point selecting the mount to
                            unmount. Only required when ``snapset`` is mounted
@@ -1260,11 +1679,27 @@ class Mounts:
                                     path and ``mount_root`` does not select
                                     exactly one of them.
         """
-        # Only the paths the set is still mounted at are candidates, and only
-        # they make the request ambiguous.
-        self._prune_stale_mounts(snapset)
+        with mount_state_lock(self._lock_dir, timeout=self._lock_timeout):
+            self._locked_umount(snapset, mount_root=mount_root)
 
-        candidates = self._snapset_mounts(snapset)
+    def _locked_umount(self, snapset: SnapshotSet, mount_root: Optional[str] = None):
+        """
+        Unmount the snapshot set `snapset` with the mount state lock held.
+
+        :param snapset: The snapshot set to operate on.
+        :param mount_root: Optional mount point selecting the mount to
+                           unmount.
+        """
+        self._refresh_state()
+
+        # Only the paths the set is still mounted at are candidates, and only
+        # they make the request ambiguous. This command writes to the record
+        # directory, so it is also the point at which the records discovery
+        # passed over are tidied up.
+        self._remove_stale_mounts(self._forget_stale_mounts(snapset))
+        self._reap_stale_records()
+
+        candidates = self._recorded_mounts(self._snapset_mounts(snapset))
         if mount_root is not None:
             # Mounts are recorded at the path mount(8) resolved them to, so
             # match the resolved path here too (#1029).
@@ -1284,7 +1719,19 @@ class Mounts:
         mount = candidates[0]
         mount.umount()
         if self._owns_mount_point(mount.root):
-            os.rmdir(mount.root)
+            try:
+                os.rmdir(mount.root)
+            except OSError as err:
+                # The unmount succeeded: the directory left behind is
+                # untidy, not a failure, and the cleanup below has to run
+                # either way. Reporting this as an error would report a
+                # successful unmount as a failed one, and leaving the
+                # record and the entry in place would leave both
+                # describing a mount that is gone.
+                _log_warn("Could not remove mount point '%s': %s", mount.root, err)
+
+        # The mount is gone: so is snapm's claim on the path.
+        self._state.discard(mount.root)
 
         # Update the mount table on success
         self._mounts.remove(mount)
@@ -1297,13 +1744,27 @@ class Mounts:
         Return a list of `Mount` objects describing the currently mounted
         snapshot sets managed by this `Mounts` instance.
 
-        Snapshot sets unmounted outside snapm are dropped before matching, so
-        that every mount returned is one that is still mounted.
+        Snapshot sets unmounted outside snapm are dropped before matching,
+        and the records are read again and consulted, so that every mount
+        returned is one that is still mounted and still the mount the
+        entry says it is. Without that a report can name a path that
+        another command has since unmounted and mounted a different
+        snapshot set on.
+
+        None of this writes, so reporting on mounts neither takes the
+        mount state lock nor waits on one. The answer is what was true
+        when it was read: a report cannot be made to stay true, only to
+        have been true, and holding the lock would not change that.
         """
-        self._prune_stale_mounts()
+        self._refresh_state()
+        self._forget_stale_mounts()
         selection = selection or Selection()
         selection.check_valid_selection(snapshot_set=True)
-        return [m for m in self._mounts if select_snapshot_set(selection, m.snapset)]
+        return [
+            mount
+            for mount in self._recorded_mounts(self._mounts)
+            if select_snapshot_set(selection, mount.snapset)
+        ]
 
     def get_sys_mount(self) -> SysMount:
         """

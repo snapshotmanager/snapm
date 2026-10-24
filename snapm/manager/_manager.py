@@ -17,7 +17,7 @@ import logging
 from time import time
 from math import floor
 from stat import S_ISBLK, S_ISDIR, S_ISLNK
-from os.path import exists, ismount, join, normpath, samefile
+from os.path import exists, ismount, join, normpath
 from json import JSONDecodeError
 from typing import Dict, List, Tuple, Union, TYPE_CHECKING
 from functools import wraps
@@ -53,6 +53,7 @@ from snapm import (
     is_size_policy,
     SnapStatus,
     SnapshotSet,
+    MountInfoReader,
     select_snapshot_set,
     select_snapshot,
 )
@@ -125,6 +126,12 @@ _SNAPM_MOUNTS_DIR = join(SNAPM_RUNTIME_DIR, "mounts")
 
 #: Permissions for mounts directory
 _SNAPM_MOUNTS_DIR_MODE = 0o700
+
+#: Path to the snapshot set mount state records
+_SNAPM_MOUNT_STATE_DIR = join(SNAPM_RUNTIME_DIR, "mount-state")
+
+#: Permissions for the mount state directory
+_SNAPM_MOUNT_STATE_DIR_MODE = 0o700
 
 #: Directory for snapshot set lock files
 _SNAPM_LOCK_DIR = join(SNAPM_RUNTIME_DIR, "lock")
@@ -394,8 +401,9 @@ def _check_snapset_mounted(snapset, operation):
 
     Operations that change the name or membership of a snapshot set cannot
     be carried out while the set is mounted: mount point paths embed the
-    snapshot set name and ``/proc/mounts`` records the device names that
-    were in use at mount time. ``SnapshotSet.rename()`` and
+    snapshot set name, and renaming a set changes the UUID that its mount
+    provenance record is keyed on, so a live mount tree is left behind
+    belonging to nothing. ``SnapshotSet.rename()`` and
     ``SnapshotSet.delete()`` enforce this too: checking here as well avoids
     tearing down manager state and boot entries for an operation that is
     going to be refused.
@@ -414,18 +422,25 @@ def _check_snapset_mounted(snapset, operation):
         )
 
 
-def _find_mount_point_for_devpath(devpath):
+def _find_mount_point_for_devpath(devpath, mountinfo=None):
     """
-    Return the first mount point found in /proc/mounts that corresponds to
-    ``device``, or the empty string if no mount point can be found.
+    Return the first mount point of the block device at ``devpath``, or the
+    empty string if it is not mounted.
+
+    The device is matched by device number, so the name it was mounted by
+    does not have to be the name ``devpath`` gives it (#1030).
+
+    :param devpath: The path to the block device to look up.
+    :type devpath: ``str``
+    :param mountinfo: An optional mount table to look ``devpath`` up in. One
+                      is read when it is ``None``.
+    :type mountinfo: ``Optional[MountInfoReader]``
+    :returns: The mount point of ``devpath``, or the empty string.
+    :rtype: ``str``
     """
-    with open("/proc/mounts", "r", encoding="utf8") as mounts:
-        for line in mounts:
-            fields = line.split(" ")
-            if exists(fields[0]):
-                if samefile(devpath, fields[0]):
-                    return fields[1]
-    return ""
+    mountinfo = mountinfo if mountinfo is not None else MountInfoReader()
+    entries = mountinfo.lookup_device(devpath)
+    return entries[0].where if entries else ""
 
 
 def _check_snapm_runtime_dir():
@@ -579,6 +594,16 @@ def _check_mounts_dir() -> str:
     """
     return _check_snapm_dir(
         _SNAPM_MOUNTS_DIR, _SNAPM_MOUNTS_DIR_MODE, "Mounts directory"
+    )
+
+
+def _check_mount_state_dir() -> str:
+    """
+    Check for the presence of the snapm mount state directory and create it
+    if necessary.
+    """
+    return _check_snapm_dir(
+        _SNAPM_MOUNT_STATE_DIR, _SNAPM_MOUNT_STATE_DIR_MODE, "Mount state directory"
     )
 
 
@@ -1031,6 +1056,15 @@ class Manager:
                 f"Failed to create mounts directory at {_SNAPM_MOUNTS_DIR}: {err}"
             ) from err
 
+        # Verify existence of the mount state record directory
+        try:
+            self._mount_state_dir = _check_mount_state_dir()
+        except (OSError, SnapmSystemError) as err:
+            raise SnapmSystemError(
+                f"Failed to create mount state directory at "
+                f"{_SNAPM_MOUNT_STATE_DIR}: {err}"
+            ) from err
+
         snapm_config = SnapmConfig.from_file(_SNAPM_CFG_PATH)
         self.disable_plugins = snapm_config.disable_plugins
 
@@ -1062,7 +1096,9 @@ class Manager:
 
         self.discover_snapshot_sets()
         self.scheduler = Scheduler(self, _SCHEDULE_D_PATH)
-        self.mounts = Mounts(self, self._mounts_dir)
+        self.mounts = Mounts(
+            self, self._mounts_dir, self._mount_state_dir, self._lock_dir
+        )
 
     def _load_plugin_config(self, plugin_name: str) -> ConfigParser:
         """
@@ -1597,10 +1633,13 @@ class Manager:
         origins = {}
         mounts = {}
 
+        # Read the mount table once for all the block device sources.
+        mountinfo = MountInfoReader()
+
         # 1. Check sources against provider plugins
         for source, provider in provider_map.items():
             if S_ISBLK(os.stat(source).st_mode):
-                mounts[source] = _find_mount_point_for_devpath(source)
+                mounts[source] = _find_mount_point_for_devpath(source, mountinfo)
                 origins[source] = source
                 mount = mounts[source]
                 if mount in provider_map:

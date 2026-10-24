@@ -1372,15 +1372,29 @@ omit \fB--mount-root\fP to mount beneath it. \fBsnapm\fP does not create the
 directory, and does not remove it when the snapshot set is unmounted.
 Its permissions are the administrator's to set, and any contents it has are
 shadowed while the snapshot set is mounted.
+.sp
+Every mount in the tree carries the \fBx-snapm.managed=\fP\fIuuid\fP mount
+option, naming the snapshot set that is mounted, so that the mounts
+\fBsnapm\fP made can be listed wherever they are:
+.sp
+.EX
+# findmnt -m -o TARGET,OPTIONS -O x-snapm.managed
+.EE
+.sp
+The option is in the "x-" namespace, so it is kept in
+\fI/run/mount/utab\fP by \fBmount\fP(8) rather than by the kernel, and
+\fBfindmnt\fP(8) only reports it in \fB--mtab\fP mode.
 .
 .TP
 .B snapm
 .CMD_SNAPSET_UMOUNT
 .br
 Unmount the specified snapshot set members. Snapshot set mounts are located
-by matching the set's member devices against the system mount table, so a
-snapshot set mounted with \fB--mount-root\fP is unmounted without needing to
-name that location again.
+from the records \fBsnapm\fP writes in \fI/run/snapm/mount-state\fP as it
+mounts a snapshot set, so a snapshot set mounted with \fB--mount-root\fP is
+unmounted without needing to name that location again. A snapshot mounted by
+hand has no such record and is never unmounted by \fBsnapm\fP, even when its
+device belongs to a snapshot set.
 .sp
 The \fB--mount-root\fP option selects which mount to unmount, and is only
 required when the snapshot set is mounted at more than one path. An
@@ -2373,6 +2387,17 @@ Snapshot set mounts are created in:
 .PP
 The snapshot set root volume is mounted to a directory named for the snapshot
 set.
+.PP
+A record of each mount \fBsnapm\fP makes is written to:
+.PP
+.I /run/snapm/mount-state
+.br
+.PP
+Each record is named for the path it describes, escaped as
+\fBsystemd-escape --path\fP escapes it, and holds the unescaped mount path,
+the name and UUID of the snapshot set mounted there, the device mounted at
+that path, and whether \fBsnapm\fP created the mount point and should remove
+it again.
 .
 .SH BUGS
 Please report bugs via the GitHub issue tracker:

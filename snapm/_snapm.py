@@ -8,7 +8,7 @@
 """
 Global definitions for the top-level snapm package.
 """
-from typing import List, Optional, TextIO, Union, TYPE_CHECKING
+from typing import Dict, List, Optional, TextIO, Union, TYPE_CHECKING
 from abc import ABC, abstractmethod
 from uuid import UUID, uuid5
 from datetime import datetime
@@ -101,6 +101,12 @@ _SIZE_SUFFIXES = {
 SECTOR_SIZE = 512
 
 ETC_FSTAB = "/etc/fstab"
+
+#: Path to the mount table for the calling process
+PROC_MOUNTINFO = "/proc/self/mountinfo"
+
+#: Path to the userspace mount table maintained by libmount
+RUN_MOUNT_UTAB = "/run/mount/utab"
 
 DEFAULT_PERCENT_USED = 200.0
 DEFAULT_PERCENT_SIZE = 25.0
@@ -1344,7 +1350,9 @@ class SnapshotSet:
                   ``SnapshotSet`` are currently mounted, or ``False``
                   otherwise.
         """
-        return any(s.origin_mounted for s in self.snapshots)
+        # Read the mount table once for the whole set.
+        mountinfo = MountInfoReader()
+        return any(s.is_origin_mounted(mountinfo) for s in self.snapshots)
 
     @property
     def snapshot_mounted(self):
@@ -1356,7 +1364,9 @@ class SnapshotSet:
                   ``SnapshotSet`` are currently mounted, or ``False``
                   otherwise.
         """
-        return any(s.snapshot_mounted for s in self.snapshots)
+        # Read the mount table once for the whole set.
+        mountinfo = MountInfoReader()
+        return any(s.is_snapshot_mounted(mountinfo) for s in self.snapshots)
 
     @property
     def mounted(self):
@@ -1437,9 +1447,10 @@ class SnapshotSet:
         _log_info(
             "Attempting rename for snapshot set '%s' to '%s'", self.name, new_name
         )
-        # Mount point paths embed the snapshot set name and /proc/mounts
-        # records the device names in use at mount time: renaming the set
-        # members out from under a live mount tree orphans it.
+        # Renaming the set members out from under a live mount tree orphans
+        # it: mount point paths embed the snapshot set name, and renaming
+        # the set changes the UUID that its mount provenance record is
+        # keyed on, so the mount stops being attributable to any set.
         if self.snapshot_mounted:
             raise SnapmBusyError(
                 f"Snapshots from snapshot set {self.name} are mounted: cannot rename"
@@ -1884,6 +1895,48 @@ class Snapshot(ABC):
         self.provider.set_autoactivate(self.name, auto=value)
         self.invalidate_cache()
 
+    def is_origin_mounted(self, mountinfo: "MountInfoReader") -> bool:
+        """
+        Test whether the origin volume for this ``Snapshot`` is mounted at
+        the snapshot's mount point according to ``mountinfo``.
+
+        :param mountinfo: The mount table to test against.
+        :type mountinfo: ``MountInfoReader``
+        :returns: ``True`` if this snapshot's origin is currently mounted
+                  or ``False`` otherwise.
+        :rtype: ``bool``
+        """
+        if not self.mount_point:
+            return False
+        devno = device_number(self.origin)
+        if devno is None:
+            return False
+        entry = mountinfo.lookup_mount_point(self.mount_point)
+        if entry is None:
+            return False
+        # Match through the device number index rather than against the
+        # device number of the mount: a file system with an anonymous
+        # superblock reports one that is the st_rdev of nothing, and would
+        # never equal the origin's however it is mounted.
+        return entry in mountinfo.lookup_devno(devno)
+
+    def is_snapshot_mounted(self, mountinfo: "MountInfoReader") -> bool:
+        """
+        Test whether the snapshot volume for this ``Snapshot`` is mounted
+        anywhere according to ``mountinfo``.
+
+        :param mountinfo: The mount table to test against.
+        :type mountinfo: ``MountInfoReader``
+        :returns: ``True`` if this snapshot is currently mounted or ``False``
+                  otherwise.
+        :rtype: ``bool``
+        """
+        if self.status != SnapStatus.ACTIVE:
+            return False
+        if not self.mount_point:
+            return False
+        return mountinfo.device_mounted(self.devpath)
+
     @property
     def origin_mounted(self):
         """
@@ -1893,16 +1946,7 @@ class Snapshot(ABC):
         :returns: ``True`` if this snapshot's origin is currently mounted
                   or ``False`` otherwise.
         """
-        if not self.mount_point:
-            return False
-        with open("/proc/self/mounts", "r", encoding="utf8") as mounts:
-            for line in mounts:
-                fields = line.split()
-                if self.mount_point == unescape_mounts(fields[1]):
-                    devpath = unescape_mounts(fields[0])
-                    if os.path.exists(self.origin) and os.path.exists(devpath):
-                        return os.path.samefile(self.origin, devpath)
-        return False
+        return self.is_origin_mounted(MountInfoReader())
 
     @property
     def snapshot_mounted(self):
@@ -1913,18 +1957,7 @@ class Snapshot(ABC):
         :returns: ``True`` if this snapshot is currently mounted or ``False``
                   otherwise.
         """
-        if self.status != SnapStatus.ACTIVE:
-            return False
-        if not self.mount_point:
-            return False
-        with open("/proc/self/mounts", "r", encoding="utf8") as mounts:
-            for line in mounts:
-                fields = line.split()
-                devpath = unescape_mounts(fields[0])
-                if os.path.exists(devpath) and os.path.exists(self.devpath):
-                    if os.path.samefile(self.devpath, devpath):
-                        return True
-        return False
+        return self.is_snapshot_mounted(MountInfoReader())
 
     @property
     def mounted(self):
@@ -2186,6 +2219,418 @@ class FsTabReader:
         Return a machine readable string representation of this FsTabReader.
         """
         return f"FsTabReader(path='{self.path}')"
+
+
+def device_number(devpath: str) -> Optional[int]:
+    """
+    Return the device number of the block device at ``devpath``.
+
+    :param devpath: The path to the block device to stat.
+    :type devpath: ``str``
+    :returns: The device number of ``devpath``, or ``None`` if it does not
+              exist or is not a block device.
+    :rtype: ``Optional[int]``
+    """
+    try:
+        st = os.stat(devpath)
+    except OSError as err:
+        _log_debug("Cannot stat device %s: %s", devpath, err)
+        return None
+    if not S_ISBLK(st.st_mode):
+        _log_debug("Path %s is not a block device", devpath)
+        return None
+    return st.st_rdev
+
+
+class MountInfoReader:
+    """
+    A class to read and query the mount table of the calling process.
+
+    Mounts are indexed by device number rather than by the device name
+    recorded at mount time: a logical volume renamed after it was mounted
+    keeps its old name in the mount table for as long as it stays mounted,
+    and matching on the name then reports it as unmounted (#1030).
+
+    ``/proc/self/mountinfo`` is read rather than ``/proc/self/mounts``
+    because it reports the device number of each mount directly, so finding
+    the mounts of a device costs one ``stat()`` of that device instead of
+    one ``stat()`` for every entry in the table.
+
+    The device number the kernel reports for a mount is that of the mounted
+    file system, which is the ``st_rdev`` of the backing device only for a
+    file system backed by a single block device. A file system with an
+    anonymous superblock (btrfs, overlay) is given a device number with a
+    major of zero that matches no block device at all, so those mounts are
+    additionally indexed by the device named in the mount table: see
+    ``_index_entry()``. That name is the one recorded at mount time, so for
+    an anonymous superblock a device renamed after it was mounted is still
+    reported as unmounted.
+    """
+
+    #: One parsed mount table entry. ``devno`` is the device number of the
+    #: file system mounted at ``where``, in the form returned by
+    #: ``os.stat().st_dev``, which is the ``st_rdev`` of the backing device
+    #: for a file system backed by a single block device and an anonymous
+    #: device number otherwise; ``root`` is the directory within that file
+    #: system that is mounted, which is '/' for anything but a bind mount.
+    MountInfoEntry = collections.namedtuple(
+        "MountInfoEntry",
+        [
+            "mount_id",
+            "parent_id",
+            "devno",
+            "root",
+            "where",
+            "options",
+            "fstype",
+            "what",
+            "super_options",
+        ],
+    )
+
+    def __init__(self, path: str = PROC_MOUNTINFO):
+        """
+        Initialise a ``MountInfoReader`` by reading and parsing ``path``.
+
+        :param path: The path to the mountinfo file to read. Defaults to
+                     '/proc/self/mountinfo'.
+        :type path: ``str``
+        :raises SnapmSystemError: If the mountinfo file cannot be read.
+        """
+        self.path = path
+        self.entries: List["MountInfoReader.MountInfoEntry"] = []
+        self._by_devno: Dict[int, List["MountInfoReader.MountInfoEntry"]] = {}
+        self._read_mountinfo()
+
+    def _parse_line(self, line: str) -> Optional["MountInfoReader.MountInfoEntry"]:
+        """
+        Parse one line of mountinfo data.
+
+        The format is documented in the kernel's
+        ``Documentation/filesystems/proc.rst``::
+
+            36 35 98:0 /mnt1 /mnt2 rw,noatime - ext3 /dev/root rw,errors=continue
+
+        A variable number of optional fields appears between the mount
+        options and the '-' separator, so the fixed fields that follow are
+        located relative to the separator rather than by position. No field
+        before the separator can be a bare '-': the kernel escapes the
+        space, tab, newline, hash and backslash characters in the path
+        fields, and the optional fields are all 'tag[:value]' forms.
+
+        :param line: The line to parse.
+        :type line: ``str``
+        :returns: A ``MountInfoEntry``, or ``None`` if ``line`` is malformed.
+        :rtype: ``Optional[MountInfoReader.MountInfoEntry]``
+        """
+        fields = line.split()
+        try:
+            sep = fields.index("-")
+        except ValueError:
+            _log_warn("Skipping malformed %s line: %s", self.path, line)
+            return None
+
+        # Six fixed fields before the separator and three after it.
+        if sep < 6 or len(fields) < sep + 4:
+            _log_warn("Skipping malformed %s line: %s", self.path, line)
+            return None
+
+        try:
+            mount_id = int(fields[0])
+            parent_id = int(fields[1])
+            major, minor = (int(part) for part in fields[2].split(":", maxsplit=1))
+        except ValueError:
+            _log_warn("Skipping malformed %s line: %s", self.path, line)
+            return None
+
+        return self.MountInfoEntry(
+            mount_id,
+            parent_id,
+            os.makedev(major, minor),
+            unescape_mounts(fields[3]),
+            unescape_mounts(fields[4]),
+            fields[5],
+            fields[sep + 1],
+            unescape_mounts(fields[sep + 2]),
+            fields[sep + 3],
+        )
+
+    def _index_entry(self, entry: "MountInfoReader.MountInfoEntry"):
+        """
+        Add ``entry`` to the device number index.
+
+        The index is keyed by the device numbers a caller can arrive with,
+        which are the ``st_rdev`` of a block device it holds a path to. A
+        file system with an anonymous superblock reports a device number
+        with a major of zero that is not the ``st_rdev`` of anything, so
+        such an entry is indexed under the device number of the device
+        named in the mount table as well, and is found by both.
+
+        The two sets of keys cannot collide: an anonymous device number has
+        a major of zero and the device number of a block device does not.
+
+        :param entry: The parsed mount table entry to index.
+        :type entry: ``MountInfoReader.MountInfoEntry``
+        """
+        self._by_devno.setdefault(entry.devno, []).append(entry)
+
+        if os.major(entry.devno) != 0 or not entry.what.startswith("/dev/"):
+            return
+
+        devno = device_number(entry.what)
+        if devno is not None:
+            self._by_devno.setdefault(devno, []).append(entry)
+
+    def _read_mountinfo(self):
+        """
+        Read and parse the mountinfo file, populating ``self.entries`` and
+        the device number index.
+
+        :raises SnapmSystemError: If the mountinfo file cannot be read.
+        """
+        try:
+            with open(self.path, "r", encoding="utf8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entry = self._parse_line(line)
+                    if entry is None:
+                        continue
+                    self.entries.append(entry)
+                    self._index_entry(entry)
+        except OSError as err:
+            _log_error("Could not read the file '%s': %s", self.path, err)
+            raise SnapmSystemError(
+                f"Error reading mountinfo file: {self.path}"
+            ) from err
+
+    def __iter__(self):
+        """
+        Allow iteration over the parsed mount table entries.
+
+        :yields: A ``MountInfoEntry`` for each mount.
+        """
+        yield from self.entries
+
+    def lookup_device(self, devpath: str) -> List["MountInfoReader.MountInfoEntry"]:
+        """
+        Return the mounts of the block device at ``devpath``.
+
+        :param devpath: The path to the block device to look up.
+        :type devpath: ``str``
+        :returns: The mounts of ``devpath``, in mount table order, or an
+                  empty list if it is not mounted, does not exist, or is
+                  not a block device.
+        :rtype: ``List[MountInfoReader.MountInfoEntry]``
+        """
+        devno = device_number(devpath)
+        if devno is None:
+            return []
+        return self.lookup_devno(devno)
+
+    def lookup_devno(self, devno: int) -> List["MountInfoReader.MountInfoEntry"]:
+        """
+        Return the mounts of the device with device number ``devno``.
+
+        Mounts of a file system with an anonymous superblock are returned
+        for the device they were mounted by: the index carries them under
+        that device as well as under the device number the kernel reports.
+
+        :param devno: The device number of a block device to look up, in
+                      the form returned by ``os.stat().st_rdev``.
+        :type devno: ``int``
+        :returns: The mounts of ``devno``, in mount table order, or an empty
+                  list if the device is not mounted.
+        :rtype: ``List[MountInfoReader.MountInfoEntry]``
+        """
+        return list(self._by_devno.get(devno, []))
+
+    def lookup_mount_point(
+        self, path: str
+    ) -> Optional["MountInfoReader.MountInfoEntry"]:
+        """
+        Return the mount at ``path``, or ``None`` if nothing is mounted
+        there.
+
+        A path may appear more than once in the mount table when one mount
+        is stacked over another: the last entry is the one in effect.
+
+        :param path: The mount point to look up.
+        :type path: ``str``
+        :returns: The ``MountInfoEntry`` mounted at ``path``, or ``None``.
+        :rtype: ``Optional[MountInfoReader.MountInfoEntry]``
+        """
+        found = None
+        for entry in self.entries:
+            if entry.where == path:
+                found = entry
+        return found
+
+    def device_mounted(self, devpath: str) -> bool:
+        """
+        Test whether the block device at ``devpath`` is mounted.
+
+        :param devpath: The path to the block device to test.
+        :type devpath: ``str``
+        :returns: ``True`` if ``devpath`` is mounted, or ``False`` otherwise.
+        :rtype: ``bool``
+        """
+        return bool(self.lookup_device(devpath))
+
+    def __repr__(self):
+        """
+        Return a machine readable string representation of this
+        ``MountInfoReader``.
+        """
+        return f"MountInfoReader(path='{self.path}')"
+
+
+class UtabReader:
+    """
+    A class to read and query the userspace mount table.
+
+    The kernel never sees a mount option in the "x-" namespace, so
+    mount(8) keeps those options in a table of its own, and umount(8)
+    removes the entry for a mount point as it unmounts it. An entry
+    therefore belongs to one mount: it appears when that mount is made
+    and goes when it is unmounted, where the kernel's own device numbers
+    and mount IDs describe a file system and are both reused by a later
+    mount of the same file system at the same path.
+
+    The table is maintained by libmount and its format is private to it.
+    Only the mount point and the options are read here, and a table that
+    cannot be read is an empty one: nothing calls this to find out what
+    is mounted, only to ask whether a mount it has already found carries
+    an option.
+    """
+
+    #: One parsed userspace mount table entry.
+    UtabEntry = collections.namedtuple("UtabEntry", ["what", "where", "options"])
+
+    def __init__(self, path: str = RUN_MOUNT_UTAB):
+        """
+        Initialise a ``UtabReader`` by reading and parsing ``path``.
+
+        :param path: The path to the userspace mount table to read.
+                     Defaults to '/run/mount/utab'.
+        :type path: ``str``
+        """
+        self.path = path
+        self.entries: List["UtabReader.UtabEntry"] = []
+        self._read_utab()
+
+    def _parse_line(self, line: str) -> Optional["UtabReader.UtabEntry"]:
+        """
+        Parse one line of userspace mount table data.
+
+        A line is a series of space separated 'KEY=value' fields, with the
+        paths escaped as they are in fstab(5)::
+
+            SRC=/dev/vg/lv TARGET=/mnt ROOT=/ OPTS=x-snapm.managed=<uuid>
+
+        Which keys are present depends on the mount: a bind mount carries
+        a 'BINDSRC' as well, and a mount made with no userspace options
+        has no 'OPTS'. Anything but the mount point and the options is
+        ignored.
+
+        :param line: The line to parse.
+        :type line: ``str``
+        :returns: A ``UtabEntry``, or ``None`` if ``line`` names no mount
+                  point.
+        :rtype: ``Optional[UtabReader.UtabEntry]``
+        """
+        fields = {}
+        for field in line.split():
+            key, _, value = field.partition("=")
+            fields[key] = value
+
+        where = fields.get("TARGET")
+        if where is None:
+            _log_warn("Skipping malformed %s line: %s", self.path, line)
+            return None
+
+        return self.UtabEntry(
+            unescape_mounts(fields.get("SRC", "")),
+            unescape_mounts(where),
+            fields.get("OPTS", ""),
+        )
+
+    def _read_utab(self):
+        """
+        Read and parse the userspace mount table, populating
+        ``self.entries``.
+
+        A table that is not there describes no mounts, which is the answer
+        on a system where nothing is mounted with a userspace option at
+        all. It is not an error: the caller asks this whether a mount
+        carries an option, and the answer in that case is that it does
+        not.
+        """
+        try:
+            with open(self.path, "r", encoding="utf8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    entry = self._parse_line(line)
+                    if entry is not None:
+                        self.entries.append(entry)
+        except OSError as err:
+            _log_debug("Could not read the file '%s': %s", self.path, err)
+
+    def __iter__(self):
+        """
+        Allow iteration over the parsed userspace mount table entries.
+
+        :yields: A ``UtabEntry`` for each entry.
+        """
+        yield from self.entries
+
+    def lookup_mount_point(self, path: str) -> Optional["UtabReader.UtabEntry"]:
+        """
+        Return the userspace mount table entry for ``path``, or ``None``
+        if there is none.
+
+        As in the kernel's mount table, a path may appear more than once
+        when one mount is stacked over another: the last entry is the one
+        in effect.
+
+        :param path: The mount point to look up.
+        :type path: ``str``
+        :returns: The ``UtabEntry`` for ``path``, or ``None``.
+        :rtype: ``Optional[UtabReader.UtabEntry]``
+        """
+        found = None
+        for entry in self.entries:
+            if entry.where == path:
+                found = entry
+        return found
+
+    def has_option(self, path: str, option: str) -> bool:
+        """
+        Test whether the mount at ``path`` carries the mount option
+        ``option``.
+
+        :param path: The mount point to test.
+        :type path: ``str``
+        :param option: The option to test for, including its value.
+        :type option: ``str``
+        :returns: ``True`` if the mount at ``path`` carries ``option``, or
+                  ``False`` otherwise.
+        :rtype: ``bool``
+        """
+        entry = self.lookup_mount_point(path)
+        if entry is None:
+            return False
+        return option in entry.options.split(",")
+
+    def __repr__(self):
+        """
+        Return a machine readable string representation of this
+        ``UtabReader``.
+        """
+        return f"UtabReader(path='{self.path}')"
 
 
 def get_device_path(by_type: str, identifier: str) -> Optional[str]:
@@ -2637,6 +3082,11 @@ __all__ = [
     "select_snapshot_set",
     "select_snapshot",
     "FsTabReader",
+    "MountInfoReader",
+    "UtabReader",
+    "PROC_MOUNTINFO",
+    "RUN_MOUNT_UTAB",
+    "device_number",
     "unescape_mounts",
     "get_device_path",
     "get_device_fstype",
