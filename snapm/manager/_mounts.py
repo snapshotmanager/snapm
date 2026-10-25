@@ -40,7 +40,12 @@ from snapm import (
     build_snapset_mount_list,
 )
 
-from ._mountstate import MountStateDir, MountStateRecord
+from ._mountstate import (
+    MOUNT_STATE_LOCK_TIMEOUT,
+    MountStateDir,
+    MountStateRecord,
+    mount_state_lock,
+)
 
 _log = logging.getLogger(__name__)
 
@@ -882,7 +887,7 @@ class Mounts:
     set mounts in the snapm runtime directory (normally /run/snapm/mounts).
     """
 
-    def __init__(self, manager, mounts_dir: str, state_dir: str):
+    def __init__(self, manager, mounts_dir: str, state_dir: str, lock_dir: str):
         """
         Initialise a new `Mounts` object.
 
@@ -890,8 +895,14 @@ class Mounts:
         :param mounts_dir: The directory under which mounts are managed.
         :param state_dir: The directory holding the mount provenance
                           records (#1025).
+        :param lock_dir: The directory holding the lock that serialises
+                         changes to the mount state.
         """
         self._manager = manager
+        self._lock_dir = lock_dir
+        #: How long to wait for the mount state lock. Overridden by the
+        #: tests, which have no reason to wait out the default.
+        self._lock_timeout = MOUNT_STATE_LOCK_TIMEOUT
         # Every mount lookup is a string comparison against a path the
         # kernel reported, and the kernel reports resolved paths: canonicalise
         # the base once here so that the paths built from it match (#1029).
@@ -1089,6 +1100,9 @@ class Mounts:
         nothing is mounted on it any more. A nominated mount root is left
         alone: it belongs to whoever made it.
 
+        This writes to the mount state, so the caller holds the mount
+        state lock.
+
         :param snapset: Optional snapshot set to limit pruning to. All
                         snapshot sets are pruned when it is ``None``.
         """
@@ -1216,9 +1230,8 @@ class Mounts:
         that is halfway made, nor remove the directory it is about to be
         mounted on.
 
-        Two commands that both mount or unmount can still overlap here.
-        Closing that needs the mount state directory to be locked, which
-        this does not do.
+        The caller holds the mount state lock, so no other command is
+        mounting or unmounting while this runs.
         """
         self._state.reap_partial_records()
         mountinfo = MountInfoReader()
@@ -1305,7 +1318,6 @@ class Mounts:
 
         _log_info("Found %d snapshot set mounts", len(self._mounts))
 
-    # pylint: disable=too-many-statements
     def mount(
         self,
         snapset: SnapshotSet,
@@ -1314,12 +1326,31 @@ class Mounts:
         """
         Mount the snapshot set `snapset`.
 
+        The mount state lock is held for the whole operation, so that the
+        record written before the mount and the update written after it
+        are one change as far as any other command is concerned.
+
         :param snapset: The snapshot set to operate on.
         :param mount_root: Optional path to mount the snapshot set at, in
                            place of the default mount point beneath the
                            mounts directory. The directory must already
                            exist: snapm neither creates it nor removes it
                            when the set is unmounted.
+        """
+        with mount_state_lock(self._lock_dir, timeout=self._lock_timeout):
+            return self._locked_mount(snapset, mount_root=mount_root)
+
+    # pylint: disable=too-many-statements
+    def _locked_mount(
+        self,
+        snapset: SnapshotSet,
+        mount_root: Optional[str] = None,
+    ) -> Mount:
+        """
+        Mount the snapshot set `snapset` with the mount state lock held.
+
+        :param snapset: The snapshot set to operate on.
+        :param mount_root: Optional path to mount the snapshot set at.
         """
         if mount_root is None:
             self._check_mounts_dir()
@@ -1452,6 +1483,10 @@ class Mounts:
         """
         Unmount the snapshot set `snapset`.
 
+        The mount state lock is held for the whole operation, so that the
+        unmount and the discarding of the record that describes it are one
+        change as far as any other command is concerned.
+
         :param snapset: The snapshot set to operate on.
         :param mount_root: Optional mount point selecting the mount to
                            unmount. Only required when ``snapset`` is mounted
@@ -1460,6 +1495,17 @@ class Mounts:
         :raises SnapmArgumentError: If ``snapset`` is mounted at more than one
                                     path and ``mount_root`` does not select
                                     exactly one of them.
+        """
+        with mount_state_lock(self._lock_dir, timeout=self._lock_timeout):
+            self._locked_umount(snapset, mount_root=mount_root)
+
+    def _locked_umount(self, snapset: SnapshotSet, mount_root: Optional[str] = None):
+        """
+        Unmount the snapshot set `snapset` with the mount state lock held.
+
+        :param snapset: The snapshot set to operate on.
+        :param mount_root: Optional mount point selecting the mount to
+                           unmount.
         """
         # Only the paths the set is still mounted at are candidates, and only
         # they make the request ambiguous. This command writes to the record
@@ -1514,9 +1560,12 @@ class Mounts:
         snapshot sets managed by this `Mounts` instance.
 
         Snapshot sets unmounted outside snapm are dropped before matching, so
-        that every mount returned is one that is still mounted.
+        that every mount returned is one that is still mounted. That writes
+        to the mount state, so it is done under the lock; the lock is not
+        held while matching, which does not.
         """
-        self._prune_stale_mounts()
+        with mount_state_lock(self._lock_dir, timeout=self._lock_timeout):
+            self._prune_stale_mounts()
         selection = selection or Selection()
         selection.check_valid_selection(snapshot_set=True)
         return [m for m in self._mounts if select_snapshot_set(selection, m.snapset)]
