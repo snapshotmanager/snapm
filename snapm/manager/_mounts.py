@@ -928,8 +928,8 @@ class Mounts:
         A snapshot set may be mounted at more than one path at a time: the
         canonical mount is the first one discovered or created, and is the
         mount reported as the set's mount root. Entries describing a path
-        that is no longer mounted are discarded by
-        ``_prune_stale_mounts()``, which every caller runs first.
+        that is no longer mounted are dropped by
+        ``_forget_stale_mounts()``, which every caller runs first.
 
         :param snapset: The snapshot set to look up.
         :returns: A `Mount` object, or ``None`` if the set is not mounted.
@@ -1085,26 +1085,29 @@ class Mounts:
         canonical = self._canonical_mount(snapset)
         snapset.mount_root = canonical.root if canonical is not None else ""
 
-    def _prune_stale_mounts(self, snapset: Optional[SnapshotSet] = None) -> None:
+    def _forget_stale_mounts(
+        self, snapset: Optional[SnapshotSet] = None
+    ) -> List[Mount]:
         """
-        Discard the mount table entries that no longer describe a mount.
+        Drop the mount table entries that no longer describe a mount, and
+        return them.
 
         A snapshot set unmounted outside snapm, or one whose mount point
         could not be removed when it was unmounted, leaves an entry naming a
-        path with nothing mounted on it. Until it is discarded the set looks
+        path with nothing mounted on it. Until it is dropped the set looks
         mounted there: the path is reported as the set's mount root, it
         blocks mounting the set there again, and it counts towards the
         ambiguity check in ``umount()``.
 
-        The mount point goes with the entry when snapm created it and
-        nothing is mounted on it any more. A nominated mount root is left
-        alone: it belongs to whoever made it.
+        Nothing here leaves this object: the entries are removed from the
+        list in memory and the reported mount root is recomputed from what
+        is left, both of which follow from the mount table as it is now.
+        Removing what the dropped entries left on disk is
+        ``_remove_stale_mounts()``'s to do, and needs the lock.
 
-        This writes to the mount state, so the caller holds the mount
-        state lock.
-
-        :param snapset: Optional snapshot set to limit pruning to. All
-                        snapshot sets are pruned when it is ``None``.
+        :param snapset: Optional snapshot set to limit this to. All
+                        snapshot sets are considered when it is ``None``.
+        :returns: The entries that were dropped, in mount table order.
         """
         stale = [
             mount
@@ -1117,6 +1120,25 @@ class Mounts:
                 "Discarding stale mount for %s at '%s'", mount.snapset.name, mount.root
             )
             self._mounts.remove(mount)
+            # The discarded entry may have been the one reported for the set.
+            self._update_mount_root(mount.snapset)
+        return stale
+
+    def _remove_stale_mounts(self, stale: List[Mount]) -> None:
+        """
+        Remove what the mounts dropped by ``_forget_stale_mounts()`` left
+        behind: the record of each, and the mount point when snapm made it.
+
+        A nominated mount root is left alone: it belongs to whoever made
+        it.
+
+        This writes to the mount state, so the caller holds the mount
+        state lock.
+
+        :param stale: The dropped entries, as returned by
+                      ``_forget_stale_mounts()``.
+        """
+        for mount in stale:
             if self._owns_mount_point(mount.root):
                 try:
                     os.rmdir(mount.root)
@@ -1125,8 +1147,6 @@ class Mounts:
                         "Could not remove stale mount point '%s': %s", mount.root, err
                     )
             self._state.discard(mount.root)
-            # The discarded entry may have been the one reported for the set.
-            self._update_mount_root(mount.snapset)
 
     @staticmethod
     def _record_is_live(record: MountStateRecord, mountinfo: MountInfoReader) -> bool:
@@ -1363,7 +1383,7 @@ class Mounts:
         # again. This command writes to the record directory, so it is also
         # the point at which the records discovery passed over are tidied
         # up.
-        self._prune_stale_mounts(snapset)
+        self._remove_stale_mounts(self._forget_stale_mounts(snapset))
         self._reap_stale_records()
 
         # A snapshot set may be mounted at more than one path at a time. An
@@ -1511,7 +1531,7 @@ class Mounts:
         # they make the request ambiguous. This command writes to the record
         # directory, so it is also the point at which the records discovery
         # passed over are tidied up.
-        self._prune_stale_mounts(snapset)
+        self._remove_stale_mounts(self._forget_stale_mounts(snapset))
         self._reap_stale_records()
 
         candidates = self._snapset_mounts(snapset)
@@ -1560,12 +1580,12 @@ class Mounts:
         snapshot sets managed by this `Mounts` instance.
 
         Snapshot sets unmounted outside snapm are dropped before matching, so
-        that every mount returned is one that is still mounted. That writes
-        to the mount state, so it is done under the lock; the lock is not
-        held while matching, which does not.
+        that every mount returned is one that is still mounted. Dropping
+        them writes nothing, so reporting on mounts neither takes the mount
+        state lock nor waits on one: what the dropped entries left on disk
+        is removed by the next command that mounts or unmounts.
         """
-        with mount_state_lock(self._lock_dir, timeout=self._lock_timeout):
-            self._prune_stale_mounts()
+        self._forget_stale_mounts()
         selection = selection or Selection()
         selection.check_valid_selection(snapshot_set=True)
         return [m for m in self._mounts if select_snapshot_set(selection, m.snapset)]

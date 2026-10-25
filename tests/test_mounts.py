@@ -2554,8 +2554,15 @@ class MountsUmountSelectionTests(unittest.TestCase):
         self.assertTrue(os.path.isdir(second.root))
         self.assertEqual(self.snapset.mount_root, "")
 
-    def test_find_mounts_prunes_a_stale_mount(self):
-        """Test that a stale mount is discarded when listing mounts."""
+    def test_find_mounts_forgets_a_stale_mount_without_writing(self):
+        """Test that listing mounts drops a stale mount but writes nothing.
+
+        Reporting on mounts must not touch the record directory: what a
+        dropped entry left behind is removed by the next command that
+        mounts or unmounts. The entry still goes from the list in memory
+        and from the set's reported mount root, both of which follow from
+        the mount table rather than from anything on disk.
+        """
         first = self._add_mount(default_root=True)
         second = self._add_mount("two")
 
@@ -2565,5 +2572,19 @@ class MountsUmountSelectionTests(unittest.TestCase):
 
         self.assertEqual(found, [second])
         self.assertEqual(self.mounts._mounts, [second])
-        self.assertFalse(os.path.exists(first.root))
         self.assertEqual(self.snapset.mount_root, second.root)
+        # Nothing on disk was touched.
+        self.assertTrue(os.path.exists(first.root))
+
+    def test_umount_removes_what_find_mounts_left(self):
+        """Test that the next unmount clears up after a stale mount."""
+        first = self._add_mount(default_root=True)
+        second = self._add_mount("two")
+
+        first.mounted = False
+        self.mounts.find_mounts(snapm.Selection(name=self.snapset.name))
+        self.assertTrue(os.path.exists(first.root))
+
+        self.mounts.umount(self.snapset, mount_root=second.root)
+
+        self.assertFalse(os.path.exists(first.root))
