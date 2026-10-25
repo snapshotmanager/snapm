@@ -377,6 +377,36 @@ class MountsTests(MountsTestsBase):
         # Check that the mount directory itself is removed
         self.assertFalse(os.path.exists(mount_obj.root))
 
+    def test_mount_marks_mounts_as_snapm_managed(self):
+        """
+        Tests that every mount in the tree carries x-snapm.managed.
+        """
+        mount_obj = self.mounts.mount(self.snapset)
+        self.addCleanup(self.mounts.umount, self.snapset)
+
+        # findmnt reports the "x-" options from /run/mount/utab alongside
+        # the kernel's own, so the marker makes the tree findable wherever
+        # it is mounted (#1027).
+        # "--mtab" is required: the "x-" options live in /run/mount/utab,
+        # and findmnt only merges them into its view in that mode.
+        result = run(
+            ["findmnt", "--mtab", "--noheadings", "--output", "TARGET,OPTIONS",
+             "--options", "x-snapm.managed"],
+            capture_output=True, encoding="utf8", check=True,
+        )
+        marked = {}
+        for line in result.stdout.splitlines():
+            target, options = line.split()
+            marked[target] = options
+
+        expected = f"x-snapm.managed={self.snapset.uuid}"
+        for path in (mount_obj.root,
+                     os.path.join(mount_obj.root, "opt"),
+                     os.path.join(mount_obj.root, "proc")):
+            with self.subTest(path=path):
+                self.assertIn(path, marked)
+                self.assertIn(expected, marked[path].split(","))
+
     def test_discover_mounts(self):
         """
         Tests that a new Mounts instance can discover pre-existing mounts.

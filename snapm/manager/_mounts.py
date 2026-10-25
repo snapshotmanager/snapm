@@ -72,6 +72,9 @@ _SNAPM_MOUNT_HELPER_TIMEOUT = int(os.getenv("SNAPM_MOUNT_TIMEOUT", "60"))
 #: Path to container overlay bind mount
 _CONTAINERS_OVERLAY = "/var/lib/containers/storage/overlay"
 
+#: Mount option marking a mount as one snapm made (#1027)
+_SNAPM_MANAGED_OPTION = "x-snapm.managed"
+
 #: Taken from kernel source: fs/xfs/libxfs/xfs_log_format.h:
 _XFS_UQUOTA_ACCT = 0x0001  # user quota accounting ON
 _XFS_UQUOTA_ENFD = 0x0002  # user quota limits enforced
@@ -190,6 +193,29 @@ def _get_xfs_quota_options(devpath: str) -> str:
     return ",".join(options)
 
 
+def managed_option(snapset_uuid: str) -> str:
+    """
+    Return the mount option marking a mount as made by snapm for the
+    snapshot set with UUID ``snapset_uuid``.
+
+    The option is in the "x-" namespace, so the kernel never sees it:
+    mount(8) keeps it in /run/mount/utab and findmnt(8) reports it
+    alongside the kernel's own options. It names the snapshot set that is
+    mounted, and makes every mount snapm made findable wherever it is::
+
+        # findmnt -m -o TARGET,OPTIONS -O x-snapm.managed
+
+    The set is named by UUID rather than by ``SnapshotSet`` because a
+    mount provenance record has only the UUID to hand.
+
+    :param snapset_uuid: The UUID of the snapshot set being mounted.
+    :type snapset_uuid: ``str``
+    :returns: The mount option marking a mount of that snapshot set.
+    :rtype: ``str``
+    """
+    return f"{_SNAPM_MANAGED_OPTION}={snapset_uuid}"
+
+
 def _merge_options(opts_a, opts_b):
     """
     Merge two comma-separated mount options strings.
@@ -260,14 +286,33 @@ def _mount(
         mount_cmd.extend(["--type", fstype])
     if rbind:
         mount_cmd.append("--rbind")
-    if rprivate:
-        mount_cmd.append("--make-rprivate")
-    if unbindable:
-        mount_cmd.append("--make-unbindable")
 
     mount_cmd.extend(["--options", options, what, where])
-    _log_debug_mounts("Calling %s", " ".join(mount_cmd))
+    _run_mount(mount_cmd, what, where)
 
+    # Change the propagation type with a second call to mount(8). Given on
+    # the same command line as the mount, a "--make-*" flag is applied by a
+    # second mount(2) that rewrites the userspace mount table entry, taking
+    # the "x-" options recorded with the mount out with it (#1027).
+    for flag in filter(
+        None,
+        [
+            "--make-rprivate" if rprivate else None,
+            "--make-unbindable" if unbindable else None,
+        ],
+    ):
+        _run_mount(["mount", flag, where], what, where)
+
+
+def _run_mount(mount_cmd: List[str], what: str, where: str):
+    """
+    Call the mount program and turn its failures into snapm exceptions.
+
+    :param mount_cmd: The mount command line to run.
+    :param what: The source of the mount operation, for error reporting.
+    :param where: The mount point, for error reporting.
+    """
+    _log_debug_mounts("Calling %s", " ".join(mount_cmd))
     try:
         run(
             mount_cmd,
@@ -613,9 +658,12 @@ class Mount(MountBase):
                 self.snapset.mount_points, submounts, name_map=name_map
             )
 
-    def _bind_api_filesystems(self):
+    def _bind_api_filesystems(self, options: str):
         """
         Recursively bind mount the host's API file systems into this mount.
+
+        :param options: Mount options to apply to each bind mount.
+        :type options: ``str``
         """
         for what in _BIND_MOUNTS:
             if not os.path.exists(what) or not os.path.ismount(what):
@@ -628,7 +676,7 @@ class Mount(MountBase):
                     self.snapset.name,
                 )
                 continue
-            _mount(what, where, rbind=True, rprivate=True)
+            _mount(what, where, options=options, rbind=True, rprivate=True)
 
     def _rollback_mount(self, err: Exception):
         """
@@ -661,6 +709,11 @@ class Mount(MountBase):
         """
         Mount the configured snapshot set and its submounts at `self.root`.
         """
+        # Tag every mount in the tree so that an administrator can list the
+        # mounts snapm made, wherever they are, with
+        # "findmnt -O x-snapm.managed" (#1027).
+        managed = managed_option(str(self.snapset.uuid))
+
         try:
             # 0. Initialise FsTabReader
             fstab = FsTabReader()
@@ -674,7 +727,12 @@ class Mount(MountBase):
             except StopIteration:
                 _log_warn("No entry matching mount point '/' found in fstab")
                 root_opts = "defaults"
-            _mount(root_device, self.root, options=root_opts, unbindable=True)
+            _mount(
+                root_device,
+                self.root,
+                options=_merge_options(root_opts, managed),
+                unbindable=True,
+            )
 
             # 2. Build an auxiliary mount list from the SnapshotSet/FsTabReader.
             mount_list = build_snapset_mount_list(self.snapset, fstab)
@@ -690,10 +748,12 @@ class Mount(MountBase):
                         self.snapset.name,
                     )
                     continue
-                _mount(what, where, fstype=fstype, options=options)
+                _mount(
+                    what, where, fstype=fstype, options=_merge_options(options, managed)
+                )
 
             # 4. Recursively bind mount API file systems from the host.
-            self._bind_api_filesystems()
+            self._bind_api_filesystems(managed)
 
         except (ValueError, SnapmError, StopIteration) as err:
             self._rollback_mount(err)
