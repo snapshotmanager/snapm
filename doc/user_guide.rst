@@ -302,6 +302,18 @@ Add the snapshot set UUID to the filter to list the mounts of one set:
    sudo findmnt -m -o TARGET -O x-snapm.managed=$(
        sudo snapm snapset show --json backup | jq -r '.[0].UUID')
 
+The option is more than a label for the administrator's benefit.
+``snapm`` decides what it owns from the records in
+``/run/snapm/mount-state``, and a record names the mount it describes by
+this option as well as by the device mounted there. A device number
+names a file system rather than one mount of it: a record outlives a
+mount taken down outside ``snapm`` until the next command that writes
+reaps it, and without the option a mount made by hand of the same
+snapshot device at the same path in that window would answer to the
+record left behind. The option is recorded by ``mount`` with the mount
+and removed by ``umount`` with it, so it marks that mount and no later
+one.
+
 Keep the mount point and the directory containing it owned by root and
 inaccessible to other users while the snapshot set is mounted, and open
 up access as the final step. A directory another user can write to lets

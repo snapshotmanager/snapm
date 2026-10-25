@@ -24,12 +24,14 @@ from snapm import (
     SnapmNotFoundError,
     SnapmCalloutError,
     SnapmPathError,
+    SnapmSystemError,
     SnapmArgumentError,
     SnapmMountError,
     SnapmUmountError,
     Selection,
     SnapshotSet,
     MountInfoReader,
+    UtabReader,
     select_snapshot_set,
     device_number,
     FsTabReader,
@@ -1170,41 +1172,32 @@ class Mounts:
             self._state.discard(mount.root)
 
     @staticmethod
-    def _record_is_live(record: MountStateRecord, mountinfo: MountInfoReader) -> bool:
+    def _device_matches(
+        record: MountStateRecord,
+        entry: MountInfoReader.MountInfoEntry,
+        mountinfo: MountInfoReader,
+    ) -> bool:
         """
-        Test whether the mount described by ``record`` is still mounted.
-
-        The recorded mount path has to still be a mount point, and the
-        device mounted there has to still be the one recorded. Checking the
-        device as well distinguishes a snapshot set that is still mounted
-        from a mount point that snapm's mount was taken off and something
-        else was then mounted on: unmounting the latter would take out a
-        mount that is not snapm's (#1025).
+        Test whether the mount ``entry`` is a mount of the device that
+        ``record`` was written for.
 
         The device number recorded once the mount was made is the one the
         kernel reports for the mount, so it is compared with the mount
         table directly. A record with none was written by a command that
         never reached the end of its mount, and names only the device it
-        set out to mount: match that through the mount table index, which
-        resolves a device to its mounts whether or not the file system
-        mounted from it has an anonymous superblock.
+        set out to mount: ask the mount table whether that device is the
+        one mounted there, which it answers through its index whether or
+        not the file system has an anonymous superblock.
 
         :param record: The mount provenance record to verify.
+        :param entry: The mount table entry for the recorded path.
         :param mountinfo: A ``MountInfoReader`` instance to use.
-        :returns: ``True`` if the recorded mount is still present.
+        :returns: ``True`` if the recorded device is the one mounted.
         """
-        entry = mountinfo.lookup_mount_point(record.mount_path)
-        if entry is None:
-            _log_debug_mounts(
-                "Nothing is mounted at recorded mount path '%s'", record.mount_path
-            )
-            return False
-
         if record.mount_devno is not None:
             matched = entry.devno == record.mount_devno
         else:
-            matched = entry in mountinfo.lookup_devno(record.root_devno)
-
+            matched = mountinfo.devno_mounted_at(record.root_devno, record.mount_path)
         if not matched:
             _log_debug_mounts(
                 "Mount at '%s' is not the recorded device %s (%d:%d)",
@@ -1213,6 +1206,74 @@ class Mounts:
                 os.major(record.root_devno),
                 os.minor(record.root_devno),
             )
+            return False
+        return True
+
+    @staticmethod
+    def _option_matches(record: MountStateRecord, utab: UtabReader) -> bool:
+        """
+        Test whether the mount at the path ``record`` names still carries
+        the option marking it as the mount snapm made.
+
+        A device number identifies a file system, not one mount of it. A
+        record outlives a mount taken down outside snapm until the next
+        command that writes reaps it, so an administrator who mounts the
+        same snapshot device at the same path in the meantime makes a
+        mount that answers to the recorded device. The option tells the
+        two apart: mount(8) records it with the mount and umount(8) takes
+        it away with it, where the kernel's mount ID is reused by the next
+        mount at the same path.
+
+        :param record: The mount provenance record to verify.
+        :param utab: A ``UtabReader`` instance to use.
+        :returns: ``True`` if the mount carries the recorded option.
+        """
+        option = managed_option(record.snapset_uuid)
+        if utab.has_option(record.mount_path, option):
+            return True
+        _log_debug_mounts(
+            "Mount at '%s' is not the recorded mount: it does not carry %s",
+            record.mount_path,
+            option,
+        )
+        return False
+
+    @staticmethod
+    def _record_is_live(
+        record: MountStateRecord, mountinfo: MountInfoReader, utab: UtabReader
+    ) -> bool:
+        """
+        Test whether the mount described by ``record`` is still mounted.
+
+        The recorded mount path has to still be a mount point, the device
+        mounted there has to still be the one recorded, and the mount has
+        to still carry the option marking it as snapm's. Checking more
+        than the path distinguishes a snapshot set that is still mounted
+        from a mount point that snapm's mount was taken off and something
+        else was then mounted on: unmounting the latter would take out a
+        mount that is not snapm's (#1025).
+
+        Each check demands what the record carries and no more. A record
+        written by a command that did not reach the end of its mount has
+        no mount device number, and one written on a system whose mount(8)
+        keeps no userspace mount table has no option: requiring either of
+        those unconditionally would make a mount that is really there
+        unrecognisable to the next command, and orphan it.
+
+        :param record: The mount provenance record to verify.
+        :param mountinfo: A ``MountInfoReader`` instance to use.
+        :param utab: A ``UtabReader`` instance to use.
+        :returns: ``True`` if the recorded mount is still present.
+        """
+        entry = mountinfo.lookup_mount_point(record.mount_path)
+        if entry is None:
+            _log_debug_mounts(
+                "Nothing is mounted at recorded mount path '%s'", record.mount_path
+            )
+            return False
+        if not Mounts._device_matches(record, entry, mountinfo):
+            return False
+        if record.managed_option and not Mounts._option_matches(record, utab):
             return False
         return True
 
@@ -1231,6 +1292,49 @@ class Mounts:
             _log_warn("Nothing is mounted at '%s' after mounting it", mount_path)
             return None
         return entry.devno
+
+    @staticmethod
+    def _mount_is_marked(mount_path: str, snapset: SnapshotSet) -> bool:
+        """
+        Test whether the mount just made at ``mount_path`` carries the
+        option marking it as a mount of ``snapset`` made by snapm.
+
+        The option is passed to every mount in the tree, so a mount that
+        does not have it is one whose userspace mount table entry was
+        never written: mount(8) keeps no such table on this system, or
+        could not write to it. Verification notes the difference rather
+        than insisting, since requiring an option that is never recorded
+        would make every mount here unrecognisable to the next command.
+
+        A table that could not be read says nothing either way, and what
+        it would have said cannot be recovered later: the answer is what
+        the record carries for the rest of its life. Fail rather than
+        write the weaker form into it.
+
+        :param mount_path: The mount point to read the options of.
+        :param snapset: The snapshot set mounted there.
+        :returns: ``True`` if the mount is marked as snapm's.
+        :raises SnapmSystemError: If the userspace mount table exists and
+                                  cannot be read.
+        """
+        utab = UtabReader()
+        if utab.has_option(mount_path, managed_option(str(snapset.uuid))):
+            return True
+        if not utab.readable:
+            raise SnapmSystemError(
+                f"Could not read the userspace mount table {utab.path}: "
+                f"cannot tell whether the mount of snapshot set "
+                f"{snapset.name} at '{mount_path}' is marked"
+            )
+        _log_warn(
+            "Mount of snapshot set %s at '%s' is not marked with %s: it can "
+            "only be told from another mount of the same device there by "
+            "the device itself",
+            snapset.name,
+            mount_path,
+            _SNAPM_MANAGED_OPTION,
+        )
+        return False
 
     def _discard_record(self, record: MountStateRecord) -> None:
         """
@@ -1303,10 +1407,11 @@ class Mounts:
         :returns: Those of ``mounts`` the records account for, in order.
         """
         mountinfo = MountInfoReader()
+        utab = UtabReader()
         recorded = []
         unrecorded = []
         for mount in mounts:
-            if self._mount_is_recorded(mount, mountinfo):
+            if self._mount_is_recorded(mount, mountinfo, utab):
                 recorded.append(mount)
             else:
                 unrecorded.append(mount)
@@ -1317,13 +1422,16 @@ class Mounts:
         self._forget_mounts(unrecorded)
         return recorded
 
-    def _mount_is_recorded(self, mount: Mount, mountinfo: MountInfoReader) -> bool:
+    def _mount_is_recorded(
+        self, mount: Mount, mountinfo: MountInfoReader, utab: UtabReader
+    ) -> bool:
         """
         Test whether the records still account for ``mount``, logging the
         reason when they do not.
 
         :param mount: The candidate mount to test.
         :param mountinfo: A ``MountInfoReader`` instance to use.
+        :param utab: A ``UtabReader`` instance to use.
         :returns: ``True`` if the records account for ``mount``.
         """
         record = self._state.get(mount.root)
@@ -1344,7 +1452,7 @@ class Mounts:
                 mount.snapset.name,
             )
             return False
-        if not self._record_is_live(record, mountinfo):
+        if not self._record_is_live(record, mountinfo, utab):
             _log_warn(
                 "Ignoring mount at '%s': its record no longer describes "
                 "what is mounted there",
@@ -1371,11 +1479,30 @@ class Mounts:
 
         The caller holds the mount state lock, so no other command is
         mounting or unmounting while this runs.
+
+        :raises SnapmSystemError: If a record is verified by its mount
+                                  mark and the userspace mount table
+                                  exists and cannot be read.
         """
         self._state.reap_partial_records()
         mountinfo = MountInfoReader()
+        utab = UtabReader()
+
+        # A record verified by its mark cannot be judged against a table
+        # that could not be read: every such record would look like a
+        # mount that had lost its mark, and reaping would unlink the
+        # record of a mount that is still up. Stop instead, and leave the
+        # records as they are.
+        if not utab.readable and any(
+            record.managed_option for record in self._state.records
+        ):
+            raise SnapmSystemError(
+                f"Could not read the userspace mount table {utab.path}: "
+                "refusing to discard mount state records"
+            )
+
         for record in self._state.records:
-            if not self._record_is_live(record, mountinfo):
+            if not self._record_is_live(record, mountinfo, utab):
                 self._discard_record(record)
 
     def discover_mounts(self):
@@ -1397,11 +1524,12 @@ class Mounts:
         self._mounts.clear()
         self._state.load()
         mountinfo = MountInfoReader()
+        utab = UtabReader()
 
         by_uuid = {str(s.uuid): s for s in self._manager.snapshot_sets}
 
         for record in self._state.records:
-            if not self._record_is_live(record, mountinfo):
+            if not self._record_is_live(record, mountinfo, utab):
                 _log_debug_mounts(
                     "Ignoring mount state record for '%s': not a managed"
                     " mount point",
@@ -1567,6 +1695,19 @@ class Mounts:
                     f"block device: {root_device}"
                 )
 
+            # The mark is read back once the mount is up, and a record
+            # written without it is verified by its device alone for the
+            # rest of its life. A table that cannot be read now will not
+            # answer then either, so fail here, with nothing mounted and
+            # no record written, rather than later with both.
+            utab = UtabReader()
+            if not utab.readable:
+                raise SnapmSystemError(
+                    f"Could not read the userspace mount table {utab.path}: "
+                    f"refusing to mount snapshot set {snapset.name} with no "
+                    f"way to mark the mount"
+                )
+
             # Record the mount before making it. A record left behind by a
             # mount that never happened is discarded by the next discovery
             # pass, which verifies every record against the mount table; a
@@ -1590,6 +1731,7 @@ class Mounts:
             # superblock is anonymous. Until this is written the record
             # describes an intention; afterwards it describes a mount.
             record.mount_devno = self._mounted_devno(mount_path)
+            record.managed_option = self._mount_is_marked(mount_path, snapset)
             self._state.add(record)
         except (SnapmError, ValueError):
             # A rollback that cannot unmount what it mounted logs and

@@ -21,6 +21,7 @@ mount with a record is one snapm will act on. A record names:
 - the name and UUID of the snapshot set mounted there
 - the device mounted at that path, and its device number
 - the device number the kernel reports for the mount once it is made
+- whether the mount carries the option marking it as one of snapm's
 - whether snapm created the directory and should remove it again
 
 The records live in the runtime directory, so they last exactly as long as
@@ -305,6 +306,18 @@ class MountStateRecord:
     #: known when the record is first written.
     mount_devno: Optional[int] = None
 
+    #: Whether the mount carried the option marking it as snapm's when it
+    #: was made, as read from the userspace mount table once the mount was
+    #: up. A device number names a file system and a kernel mount ID is
+    #: reused, so neither distinguishes snapm's mount from one an
+    #: administrator made afterwards at the same path from the same
+    #: device: the option does, because mount(8) records it with the mount
+    #: and umount(8) takes it away again (#1025). Verification requires it
+    #: where it is ``True``, and falls back to the device number alone
+    #: where it is ``False``, which is what a system that does not
+    #: maintain a userspace mount table leaves behind.
+    managed_option: bool = False
+
     @classmethod
     def from_dict(cls, fields: Dict) -> "MountStateRecord":
         """
@@ -327,6 +340,7 @@ class MountStateRecord:
                 root_devno=int(fields["root_devno"]),
                 created_mount_point=bool(fields["created_mount_point"]),
                 mount_devno=None if mount_devno is None else int(mount_devno),
+                managed_option=bool(fields.get("managed_option", False)),
             )
         except (KeyError, TypeError, ValueError) as err:
             raise ValueError(f"Malformed mount state record: {err}") from err

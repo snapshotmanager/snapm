@@ -6,7 +6,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 from subprocess import run, CalledProcessError
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 from stat import S_ISBLK
 from types import SimpleNamespace
 from uuid import UUID, uuid5
@@ -416,6 +416,11 @@ class MountsTests(MountsTestsBase):
             with self.subTest(path=path):
                 self.assertIn(path, marked)
                 self.assertIn(expected, marked[path].split(","))
+
+        # The record notes that the mount is marked, so that verification
+        # can require the mark and tell this mount from a later one of the
+        # same device at the same path (#1025).
+        self.assertTrue(self.mounts._state.get(mount_obj.root).managed_option)
 
     def test_discover_mounts(self):
         """
@@ -1490,27 +1495,58 @@ class MountsDiscoveryTests(unittest.TestCase):
 
     @staticmethod
     @contextmanager
-    def _mount_table(lines, anon=()):
-        """Make both mount table readers read synthetic mount tables.
+    def _mount_table(lines, anon=(), managed=(), utab_readable=True):
+        """Make all three mount table readers read synthetic tables.
 
         Mount points named in ``anon`` are given an anonymous device
         number in the mountinfo table.
+
+        ``managed`` names the mounts the userspace mount table marks as
+        snapm's, as (mount point, snapshot set UUID) pairs. A mount that
+        is not named there is one snapm did not make, which is what an
+        administrator's mount of the same device at the same path looks
+        like (#1025).
+
+        Pass ``utab_readable=False`` for a userspace mount table that is
+        there and cannot be read, which says nothing about any mount.
         """
-        pmr = mounts.ProcMountsReader
-        mir = snapm.MountInfoReader
-        with _mounts_file(lines) as mounts_path:
-            with _mounts_file(_mountinfo_lines(lines, anon=anon)) as mountinfo_path:
-                with unittest.mock.patch.object(
-                    mounts,
-                    "ProcMountsReader",
-                    lambda *args, **kwargs: pmr(path=mounts_path),
-                ):
-                    with unittest.mock.patch.object(
+        utab_lines = [
+            f"SRC=none TARGET={where} ROOT=/ OPTS=x-snapm.managed={uuid}"
+            for where, uuid in managed
+        ]
+        with ExitStack() as stack:
+
+            def patch_reader(name, reader, table_lines):
+                """Make ``name`` build ``reader`` over a synthetic table."""
+                path = stack.enter_context(_mounts_file(table_lines))
+                stack.enter_context(
+                    unittest.mock.patch.object(
+                        mounts, name, lambda *args, **kwargs: reader(path=path)
+                    )
+                )
+
+            patch_reader("ProcMountsReader", mounts.ProcMountsReader, lines)
+            patch_reader(
+                "MountInfoReader",
+                snapm.MountInfoReader,
+                _mountinfo_lines(lines, anon=anon),
+            )
+            if utab_readable:
+                patch_reader("UtabReader", snapm.UtabReader, utab_lines)
+            else:
+                # A directory cannot be read as a file: this is a table
+                # that is there and cannot be read, not a missing one.
+                utab_path = stack.enter_context(
+                    tempfile.TemporaryDirectory(prefix="snapm_utab_")
+                )
+                stack.enter_context(
+                    unittest.mock.patch.object(
                         mounts,
-                        "MountInfoReader",
-                        lambda *args, **kwargs: mir(path=mountinfo_path),
-                    ):
-                        yield
+                        "UtabReader",
+                        lambda *args, **kwargs: snapm.UtabReader(path=utab_path),
+                    )
+                )
+            yield
 
     @staticmethod
     def _real_mount_point():
@@ -1549,12 +1585,20 @@ class MountsDiscoveryTests(unittest.TestCase):
         self.lock = self._tmpdir("snapm_discover_lock_")
 
     def _record(
-        self, mount_path, snapset, root_device, created=False, mount_devno=None
+        self,
+        mount_path,
+        snapset,
+        root_device,
+        created=False,
+        mount_devno=None,
+        managed=False,
     ):
         """Write the provenance record for a mount snapm made.
 
         A record with no ``mount_devno`` is one written by a command that
-        did not reach the end of its mount.
+        did not reach the end of its mount. A record with ``managed`` set
+        is one written where the mount was marked as snapm's in the
+        userspace mount table, and is verified against that mark.
         """
         record = mountstate.MountStateRecord(
             mount_path=mount_path,
@@ -1564,6 +1608,7 @@ class MountsDiscoveryTests(unittest.TestCase):
             root_devno=os.stat(root_device).st_rdev,
             created_mount_point=created,
             mount_devno=mount_devno,
+            managed_option=managed,
         )
         mountstate.MountStateDir(self.state).add(record)
         return record
@@ -1876,6 +1921,132 @@ class MountsDiscoveryTests(unittest.TestCase):
         # The mount that replaced snapm's is not snapm's to remove.
         self.assertTrue(os.path.isdir(root_path))
 
+    def test_reap_refuses_when_the_userspace_mount_table_will_not_read(self):
+        """Test that an unreadable table does not reap a marked record.
+
+        A record verified by its mark cannot be judged against a table
+        that could not be read: it looks exactly like a mount that lost
+        its mark, and reaping it would unlink the record of a mount that
+        is still up and leave it to be taken down by hand.
+        """
+        root_dev, root_path = self._real_mount_point()
+        if root_dev is None:
+            self.skipTest("No non-root block device mount available")
+        snapset = _fake_snapset([("/", root_dev)])
+        self._record(root_path, snapset, root_dev, managed=True)
+
+        with self._mount_table([f"{root_dev} / ext4 rw 0 0"], utab_readable=False):
+            discovered = self._discover([snapset])
+            with self.assertRaisesRegex(
+                snapm.SnapmSystemError, "userspace mount table"
+            ):
+                discovered.umount(snapset)
+
+        # The record is left exactly as it was.
+        self.assertEqual(self._records(), [root_path])
+
+    def test_reap_proceeds_when_no_record_is_verified_by_its_mark(self):
+        """Test that an unreadable table stops nothing on its own.
+
+        A record written where no mark could be read is verified by its
+        device, so a table that will not read changes no answer and the
+        command has no reason to stop.
+        """
+        root_dev, root_path = self._real_mount_point()
+        if root_dev is None:
+            self.skipTest("No non-root block device mount available")
+        snapset = _fake_snapset([("/", root_dev)])
+        self._record(root_path, snapset, root_dev, managed=False)
+
+        with self._mount_table([f"{root_dev} / ext4 rw 0 0"], utab_readable=False):
+            discovered = self._discover([snapset])
+            with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
+                discovered.umount(snapset)
+
+        # Nothing is mounted at the recorded path, so the record goes.
+        self.assertEqual(self._records(), [])
+
+    def test_discover_passes_over_a_hand_mount_of_the_recorded_device(self):
+        """Test that the same device mounted again by hand is not ours.
+
+        A record outlives a mount taken down outside snapm until a
+        command that writes reaps it. An administrator who mounts the
+        same snapshot device at the same path in that window makes a
+        mount the recorded device number matches exactly, and the kernel
+        mount ID is no help: it is reused by the next mount at the same
+        path. Only the option mount(8) recorded with snapm's mount, and
+        took away with it, tells the two apart (#1025).
+        """
+        root_dev, root_path = self._real_mount_point()
+        if root_dev is None:
+            self.skipTest("No non-root block device mount available")
+        snapset = _fake_snapset([("/", root_dev)])
+        self._record(root_path, snapset, root_dev, managed=True)
+
+        # The device is mounted at the recorded path, but the mount is
+        # not marked as snapm's: it is not the mount that was recorded.
+        with self._mount_table(
+            [
+                f"{root_dev} / ext4 rw 0 0",
+                f"{root_dev} {root_path} ext4 rw 0 0",
+            ]
+        ):
+            discovered = self._discover([snapset])
+
+        self.assertEqual(discovered._mounts, [])
+        self.assertEqual(snapset.mount_root, "")
+        # Discovery writes nothing, and the mount is not snapm's to
+        # remove.
+        self.assertEqual(self._records(), [root_path])
+        self.assertTrue(os.path.isdir(root_path))
+
+    def test_discover_matches_a_marked_mount_of_the_recorded_device(self):
+        """Test that the mount snapm made is still recognised.
+
+        The same mount as the test above, with the mark snapm's own
+        mount carries.
+        """
+        root_dev, root_path = self._real_mount_point()
+        if root_dev is None:
+            self.skipTest("No non-root block device mount available")
+        snapset = _fake_snapset([("/", root_dev)])
+        self._record(root_path, snapset, root_dev, managed=True)
+
+        with self._mount_table(
+            [
+                f"{root_dev} / ext4 rw 0 0",
+                f"{root_dev} {root_path} ext4 rw 0 0",
+            ],
+            managed=[(root_path, str(snapset.uuid))],
+        ):
+            discovered = self._discover([snapset])
+
+        self.assertEqual([mount.root for mount in discovered._mounts], [root_path])
+
+    def test_discover_matches_a_mount_recorded_without_the_option(self):
+        """Test that a record with no mark is verified by device alone.
+
+        A system whose mount(8) keeps no userspace mount table records
+        no mark for snapm to require. Requiring one there would make
+        every mount unrecognisable to the next command, so the record
+        notes that it has none and is verified as it was before.
+        """
+        root_dev, root_path = self._real_mount_point()
+        if root_dev is None:
+            self.skipTest("No non-root block device mount available")
+        snapset = _fake_snapset([("/", root_dev)])
+        self._record(root_path, snapset, root_dev, managed=False)
+
+        with self._mount_table(
+            [
+                f"{root_dev} / ext4 rw 0 0",
+                f"{root_dev} {root_path} ext4 rw 0 0",
+            ]
+        ):
+            discovered = self._discover([snapset])
+
+        self.assertEqual([mount.root for mount in discovered._mounts], [root_path])
+
     def test_discover_matches_a_renamed_root_device(self):
         """Test that a record matches on device number, not device name.
 
@@ -2014,7 +2185,7 @@ class MountsMountSelectionTests(unittest.TestCase):
         # reap would discard the records the selection logic needs. Treat a
         # record as describing a live mount for the whole class.
         live = unittest.mock.patch.object(
-            mounts.Mounts, "_record_is_live", staticmethod(lambda record, mi: True)
+            mounts.Mounts, "_record_is_live", staticmethod(lambda record, mi, utab: True)
         )
         live.start()
         self.addCleanup(live.stop)
@@ -2075,6 +2246,32 @@ class MountsMountSelectionTests(unittest.TestCase):
     def _record(self, mount_path):
         """Return the mount state record written for ``mount_path``."""
         return mountstate.MountStateDir(self.state).get(mount_path)
+
+    def test_mount_refuses_when_the_userspace_mount_table_will_not_read(self):
+        """Test that a mount that cannot be marked is not made.
+
+        The mark is read back once the mount is up, and a record written
+        without it is verified by its device alone for the rest of its
+        life: a mount made now would be one an administrator's mount of
+        the same device at the same path could later be mistaken for.
+        Fail with nothing mounted and no record written instead.
+        """
+        with tempfile.TemporaryDirectory(prefix="snapm_utab_") as utab_path:
+            # A directory cannot be read as a file: this is a table that
+            # is there and cannot be read, not a missing one.
+            with unittest.mock.patch.object(
+                mounts,
+                "UtabReader",
+                lambda *args, **kwargs: snapm.UtabReader(path=utab_path),
+            ):
+                with self.assertRaisesRegex(
+                    snapm.SnapmSystemError, "userspace mount table"
+                ):
+                    self._mount()
+
+        self.assertEqual(self.mounts._mounts, [])
+        self.assertEqual(os.listdir(self.state), [])
+        self.assertFalse(os.path.exists(self._default_path()))
 
     def test_mount_creates_the_default_mount_point(self):
         """Test that snapm creates the default mount point itself."""
@@ -2391,7 +2588,7 @@ class MountsUmountSelectionTests(unittest.TestCase):
         # reap would discard the records the selection logic needs. Treat a
         # record as describing a live mount for the whole class.
         live = unittest.mock.patch.object(
-            mounts.Mounts, "_record_is_live", staticmethod(lambda record, mi: True)
+            mounts.Mounts, "_record_is_live", staticmethod(lambda record, mi, utab: True)
         )
         live.start()
         self.addCleanup(live.stop)
@@ -2713,7 +2910,7 @@ class MountsUmountSelectionTests(unittest.TestCase):
         with unittest.mock.patch.object(
             mounts.Mounts,
             "_record_is_live",
-            staticmethod(lambda record, mi: record.mount_path != first.root),
+            staticmethod(lambda record, mi, utab: record.mount_path != first.root),
         ):
             self.mounts.umount(self.snapset, mount_root=second.root)
 
