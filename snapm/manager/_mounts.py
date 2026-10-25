@@ -928,8 +928,9 @@ class Mounts:
         A snapshot set may be mounted at more than one path at a time: the
         canonical mount is the first one discovered or created, and is the
         mount reported as the set's mount root. Entries describing a path
-        that is no longer mounted are dropped by
-        ``_forget_stale_mounts()``, which every caller runs first.
+        that is no longer mounted, or one the records no longer account
+        for, are dropped by ``_forget_stale_mounts()`` and
+        ``_recorded_mounts()``, which every caller runs first.
 
         :param snapset: The snapshot set to look up.
         :returns: A `Mount` object, or ``None`` if the set is not mounted.
@@ -1085,6 +1086,33 @@ class Mounts:
         canonical = self._canonical_mount(snapset)
         snapset.mount_root = canonical.root if canonical is not None else ""
 
+    def _forget_mounts(self, mounts: List[Mount]) -> None:
+        """
+        Drop ``mounts`` from the mount table in memory and recompute the
+        mount root reported for each set that loses one.
+
+        This is the whole of forgetting a mount: an entry removed without
+        the second step leaves its set reported as mounted at a path the
+        object no longer believes in. Both notions of a mount worth
+        forgetting, one with nothing mounted at it and one the records no
+        longer account for, come through here so that the two steps
+        cannot come apart.
+
+        Nothing here leaves this object. Removing what a dropped entry
+        left on disk is ``_remove_stale_mounts()``'s to do, and needs the
+        lock.
+
+        :param mounts: The entries to drop. Each must be in the mount
+                       table: a caller selects them from it.
+        """
+        for mount in mounts:
+            _log_debug_mounts(
+                "Discarding mount for %s at '%s'", mount.snapset.name, mount.root
+            )
+            self._mounts.remove(mount)
+            # The discarded entry may have been the one reported for the set.
+            self._update_mount_root(mount.snapset)
+
     def _forget_stale_mounts(
         self, snapset: Optional[SnapshotSet] = None
     ) -> List[Mount]:
@@ -1099,10 +1127,9 @@ class Mounts:
         blocks mounting the set there again, and it counts towards the
         ambiguity check in ``umount()``.
 
-        Nothing here leaves this object: the entries are removed from the
-        list in memory and the reported mount root is recomputed from what
-        is left, both of which follow from the mount table as it is now.
-        Removing what the dropped entries left on disk is
+        Nothing here leaves this object: the entries are forgotten in
+        memory, which follows from the mount table as it is now. Removing
+        what the dropped entries left on disk is
         ``_remove_stale_mounts()``'s to do, and needs the lock.
 
         :param snapset: Optional snapshot set to limit this to. All
@@ -1115,13 +1142,7 @@ class Mounts:
             if not mount.mounted
             and (snapset is None or mount.snapset.name == snapset.name)
         ]
-        for mount in stale:
-            _log_debug_mounts(
-                "Discarding stale mount for %s at '%s'", mount.snapset.name, mount.root
-            )
-            self._mounts.remove(mount)
-            # The discarded entry may have been the one reported for the set.
-            self._update_mount_root(mount.snapset)
+        self._forget_mounts(stale)
         return stale
 
     def _remove_stale_mounts(self, stale: List[Mount]) -> None:
@@ -1233,6 +1254,104 @@ class Mounts:
                     err,
                 )
         self._state.discard(record.mount_path)
+
+    def _refresh_state(self) -> None:
+        """
+        Re-read the mount state records.
+
+        The copy in memory was read when this object was built, which may
+        be a long time ago for a caller that keeps a ``Manager`` around,
+        and another command may have mounted or unmounted something
+        since. What follows has to be decided from the records as they
+        are now rather than as they were at discovery.
+
+        A command that is about to change the mount state does this with
+        the lock held, so that what it read stays true for as long as it
+        acts on it. A command that only reports does it without, and
+        answers with what was true when it looked.
+
+        :raises SnapmPathError: If the record directory cannot be read.
+        """
+        self._state.load()
+
+    def _recorded_mounts(self, mounts: List[Mount]) -> List[Mount]:
+        """
+        Return those of ``mounts`` the records still account for.
+
+        An entry says what was mounted at a path when it was discovered,
+        and nothing but the record says what is mounted there now: the
+        path being a mount point only says that something is. By the time
+        the entry is used another command may have unmounted it, and an
+        administrator or another command may have mounted something else
+        there, including a different snapshot set.
+
+        An entry is kept only when a record for its path exists, names
+        the same snapshot set, and still describes what is mounted there.
+        Anything else is a mount this object no longer knows the truth
+        about: acting on one would unmount a file system that is not the
+        one asked for, and reporting one would name a mount as a set's
+        that it is not (#1025).
+
+        An entry that is not kept is forgotten, as one with nothing
+        mounted at it is. Filtering only the result would leave the set
+        reported as mounted at a path that ``umount()`` then declines to
+        act on, which is the same mount state described two ways. Nothing
+        here leaves this object or touches the records, so this is as
+        true of a command that only reports as of one holding the lock.
+
+        :param mounts: The candidate mounts to filter.
+        :returns: Those of ``mounts`` the records account for, in order.
+        """
+        mountinfo = MountInfoReader()
+        recorded = []
+        unrecorded = []
+        for mount in mounts:
+            if self._mount_is_recorded(mount, mountinfo):
+                recorded.append(mount)
+            else:
+                unrecorded.append(mount)
+
+        # The partition is made before anything is dropped: ``mounts`` is
+        # the mount table itself when ``find_mounts()`` is the caller, and
+        # forgetting an entry as it is iterated would skip the next one.
+        self._forget_mounts(unrecorded)
+        return recorded
+
+    def _mount_is_recorded(self, mount: Mount, mountinfo: MountInfoReader) -> bool:
+        """
+        Test whether the records still account for ``mount``, logging the
+        reason when they do not.
+
+        :param mount: The candidate mount to test.
+        :param mountinfo: A ``MountInfoReader`` instance to use.
+        :returns: ``True`` if the records account for ``mount``.
+        """
+        record = self._state.get(mount.root)
+        if record is None:
+            _log_warn(
+                "Ignoring mount at '%s': it is no longer recorded as a "
+                "mount of snapshot set %s",
+                mount.root,
+                mount.snapset.name,
+            )
+            return False
+        if record.snapset_uuid != str(mount.snapset.uuid):
+            _log_warn(
+                "Ignoring mount at '%s': it is now recorded as a mount "
+                "of snapshot set %s, not %s",
+                mount.root,
+                record.snapset_name,
+                mount.snapset.name,
+            )
+            return False
+        if not self._record_is_live(record, mountinfo):
+            _log_warn(
+                "Ignoring mount at '%s': its record no longer describes "
+                "what is mounted there",
+                mount.root,
+            )
+            return False
+        return True
 
     def _reap_stale_records(self) -> None:
         """
@@ -1372,6 +1491,8 @@ class Mounts:
         :param snapset: The snapshot set to operate on.
         :param mount_root: Optional path to mount the snapshot set at.
         """
+        self._refresh_state()
+
         if mount_root is None:
             self._check_mounts_dir()
             mount_path = self._default_mount_path(snapset)
@@ -1389,8 +1510,9 @@ class Mounts:
         # A snapshot set may be mounted at more than one path at a time. An
         # explicit mount root asks for a mount at a specific path, so only a
         # mount already rooted there will do: with no mount root any mount of
-        # the set is acceptable.
-        candidates = self._snapset_mounts(snapset)
+        # the set is acceptable. Only a path that still has a record is
+        # one of snapm's mounts.
+        candidates = self._recorded_mounts(self._snapset_mounts(snapset))
         if mount_root is not None:
             candidates = [mount for mount in candidates if mount.root == mount_path]
         if candidates:
@@ -1527,6 +1649,8 @@ class Mounts:
         :param mount_root: Optional mount point selecting the mount to
                            unmount.
         """
+        self._refresh_state()
+
         # Only the paths the set is still mounted at are candidates, and only
         # they make the request ambiguous. This command writes to the record
         # directory, so it is also the point at which the records discovery
@@ -1534,7 +1658,7 @@ class Mounts:
         self._remove_stale_mounts(self._forget_stale_mounts(snapset))
         self._reap_stale_records()
 
-        candidates = self._snapset_mounts(snapset)
+        candidates = self._recorded_mounts(self._snapset_mounts(snapset))
         if mount_root is not None:
             # Mounts are recorded at the path mount(8) resolved them to, so
             # match the resolved path here too (#1029).
@@ -1579,16 +1703,27 @@ class Mounts:
         Return a list of `Mount` objects describing the currently mounted
         snapshot sets managed by this `Mounts` instance.
 
-        Snapshot sets unmounted outside snapm are dropped before matching, so
-        that every mount returned is one that is still mounted. Dropping
-        them writes nothing, so reporting on mounts neither takes the mount
-        state lock nor waits on one: what the dropped entries left on disk
-        is removed by the next command that mounts or unmounts.
+        Snapshot sets unmounted outside snapm are dropped before matching,
+        and the records are read again and consulted, so that every mount
+        returned is one that is still mounted and still the mount the
+        entry says it is. Without that a report can name a path that
+        another command has since unmounted and mounted a different
+        snapshot set on.
+
+        None of this writes, so reporting on mounts neither takes the
+        mount state lock nor waits on one. The answer is what was true
+        when it was read: a report cannot be made to stay true, only to
+        have been true, and holding the lock would not change that.
         """
+        self._refresh_state()
         self._forget_stale_mounts()
         selection = selection or Selection()
         selection.check_valid_selection(snapshot_set=True)
-        return [m for m in self._mounts if select_snapshot_set(selection, m.snapset)]
+        return [
+            mount
+            for mount in self._recorded_mounts(self._mounts)
+            if select_snapshot_set(selection, mount.snapset)
+        ]
 
     def get_sys_mount(self) -> SysMount:
         """

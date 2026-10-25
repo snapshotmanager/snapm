@@ -2009,6 +2009,15 @@ class MountsMountSelectionTests(unittest.TestCase):
         self.root = self._tmpdir("snapm_mount_root_")
         self.state = self._tmpdir("snapm_mount_state_")
         self.lock = self._tmpdir("snapm_mount_lock_")
+        # The stub mounts stand in for live mounts, but nothing is really
+        # mounted at their paths, so record verification would fail and the
+        # reap would discard the records the selection logic needs. Treat a
+        # record as describing a live mount for the whole class.
+        live = unittest.mock.patch.object(
+            mounts.Mounts, "_record_is_live", staticmethod(lambda record, mi: True)
+        )
+        live.start()
+        self.addCleanup(live.stop)
         self.mounts = mounts.Mounts(manager, self.root, self.state, self.lock)
         self.snapset = SimpleNamespace(
             name="testset0",
@@ -2377,6 +2386,15 @@ class MountsUmountSelectionTests(unittest.TestCase):
         lock_obj = tempfile.TemporaryDirectory(prefix="snapm_umount_lock_")
         self.addCleanup(lock_obj.cleanup)
         self.lock = lock_obj.name
+        # The stub mounts stand in for live mounts, but nothing is really
+        # mounted at their paths, so record verification would fail and the
+        # reap would discard the records the selection logic needs. Treat a
+        # record as describing a live mount for the whole class.
+        live = unittest.mock.patch.object(
+            mounts.Mounts, "_record_is_live", staticmethod(lambda record, mi: True)
+        )
+        live.start()
+        self.addCleanup(live.stop)
         self.mounts = mounts.Mounts(manager, self.root, self.state, self.lock)
         self.snapset = SimpleNamespace(
             name="testset0",
@@ -2420,6 +2438,115 @@ class MountsUmountSelectionTests(unittest.TestCase):
         with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
             self.mounts.umount(self.snapset)
 
+    def test_umount_refuses_a_path_whose_record_has_gone(self):
+        """Test that the mount state is re-read once the lock is held.
+
+        The view of the mount state is built when the Mounts object is
+        made, which is before the lock is taken. Another command may
+        unmount a path and discard its record in the meantime, and an
+        administrator may then mount something else there. The path is
+        still a mount point, so nothing but the record distinguishes it
+        from a mount of snapm's, and acting on the view from discovery
+        would unmount a file system that is not snapm's (#1025).
+        """
+        mount = self._add_mount(default_root=True)
+        unmounted = []
+        mount.umount = lambda: unmounted.append(mount.root)
+
+        # Another command unmounts the path and discards its record,
+        # leaving the copy read at discovery behind in memory.
+        mountstate.MountStateDir(self.state).discard(mount.root)
+        self.assertIsNotNone(self.mounts._state.get(mount.root))
+
+        with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
+            self.mounts.umount(self.snapset)
+
+        # Nothing was unmounted and the path was left alone.
+        self.assertEqual(unmounted, [])
+        self.assertTrue(os.path.isdir(mount.root))
+
+    def test_find_mounts_omits_a_path_now_recorded_to_another_set(self):
+        """Test that a report does not name another set's mount as ours.
+
+        Reporting reads the records again rather than answering from the
+        view built at discovery, so a path that another command has
+        unmounted and mounted a different set on is left out instead of
+        being reported as this set's mount.
+        """
+        mine = self._add_mount("mine")
+        taken = self._add_mount("taken")
+
+        # Another command has since mounted a different set at 'taken'.
+        mountstate.MountStateDir(self.state).add(
+            mountstate.MountStateRecord(
+                mount_path=taken.root,
+                snapset_name="testset1",
+                snapset_uuid=str(uuid5(snapm.NAMESPACE_SNAPSHOT_SET, "testset1")),
+                root_device="/dev/testvg/testset1-root",
+                root_devno=0x1234,
+                created_mount_point=True,
+            )
+        )
+
+        found = self.mounts.find_mounts(snapm.Selection(name=self.snapset.name))
+
+        self.assertEqual(found, [mine])
+
+    def test_find_mounts_clears_a_mount_root_the_records_dropped(self):
+        """Test that the reported mount root follows the records.
+
+        A mount the records no longer account for is left out of the
+        report, so it must not go on being the path reported as the
+        set's mount root: the set would be listed as mounted somewhere
+        that 'snapset umount' then says it is not mounted at all.
+        """
+        mount = self._add_mount(default_root=True)
+        self.mounts._update_mount_root(self.snapset)
+        self.assertEqual(self.snapset.mount_root, mount.root)
+
+        # Another command unmounts the path and discards its record,
+        # leaving the copy read at discovery behind in memory.
+        mountstate.MountStateDir(self.state).discard(mount.root)
+
+        found = self.mounts.find_mounts(snapm.Selection(name=self.snapset.name))
+
+        self.assertEqual(found, [])
+        self.assertEqual(self.snapset.mount_root, "")
+        self.assertEqual(self.mounts._mounts, [])
+
+    def test_umount_refuses_a_path_now_recorded_to_another_set(self):
+        """Test that a record naming a different set does not match.
+
+        Another command may unmount one set from a path and mount a
+        different one there. A record then exists at that path, so its
+        presence alone says nothing: the path has to be recorded as a
+        mount of the set being unmounted, or unmounting it takes down
+        somebody else's snapshot set and discards its record (#1025).
+        """
+        mount = self._add_mount(default_root=True)
+        unmounted = []
+        mount.umount = lambda: unmounted.append(mount.root)
+
+        # Another command has since mounted a different set here.
+        other = mountstate.MountStateRecord(
+            mount_path=mount.root,
+            snapset_name="testset1",
+            snapset_uuid=str(uuid5(snapm.NAMESPACE_SNAPSHOT_SET, "testset1")),
+            root_device="/dev/testvg/testset1-root",
+            root_devno=0x1234,
+            created_mount_point=True,
+        )
+        self.assertNotEqual(other.snapset_uuid, str(self.snapset.uuid))
+        mountstate.MountStateDir(self.state).add(other)
+
+        with self.assertRaisesRegex(snapm.SnapmNotFoundError, "not found"):
+            self.mounts.umount(self.snapset)
+
+        # The other set's mount and its record are both left alone.
+        self.assertEqual(unmounted, [])
+        self.assertTrue(os.path.isdir(mount.root))
+        self.assertIsNotNone(mountstate.MountStateDir(self.state).get(mount.root))
+
     def test_umount_completes_when_the_mount_point_will_not_go(self):
         """Test that a mount point that cannot be removed is not fatal.
 
@@ -2433,13 +2560,8 @@ class MountsUmountSelectionTests(unittest.TestCase):
         in_the_way = os.path.join(mount.root, "occupied")
         os.mkdir(in_the_way)
 
-        # Nothing is really mounted here, so the reap would otherwise
-        # discard the record before the unmount reaches the mount point.
-        with unittest.mock.patch.object(
-            mounts.Mounts, "_record_is_live", staticmethod(lambda record, mi: True)
-        ):
-            with self.assertLogs(mounts._log, level="WARNING") as caught:
-                self.mounts.umount(self.snapset)
+        with self.assertLogs(mounts._log, level="WARNING") as caught:
+            self.mounts.umount(self.snapset)
 
         self.assertIn("Could not remove mount point", "\n".join(caught.output))
         # The unmount reported success and finished its cleanup.
@@ -2585,6 +2707,14 @@ class MountsUmountSelectionTests(unittest.TestCase):
         self.mounts.find_mounts(snapm.Selection(name=self.snapset.name))
         self.assertTrue(os.path.exists(first.root))
 
-        self.mounts.umount(self.snapset, mount_root=second.root)
+        # The first mount really has gone, so its record does not verify;
+        # the class-wide stub says every record does, which is what the
+        # reap has to see through here.
+        with unittest.mock.patch.object(
+            mounts.Mounts,
+            "_record_is_live",
+            staticmethod(lambda record, mi: record.mount_path != first.root),
+        ):
+            self.mounts.umount(self.snapset, mount_root=second.root)
 
         self.assertFalse(os.path.exists(first.root))
