@@ -1444,9 +1444,10 @@ class SnapshotSet:
         _log_info(
             "Attempting rename for snapshot set '%s' to '%s'", self.name, new_name
         )
-        # Mount point paths embed the snapshot set name and /proc/mounts
-        # records the device names in use at mount time: renaming the set
-        # members out from under a live mount tree orphans it.
+        # Renaming the set members out from under a live mount tree orphans
+        # it: mount point paths embed the snapshot set name, and renaming
+        # the set changes the UUID that its mount provenance record is
+        # keyed on, so the mount stops being attributable to any set.
         if self.snapshot_mounted:
             raise SnapmBusyError(
                 f"Snapshots from snapshot set {self.name} are mounted: cannot rename"

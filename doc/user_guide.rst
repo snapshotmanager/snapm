@@ -232,13 +232,12 @@ that is what ``snapset mount`` reports for a default mount.
 Any contents the directory has are shadowed while the snapshot set is
 mounted, and reappear when it is unmounted.
 
-``snapm`` locates snapshot set mounts by matching the set's member
-devices against the system mount table, so a set mounted at a custom
-mount root is found automatically: ``snapset umount`` does not need to
-be told where the set was mounted. The ``--mount-root`` option is
-accepted by ``snapset umount`` as well, but is only required to select
-between mounts when the same snapshot set is mounted at more than one
-path:
+``snapm`` records each mount it makes in ``/run/snapm/mount-state``, so
+a set mounted at a custom mount root is found again automatically:
+``snapset umount`` does not need to be told where the set was mounted.
+The ``--mount-root`` option is accepted by ``snapset umount`` as well,
+but is only required to select between mounts when the same snapshot
+set is mounted at more than one path:
 
 .. code-block:: bash
 
@@ -254,6 +253,29 @@ path:
 
 Each path reported by an ambiguous ``umount`` selects that mount when
 passed back as ``--mount-root``.
+
+Mounts snapm did not make
+-------------------------
+
+Only a mount that ``snapm`` made has a record in
+``/run/snapm/mount-state``, and only a mount with a record is one that
+``snapm`` will unmount or remove the mount point of. A snapshot mounted
+by hand is therefore left alone, even though its device belongs to a
+snapshot set that ``snapm`` knows about:
+
+.. code-block:: bash
+
+   # Mount a snapshot set's root snapshot directly
+   sudo mount /dev/fedora/root-snapset_backup_1234567890_- /mnt/inspect
+
+   # snapm does not claim it: there is nothing of its own to unmount
+   sudo snapm snapset umount backup
+
+Because the records live in ``/run`` they last exactly as long as the
+mounts they describe, and both go away at reboot. A snapshot set that
+was already mounted when ``snapm`` was upgraded to a version that
+writes these records has no record either, and has to be unmounted with
+``umount -R`` by hand.
 
 Keep the mount point and the directory containing it owned by root and
 inaccessible to other users while the snapshot set is mounted, and open
@@ -869,9 +891,11 @@ Rename an existing snapset.
 
    snapm snapset rename <old_name> <new_name>
 
-A mounted snapshot set cannot be renamed because the mount table records
-its member device names at mount time. Unmount the set with
-``snapm snapset umount`` before renaming it.
+A mounted snapshot set cannot be renamed: its mount point path embeds
+the set name by default, and the record of the mount in
+``/run/snapm/mount-state`` identifies the set by its name and UUID, both
+of which a rename changes. Unmount the set with ``snapm snapset umount``
+before renaming it.
 
 snapset revert
 --------------
