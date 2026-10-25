@@ -17,7 +17,7 @@ import logging
 from time import time
 from math import floor
 from stat import S_ISBLK, S_ISDIR, S_ISLNK
-from os.path import exists, ismount, join, normpath, samefile
+from os.path import exists, ismount, join, normpath
 from json import JSONDecodeError
 from typing import Dict, List, Tuple, Union, TYPE_CHECKING
 from functools import wraps
@@ -53,6 +53,7 @@ from snapm import (
     is_size_policy,
     SnapStatus,
     SnapshotSet,
+    MountInfoReader,
     select_snapshot_set,
     select_snapshot,
 )
@@ -414,18 +415,25 @@ def _check_snapset_mounted(snapset, operation):
         )
 
 
-def _find_mount_point_for_devpath(devpath):
+def _find_mount_point_for_devpath(devpath, mountinfo=None):
     """
-    Return the first mount point found in /proc/mounts that corresponds to
-    ``device``, or the empty string if no mount point can be found.
+    Return the first mount point of the block device at ``devpath``, or the
+    empty string if it is not mounted.
+
+    The device is matched by device number, so the name it was mounted by
+    does not have to be the name ``devpath`` gives it (#1030).
+
+    :param devpath: The path to the block device to look up.
+    :type devpath: ``str``
+    :param mountinfo: An optional mount table to look ``devpath`` up in. One
+                      is read when it is ``None``.
+    :type mountinfo: ``Optional[MountInfoReader]``
+    :returns: The mount point of ``devpath``, or the empty string.
+    :rtype: ``str``
     """
-    with open("/proc/mounts", "r", encoding="utf8") as mounts:
-        for line in mounts:
-            fields = line.split(" ")
-            if exists(fields[0]):
-                if samefile(devpath, fields[0]):
-                    return fields[1]
-    return ""
+    mountinfo = mountinfo if mountinfo is not None else MountInfoReader()
+    entries = mountinfo.lookup_device(devpath)
+    return entries[0].where if entries else ""
 
 
 def _check_snapm_runtime_dir():
@@ -1597,10 +1605,13 @@ class Manager:
         origins = {}
         mounts = {}
 
+        # Read the mount table once for all the block device sources.
+        mountinfo = MountInfoReader()
+
         # 1. Check sources against provider plugins
         for source, provider in provider_map.items():
             if S_ISBLK(os.stat(source).st_mode):
-                mounts[source] = _find_mount_point_for_devpath(source)
+                mounts[source] = _find_mount_point_for_devpath(source, mountinfo)
                 origins[source] = source
                 mount = mounts[source]
                 if mount in provider_map:

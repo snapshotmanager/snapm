@@ -6,6 +6,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 from contextlib import contextmanager
+from types import SimpleNamespace
 import subprocess
 import tempfile
 import unittest
@@ -376,26 +377,17 @@ class SnapmTestsSimple(unittest.TestCase):
         with self.assertRaises(snapm.SnapmNotFoundError):
             snapm.resolve_device_spec("PARTLABEL=part-label-bad", raise_on_error=True)
 
-    def test_snapshot_mounted_checks(self):
-        """Test Snapshot mounted checks via /proc/self/mounts."""
-        # Mock a snapshot
-        snap = MagicMock(spec=snapm.Snapshot)
-        snap.mount_point = "/mnt/origin"
-        snap.devpath = "/dev/vg/lv-snap"
-        snap.origin = "/dev/vg/lv"
-
-        # We have to bind the property to the class or instance to test the property logic
-        # explicitly if testing the base class logic, but Snapshot is abstract.
-        # Ideally, we create a concrete subclass or rely on integration tests.
-        # Here is a unit test approach using a temporary concrete class:
+    @staticmethod
+    def _concrete_snapshot(devpath, origin, mount_point):
+        """Return a minimal concrete Snapshot for the mounted checks."""
         class ConcreteSnapshot(snapm.Snapshot):
             """Minimal fulfillment of the ABC contract"""
             @property
-            def origin(self): return "/dev/vg/lv"
+            def origin(self): return origin
             @property
             def origin_options(self): return ""
             @property
-            def devpath(self): return "/dev/vg/lv-snap"
+            def devpath(self): return devpath
             @property
             def status(self): return snapm.SnapStatus.ACTIVE
             @property
@@ -406,28 +398,81 @@ class SnapmTestsSimple(unittest.TestCase):
             def autoactivate(self): return False
             def invalidate_cache(self): return
 
-        s = ConcreteSnapshot("s1", "set1", "/dev/vg/lv", 0, "/mnt/origin", MagicMock())
+        return ConcreteSnapshot("s1", "set1", origin, 0, mount_point, MagicMock())
 
-        #mounts_data = "/dev/vg/lv-snap /mnt/snap xfs rw 0 0\n/dev/vg/lv /mnt/origin xfs rw 0 0\n"
-        mounts_data = "/dev/vg/lv /mnt/origin xfs rw 0 0\n/dev/vg/lv-snap /mnt/snap xfs rw 0 0\n"
+    def test_snapshot_mounted_checks(self):
+        """Test Snapshot mounted checks against the mount table.
 
-        def mock_samefile(path1, path2):
-            # Snapshot device and mount point match
-            if path1 == "/dev/vg/lv-snap" and path2 == "/dev/vg/lv-snap":
-                return True
-            # Origin device and mount point match
-            if path1 == "/dev/vg/lv" and path2 == "/dev/vg/lv":
-                return True
-            return False
+        The snapshot and its origin are distinct devices, and the snapshot
+        is mounted under a name that differs from the one the Snapshot
+        reports for it: matching is by device number, not by name (#1030).
+        """
+        devices = _block_device_aliases(2)
+        if len(devices) < 2:
+            self.skipTest("Fewer than two aliased block devices available")
+        (snap_dev, snap_alias), (origin_dev, origin_alias) = devices
 
-        with patch("builtins.open", mock_open(read_data=mounts_data)), \
-             patch("os.path.exists", return_value=True), \
-             patch("os.path.samefile", side_effect=mock_samefile):
+        s = self._concrete_snapshot(snap_alias, origin_alias, "/mnt/origin")
 
-            self.assertTrue(s.snapshot_mounted)
-            # Test case: Mount point has origin mounted (implies snapshot is NOT mounted there)
-            # This happens if we haven't mounted the snapshot yet or reverted.
-            self.assertTrue(s.origin_mounted)
+        # A real reader over a synthetic table, so that the lookups go
+        # through the indexing the checks are documented to rely on
+        # rather than through a copy of its rules.
+        def mount_table(mounts, anon=()):
+            """Return a MountInfoReader over the given (path, device) mounts.
+
+            A mount point named in ``anon`` is given an anonymous device
+            number, as the kernel does for a file system whose superblock
+            is not that of a single block device.
+            """
+            lines = []
+            for mount_id, (where, what) in enumerate(mounts, start=36):
+                if where in anon:
+                    major, minor = (0, mount_id)
+                else:
+                    st_rdev = os.stat(what).st_rdev
+                    major, minor = (os.major(st_rdev), os.minor(st_rdev))
+                lines.append(f"{mount_id} 1 {major}:{minor} / {where} rw - ext4 {what} rw")
+            with _table_file(lines, ".mountinfo") as path:
+                return snapm.MountInfoReader(path=path)
+
+        # The origin is mounted at the snapshot's mount point and the
+        # snapshot itself is mounted elsewhere.
+        table = mount_table([("/mnt/origin", origin_dev), ("/mnt/snap", snap_dev)])
+        self.assertTrue(s.is_snapshot_mounted(table))
+        self.assertTrue(s.is_origin_mounted(table))
+
+        # Neither device is mounted.
+        table = mount_table([])
+        self.assertFalse(s.is_snapshot_mounted(table))
+        self.assertFalse(s.is_origin_mounted(table))
+
+        # The snapshot is mounted at its own mount point: the origin is not.
+        table = mount_table([("/mnt/origin", snap_dev)])
+        self.assertTrue(s.is_snapshot_mounted(table))
+        self.assertFalse(s.is_origin_mounted(table))
+
+        # The origin carries a file system with an anonymous superblock:
+        # the device number the kernel reports for the mount is the
+        # st_rdev of nothing, so the origin is found through the index
+        # rather than by comparing with it.
+        table = mount_table([("/mnt/origin", origin_dev)], anon=("/mnt/origin",))
+        self.assertTrue(s.is_origin_mounted(table))
+        self.assertFalse(s.is_snapshot_mounted(table))
+
+    def test_snapshot_mounted_checks_without_a_mount_point(self):
+        """Test that a member with no mount point is never mounted."""
+        s = self._concrete_snapshot("/dev/vg/lv-snap", "/dev/vg/lv", "")
+        table = MagicMock()
+        self.assertFalse(s.is_snapshot_mounted(table))
+        self.assertFalse(s.is_origin_mounted(table))
+        table.lookup_mount_point.assert_not_called()
+        table.device_mounted.assert_not_called()
+
+    def test_snapshot_mounted_properties_read_the_mount_table(self):
+        """Test that the properties read the mount table for themselves."""
+        s = self._concrete_snapshot("/dev/no/such/snap", "/dev/no/such/lv", "/mnt/x")
+        self.assertFalse(s.snapshot_mounted)
+        self.assertFalse(s.origin_mounted)
 
 
 def _block_device_aliases(count):
