@@ -1126,6 +1126,14 @@ class Mounts:
         else was then mounted on: unmounting the latter would take out a
         mount that is not snapm's (#1025).
 
+        The device number recorded once the mount was made is the one the
+        kernel reports for the mount, so it is compared with the mount
+        table directly. A record with none was written by a command that
+        never reached the end of its mount, and names only the device it
+        set out to mount: match that through the mount table index, which
+        resolves a device to its mounts whether or not the file system
+        mounted from it has an anonymous superblock.
+
         :param record: The mount provenance record to verify.
         :param mountinfo: A ``MountInfoReader`` instance to use.
         :returns: ``True`` if the recorded mount is still present.
@@ -1136,7 +1144,13 @@ class Mounts:
                 "Nothing is mounted at recorded mount path '%s'", record.mount_path
             )
             return False
-        if entry.devno != record.root_devno:
+
+        if record.mount_devno is not None:
+            matched = entry.devno == record.mount_devno
+        else:
+            matched = entry in mountinfo.lookup_devno(record.root_devno)
+
+        if not matched:
             _log_debug_mounts(
                 "Mount at '%s' is not the recorded device %s (%d:%d)",
                 record.mount_path,
@@ -1146,6 +1160,22 @@ class Mounts:
             )
             return False
         return True
+
+    @staticmethod
+    def _mounted_devno(mount_path: str) -> Optional[int]:
+        """
+        Return the device number the kernel reports for the file system
+        mounted at ``mount_path``.
+
+        :param mount_path: The mount point to read the device number of.
+        :returns: The device number of the mount at ``mount_path``, or
+                  ``None`` if nothing is mounted there.
+        """
+        entry = MountInfoReader().lookup_mount_point(mount_path)
+        if entry is None:  # pragma: no cover
+            _log_warn("Nothing is mounted at '%s' after mounting it", mount_path)
+            return None
+        return entry.devno
 
     def _discard_record(self, record: MountStateRecord) -> None:
         """
@@ -1243,6 +1273,7 @@ class Mounts:
 
         _log_info("Found %d snapshot set mounts", len(self._mounts))
 
+    # pylint: disable=too-many-statements
     def mount(
         self,
         snapset: SnapshotSet,
@@ -1332,26 +1363,46 @@ class Mounts:
             # mount that never happened is discarded by the next discovery
             # pass, which verifies every record against the mount table; a
             # mount made with no record is one snapm can never claim again.
-            self._state.add(
-                MountStateRecord(
-                    mount_path=mount_path,
-                    snapset_name=snapset.name,
-                    snapset_uuid=str(snapset.uuid),
-                    root_device=root_device,
-                    root_devno=root_devno,
-                    created_mount_point=created,
-                )
+            record = MountStateRecord(
+                mount_path=mount_path,
+                snapset_name=snapset.name,
+                snapset_uuid=str(snapset.uuid),
+                root_device=root_device,
+                root_devno=root_devno,
+                created_mount_point=created,
             )
+            self._state.add(record)
 
             mount = Mount(snapset, mount_path, root_device=root_device)
             mount.mount()
+
+            # The mount is up: note the device number the kernel gave it,
+            # which is the one the mount table carries and is the only
+            # value that can be compared with it for a file system whose
+            # superblock is anonymous. Until this is written the record
+            # describes an intention; afterwards it describes a mount.
+            record.mount_devno = self._mounted_devno(mount_path)
+            self._state.add(record)
         except (SnapmError, ValueError):
-            self._state.discard(mount_path)
-            if created:
-                try:
-                    os.rmdir(mount_path)
-                except OSError:
-                    pass  # pragma: no cover
+            # A rollback that cannot unmount what it mounted logs and
+            # carries on, so the tree may still be up at this point. The
+            # record is its only description: discard it only once nothing
+            # is mounted at the path, or the mount is left with nothing to
+            # find it by and has to be taken down by hand.
+            if os.path.ismount(mount_path):
+                _log_warn(
+                    "Snapshot set %s is still mounted at '%s' after a failed "
+                    "mount: keeping its mount state record",
+                    snapset.name,
+                    mount_path,
+                )
+            else:
+                self._state.discard(mount_path)
+                if created:
+                    try:
+                        os.rmdir(mount_path)
+                    except OSError:
+                        pass  # pragma: no cover
             raise
 
         self._mounts.append(mount)

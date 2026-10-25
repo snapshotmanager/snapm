@@ -1190,23 +1190,30 @@ def _fake_snapset(members, name="testset0"):
     )
 
 
-def _mountinfo_lines(mounts_lines):
+def _mountinfo_lines(mounts_lines, anon=()):
     """Translate '/proc/mounts' style lines into mountinfo lines.
 
     Mount table lookups match on device number, so each line is given the
     device number of the device it names: a device that does not exist gets
     the zero device number, which no block device has.
+
+    A mount point named in ``anon`` is given an anonymous device number
+    instead, with a major of zero, as the kernel does for a file system
+    whose superblock is not that of a single block device (btrfs, overlay).
     """
     lines = []
     for mount_id, line in enumerate(mounts_lines, start=36):
         what, where, fstype = line.split()[:3]
-        try:
-            st_rdev = os.stat(what).st_rdev
-        except OSError:
-            st_rdev = 0
+        if where in anon:
+            major, minor = (0, mount_id)
+        else:
+            try:
+                st_rdev = os.stat(what).st_rdev
+            except OSError:
+                st_rdev = 0
+            major, minor = (os.major(st_rdev), os.minor(st_rdev))
         lines.append(
-            f"{mount_id} 1 {os.major(st_rdev)}:{os.minor(st_rdev)} / {where} "
-            f"rw - {fstype} {what} rw"
+            f"{mount_id} 1 {major}:{minor} / {where} rw - {fstype} {what} rw"
         )
     return lines
 
@@ -1448,12 +1455,16 @@ class MountsDiscoveryTests(unittest.TestCase):
 
     @staticmethod
     @contextmanager
-    def _mount_table(lines):
-        """Make both mount table readers read synthetic mount tables."""
+    def _mount_table(lines, anon=()):
+        """Make both mount table readers read synthetic mount tables.
+
+        Mount points named in ``anon`` are given an anonymous device
+        number in the mountinfo table.
+        """
         pmr = mounts.ProcMountsReader
         mir = snapm.MountInfoReader
         with _mounts_file(lines) as mounts_path:
-            with _mounts_file(_mountinfo_lines(lines)) as mountinfo_path:
+            with _mounts_file(_mountinfo_lines(lines, anon=anon)) as mountinfo_path:
                 with unittest.mock.patch.object(
                     mounts,
                     "ProcMountsReader",
@@ -1501,8 +1512,14 @@ class MountsDiscoveryTests(unittest.TestCase):
         self.root = self._tmpdir("snapm_discover_root_")
         self.state = self._tmpdir("snapm_discover_state_")
 
-    def _record(self, mount_path, snapset, root_device, created=False):
-        """Write the provenance record for a mount snapm made."""
+    def _record(
+        self, mount_path, snapset, root_device, created=False, mount_devno=None
+    ):
+        """Write the provenance record for a mount snapm made.
+
+        A record with no ``mount_devno`` is one written by a command that
+        did not reach the end of its mount.
+        """
         record = mountstate.MountStateRecord(
             mount_path=mount_path,
             snapset_name=snapset.name,
@@ -1510,6 +1527,7 @@ class MountsDiscoveryTests(unittest.TestCase):
             root_device=root_device,
             root_devno=os.stat(root_device).st_rdev,
             created_mount_point=created,
+            mount_devno=mount_devno,
         )
         mountstate.MountStateDir(self.state).add(record)
         return record
@@ -1545,6 +1563,86 @@ class MountsDiscoveryTests(unittest.TestCase):
         self.assertEqual([mount.root for mount in discovered._mounts], [root_path])
         self.assertEqual(snapset.mount_root, root_path)
         self.assertEqual(self._records(), [root_path])
+
+    def test_discover_mount_with_an_anonymous_superblock(self):
+        """Test that a mount with an anonymous device number is kept.
+
+        A file system such as btrfs reports a device number that is the
+        st_rdev of no device at all, so a record that names only the
+        device it set out to mount has to be matched through the mount
+        table index. Discarding it here unmounts nothing and destroys the
+        only record of a mount that is still up.
+        """
+        root_dev, root_path = self._real_mount_point()
+        if root_dev is None:
+            self.skipTest("No non-root block device mount available")
+        snapset = _fake_snapset([("/", root_dev)])
+        self._record(root_path, snapset, root_dev)
+
+        with self._mount_table(
+            [
+                f"{root_dev} / ext4 rw 0 0",
+                f"{root_dev} {root_path} btrfs rw 0 0",
+            ],
+            anon=[root_path],
+        ):
+            discovered = self._discover([snapset])
+
+        self.assertEqual([mount.root for mount in discovered._mounts], [root_path])
+        self.assertEqual(self._records(), [root_path])
+
+    def test_discover_verifies_a_mount_by_its_recorded_devno(self):
+        """Test that the device number noted at mount time is authoritative.
+
+        Once a mount has been made the record carries the device number
+        the kernel gave it, which is comparable with the mount table
+        whatever the file system is, and is used in preference to the
+        device the mount was made from.
+        """
+        root_dev, root_path = self._real_mount_point()
+        if root_dev is None:
+            self.skipTest("No non-root block device mount available")
+        ((other_dev, _),) = self._devices_other_than(root_dev, 1)
+        snapset = _fake_snapset([("/", root_dev)])
+
+        with self._mount_table(
+            [
+                f"{root_dev} / ext4 rw 0 0",
+                f"{root_dev} {root_path} btrfs rw 0 0",
+            ],
+            anon=[root_path],
+        ):
+            devno = mounts.MountInfoReader().lookup_mount_point(root_path).devno
+            # The recorded device is not the one the mount table names.
+            self._record(root_path, snapset, other_dev, mount_devno=devno)
+            discovered = self._discover([snapset])
+
+        self.assertEqual([mount.root for mount in discovered._mounts], [root_path])
+        self.assertEqual(self._records(), [root_path])
+
+    def test_discover_discards_a_record_with_a_stale_devno(self):
+        """Test that a mount point something else was mounted on is dropped.
+
+        A record carrying the device number of the mount it describes must
+        still fail to verify when that mount has gone and another has
+        taken its place (#1025).
+        """
+        root_dev, root_path = self._real_mount_point()
+        if root_dev is None:
+            self.skipTest("No non-root block device mount available")
+        snapset = _fake_snapset([("/", root_dev)])
+        self._record(root_path, snapset, root_dev, mount_devno=0)
+
+        with self._mount_table(
+            [
+                f"{root_dev} / ext4 rw 0 0",
+                f"{root_dev} {root_path} ext4 rw 0 0",
+            ]
+        ):
+            discovered = self._discover([snapset])
+
+        self.assertEqual(discovered._mounts, [])
+        self.assertEqual(self._records(), [])
 
     def test_discover_does_not_match_a_record_by_name(self):
         """Test that a set is matched by UUID and not by name.

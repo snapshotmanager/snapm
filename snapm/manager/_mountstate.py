@@ -20,6 +20,7 @@ mount with a record is one snapm will act on. A record names:
 - the path the snapshot set is mounted at, unescaped
 - the name and UUID of the snapshot set mounted there
 - the device mounted at that path, and its device number
+- the device number the kernel reports for the mount once it is made
 - whether snapm created the directory and should remove it again
 
 The records live in the runtime directory, so they last exactly as long as
@@ -174,6 +175,17 @@ class MountStateRecord:
     #: it.
     created_mount_point: bool
 
+    #: The device number the kernel reports for the file system mounted at
+    #: ``mount_path``, as returned by ``os.stat().st_dev``, filled in once
+    #: the mount has been made. This is what the mount table carries, so
+    #: verification compares like with like for a file system with an
+    #: anonymous superblock as well as for one backed by a single block
+    #: device. ``None`` means the record was written but the mount it
+    #: describes was never confirmed, and verification falls back to
+    #: ``root_devno``. It is last because it is the one field that is not
+    #: known when the record is first written.
+    mount_devno: Optional[int] = None
+
     @classmethod
     def from_dict(cls, fields: Dict) -> "MountStateRecord":
         """
@@ -186,6 +198,7 @@ class MountStateRecord:
         :rtype: ``MountStateRecord``
         :raises ValueError: If a field is missing or of the wrong type.
         """
+        mount_devno = fields.get("mount_devno")
         try:
             record = cls(
                 mount_path=str(fields["mount_path"]),
@@ -194,6 +207,7 @@ class MountStateRecord:
                 root_device=str(fields["root_device"]),
                 root_devno=int(fields["root_devno"]),
                 created_mount_point=bool(fields["created_mount_point"]),
+                mount_devno=None if mount_devno is None else int(mount_devno),
             )
         except (KeyError, TypeError, ValueError) as err:
             raise ValueError(f"Malformed mount state record: {err}") from err
