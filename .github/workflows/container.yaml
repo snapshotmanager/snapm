@@ -10,6 +10,8 @@ on:
 jobs:
   container-tests:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
       - name: checkout
