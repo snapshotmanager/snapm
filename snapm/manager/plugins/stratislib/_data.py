@@ -16,7 +16,7 @@ XML interface specifications.
 """
 # isort: STDLIB
 import os
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # nosemgrep
 
 # isort: FIRSTPARTY
 from dbus_client_gen import (

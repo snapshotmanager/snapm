@@ -103,12 +103,21 @@ jobs:
           libblkid-dev
           libcryptsetup-dev
           libdbus-1-dev
+          libglib2.0-dev
           libdevmapper-dev
           libsystemd-dev
           libudev-dev
           make
           sudo
           thin-provisioning-tools
+      - name: Check dependencies for vulnerabilities
+        run: >
+          pip install pip-audit &&
+          pip-audit --strict --desc on -r requirements.txt
+      - name: Run semgrep SAST
+        run: >
+          pip install semgrep &&
+          semgrep scan --error --config=p/owasp-top-ten --config=p/security-audit snapm
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.85.0  # CURRENT DEVELOPMENT RUST TOOLCHAIN

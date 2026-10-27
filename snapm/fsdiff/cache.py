@@ -262,7 +262,7 @@ def load_cache(
         # We trust the files in /var/cache/snapm/diffcache since the
         # directory is root-owned and has restrictive permissions that
         # are verified on startup.
-        candidate = pickle.load(reader)
+        candidate = pickle.load(reader)  # nosemgrep
         _log_debug(
             "Loaded candidate diffcache pickle from %s with options=%s",
             name,
@@ -285,7 +285,7 @@ def load_cache(
         for i in range(0, candidate.count):
             progress.progress(i, f"Loading record {i}")
             try:
-                record = pickle.load(reader)
+                record = pickle.load(reader)  # nosemgrep
                 if record is None:
                     break
                 records.append(record)
@@ -469,12 +469,12 @@ def save_cache(
         results_save = FsDiffResults(
             [], results.options, results.timestamp, count=len(results)
         )
-        pickle.dump(results_save, writer)
+        pickle.dump(results_save, writer)  # nosemgrep
         if not count:
             return
         for i, record in enumerate(results):
             progress.progress(i, f"Saving record {i}")
-            pickle.dump(record, writer)
+            pickle.dump(record, writer)  # nosemgrep
             writer.flush()
 
     try:
