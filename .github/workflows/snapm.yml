@@ -92,6 +92,14 @@ jobs:
       - name: Check pylint
         run: >
           pylint --jobs 0 snapm
+      - name: Run semgrep SAST
+        run: >
+          pip install semgrep &&
+          semgrep --config=p/owasp-top-ten --config=p/security-audit snapm
+      - name: Check dependencies for vulnerabilities
+        run: >
+          pip install pip-audit &&
+          pip-audit --desc
       - name: Install Ubuntu stratisd deps
         env:
           DEBIAN_FRONTEND: noninteractive
