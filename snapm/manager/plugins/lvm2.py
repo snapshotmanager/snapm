@@ -204,7 +204,7 @@ _LVM_ENV_FILTER = [
     "DM_DEBUG_WITH_LINE_NUMBERS",
 ]
 
-_dm_major: int = 0
+_dm_major: int = 0  # pylint: disable=invalid-name
 
 
 def _get_dm_major() -> int:
