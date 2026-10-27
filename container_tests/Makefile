@@ -29,13 +29,13 @@ install:
 
 test:
 	podman exec --env PYTHONPATH=/src -it $(CONTAINER) \
-		/usr/bin/coverage run \
+		/usr/bin/python3 -m coverage run \
 		--include $(COVERAGE_INCLUDE) \
 		/usr/bin/pytest -v --log-level=debug /tests
 
 report:
 	podman exec --env PYTHONPATH=/src -it $(CONTAINER) \
-		/usr/bin/coverage report -m
+		/usr/bin/python3 -m coverage report -m
 
 clean:
 	podman rm -f $(CONTAINER) 2>/dev/null || true

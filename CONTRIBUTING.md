@@ -222,8 +222,8 @@ To run the entire test suite with coverage checking, use the following
 commands:
 
 ```bash
-coverage run -m pytest -v --log-level=debug tests
-coverage report --include "./snapm/*"
+python3 -m coverage run -m pytest -v --log-level=debug tests
+python3 -m coverage report --include "./snapm/*"
 ```
 
 To run a specific test, you can use the `-k` flag with `pytest`:
