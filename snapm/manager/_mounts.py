@@ -1730,9 +1730,15 @@ class Mounts:
             # value that can be compared with it for a file system whose
             # superblock is anonymous. Until this is written the record
             # describes an intention; afterwards it describes a mount.
-            record.mount_devno = self._mounted_devno(mount_path)
-            record.managed_option = self._mount_is_marked(mount_path, snapset)
-            self._state.add(record)
+            # A failure here would leave the tree up behind a record that
+            # is verified by its device alone: take the tree down first.
+            try:
+                record.mount_devno = self._mounted_devno(mount_path)
+                record.managed_option = self._mount_is_marked(mount_path, snapset)
+                self._state.add(record)
+            except (SnapmError, ValueError) as err:
+                mount._rollback_mount(err)  # pylint: disable=protected-access
+                raise
         except (SnapmError, ValueError):
             # A rollback that cannot unmount what it mounted logs and
             # carries on, so the tree may still be up at this point. The
