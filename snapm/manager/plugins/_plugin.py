@@ -79,6 +79,7 @@ class PluginLimits:
         """
         self.snapshots_per_origin = 0
         self.snapshots_per_pool = 0
+        self.snapshots_per_fs = 0
 
         if cfg.has_section(_PLUGIN_CFG_LIMITS):
             if cfg.has_option(_PLUGIN_CFG_LIMITS, _PLUGIN_CFG_SNAPS_PER_ORIGIN):
