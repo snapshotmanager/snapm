@@ -15,7 +15,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Run apt-get update
         run: sudo apt-get -q update
       - name: Install Ubuntu snapm deps
@@ -146,7 +148,9 @@ jobs:
         storage: [lvm, lvm-thin]
         base_os: [fedora43, fedora44, centos-stream9, centos-stream10]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install virt dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
