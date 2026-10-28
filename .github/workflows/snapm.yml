@@ -92,6 +92,14 @@ jobs:
       - name: Check pylint
         run: >
           pylint --jobs 0 snapm
+      - name: Run semgrep SAST
+        run: >
+          pip install semgrep &&
+          semgrep --config=p/owasp-top-ten --config=p/security-audit snapm
+      - name: Check dependencies for vulnerabilities
+        run: >
+          pip install pip-audit &&
+          pip-audit --desc
       - name: Install Ubuntu stratisd deps
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -159,6 +167,12 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y qemu-system-x86 qemu-utils seabios ovmf libvirt-daemon-system libvirt-clients libosinfo-bin virtinst wget expect
+          # Disable AppArmor security driver: Ubuntu 26.04 fails to load
+          # dynamically generated per-VM AppArmor profiles for QEMU when BIOS
+          # firmware is in use
+          if [[ "${{ matrix.firmware }}" == "bios" ]]; then
+          echo 'security_driver = "none"' | sudo tee -a /etc/libvirt/qemu.conf
+          fi
           sudo systemctl enable --now libvirtd
           # Ensure the default libvirt network is active
           sudo virsh net-start default || true

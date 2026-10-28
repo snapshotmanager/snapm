@@ -87,7 +87,9 @@ reviews:
         - No secrets in logs; mask sensitive outputs
         - Least privilege: minimize GITHUB_TOKEN permissions
         - No pull_request_target with checkout of PR head
-        - SAST/SCA steps in pipeline
+        - SAST/SCA required: bandit, semgrep, pip-audit run on PR code paths
+        - Semgrep configs: p/owasp-top-ten, p/security-audit
+        - Report all dependency vulnerabilities, not just latest
 
   # ── Security scanners ────────────────────────────────────────
   tools:
