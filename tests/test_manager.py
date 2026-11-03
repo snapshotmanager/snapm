@@ -9,6 +9,8 @@ import unittest
 from unittest.mock import Mock, patch
 from datetime import datetime
 from types import SimpleNamespace
+import threading
+import time
 import logging
 import os
 import os.path
@@ -16,6 +18,7 @@ from uuid import UUID
 from json import loads
 import tempfile
 import errno
+import fcntl
 
 import snapm
 import snapm.manager as manager
@@ -139,6 +142,73 @@ class ManagerTestsSimple(unittest.TestCase):
             with self.assertRaises(OSError) as cm:
                 os.dup(fd)
             self.assertEqual(cm.exception.errno, errno.EBADF)
+
+    def test__lock_manager_excludes_second_holder(self):
+        """Test that the lock is exclusive and gives up after the timeout."""
+        _manager = manager._manager
+        _orig_lock_dir = _manager._SNAPM_LOCK_DIR
+        self.addCleanup(setattr, _manager, "_SNAPM_LOCK_DIR", _orig_lock_dir)
+        with tempfile.TemporaryDirectory(suffix="_test_run_lock", dir="/tmp") as tempdir:
+            _manager._SNAPM_LOCK_DIR = str(tempdir) + _orig_lock_dir
+            lockdir = _manager._check_lock_dir()
+            fd = _manager._lock_manager(lockdir)
+            self.addCleanup(_manager._unlock_manager, lockdir, fd)
+            start = time.monotonic()
+            with self.assertRaises(snapm.SnapmBusyError) as caught:
+                _manager._lock_manager(lockdir, timeout=0.2)
+            elapsed = time.monotonic() - start
+            self.assertGreaterEqual(elapsed, 0.2)
+            self.assertLess(elapsed, 5.0)
+            message = str(caught.exception)
+            self.assertIn("manager lock", message)
+            self.assertIn(f"held by pid {os.getpid()}", message)
+
+    def test__lock_manager_timeout_without_holder_pid(self):
+        """Test that a holder that has not written its pid is not named."""
+        _manager = manager._manager
+        _orig_lock_dir = _manager._SNAPM_LOCK_DIR
+        self.addCleanup(setattr, _manager, "_SNAPM_LOCK_DIR", _orig_lock_dir)
+        with tempfile.TemporaryDirectory(suffix="_test_run_lock", dir="/tmp") as tempdir:
+            _manager._SNAPM_LOCK_DIR = str(tempdir) + _orig_lock_dir
+            lockdir = _manager._check_lock_dir()
+            lockfile = os.path.join(lockdir, "manager.lock")
+            fd = os.open(lockfile, os.O_RDWR | os.O_CREAT, 0o600)
+            self.addCleanup(os.close, fd)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaises(snapm.SnapmBusyError) as caught:
+                _manager._lock_manager(lockdir, timeout=0.2)
+            self.assertNotIn("held by", str(caught.exception))
+
+    def test__lock_manager_is_released_on_unlock(self):
+        """Test that the lock can be taken again once it is released."""
+        _manager = manager._manager
+        _orig_lock_dir = _manager._SNAPM_LOCK_DIR
+        self.addCleanup(setattr, _manager, "_SNAPM_LOCK_DIR", _orig_lock_dir)
+        with tempfile.TemporaryDirectory(suffix="_test_run_lock", dir="/tmp") as tempdir:
+            _manager._SNAPM_LOCK_DIR = str(tempdir) + _orig_lock_dir
+            lockdir = _manager._check_lock_dir()
+            fd1 = _manager._lock_manager(lockdir, timeout=0.2)
+            _manager._unlock_manager(lockdir, fd1)
+            with open(os.path.join(lockdir, "manager.lock"), "rb") as lockfile:
+                self.assertEqual(lockfile.read(), b"")
+            fd2 = _manager._lock_manager(lockdir, timeout=0.2)
+            _manager._unlock_manager(lockdir, fd2)
+
+    def test__lock_manager_waiter_acquires_after_release(self):
+        """Test that a waiting acquisition succeeds once the holder releases the lock."""
+        _manager = manager._manager
+        _orig_lock_dir = _manager._SNAPM_LOCK_DIR
+        self.addCleanup(setattr, _manager, "_SNAPM_LOCK_DIR", _orig_lock_dir)
+        with tempfile.TemporaryDirectory(suffix="_test_run_lock", dir="/tmp") as tempdir:
+            _manager._SNAPM_LOCK_DIR = str(tempdir) + _orig_lock_dir
+            lockdir = _manager._check_lock_dir()
+            fd = _manager._lock_manager(lockdir)
+            release = threading.Timer(0.3, _manager._unlock_manager, args=(lockdir, fd))
+            release.start()
+            self.addCleanup(release.join)
+            fd2 = _manager._lock_manager(lockdir, timeout=5.0)
+            self.addCleanup(_manager._unlock_manager, lockdir, fd2)
+            self.assertGreater(fd2, 0)
 
     def test__check_mounts_dir(self):
         _manager = manager._manager

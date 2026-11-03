@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from configparser import ConfigParser
 from collections import defaultdict
 import logging
-from time import time
+from time import time, monotonic, sleep
 from math import floor
 from stat import S_ISBLK, S_ISDIR, S_ISLNK
 from os.path import exists, ismount, join, normpath
@@ -138,6 +138,14 @@ _SNAPM_LOCK_DIR = join(SNAPM_RUNTIME_DIR, "lock")
 
 #: Permissions for lock directory
 _SNAPM_LOCK_DIR_MODE = 0o700
+
+#: How long to wait for the manager lock before giving up. A manager lock
+#: operation can involve discovery across multiple plugins and storage devices,
+#: so the wait has to be long enough to cover slow devices.
+MANAGER_LOCK_TIMEOUT = 60.0
+
+#: How long to wait between attempts to take the manager lock.
+_LOCK_POLL_INTERVAL = 0.1
 
 #: Maximum length for a systemd unit name
 _SYSTEMD_UNIT_NAME_LEN = 255
@@ -474,6 +482,31 @@ def _check_snapm_runtime_dir():
         ) from err
 
 
+def _lock_holder(fd: int) -> str:
+    """
+    Describe the process holding the lock file open on ``fd``, for use in
+    the message raised when the lock cannot be taken.
+
+    The holder writes its pid once it has the lock, so there is a short
+    window in which the file is still empty, and the pid is only as good
+    as the holder's last write. Say nothing rather than guess: this names
+    the process to look at with ps(1), it does not prove anything.
+
+    :param fd: An open file descriptor on the lock file.
+    :type fd: ``int``
+    :returns: A phrase naming the holder, or the empty string if there is
+              nothing to say.
+    :rtype: ``str``
+    """
+    try:
+        pid = os.pread(fd, 32, 0).decode("utf8").strip()
+    except (OSError, UnicodeDecodeError):  # pragma: no cover
+        return ""
+    if not pid.isdigit():
+        return ""
+    return f" (held by pid {pid})"
+
+
 def _check_lock_dir() -> str:
     """
     Check for the presence of the snapm runtime lock directory and create
@@ -482,11 +515,21 @@ def _check_lock_dir() -> str:
     return _check_snapm_dir(_SNAPM_LOCK_DIR, _SNAPM_LOCK_DIR_MODE, "Lock directory")
 
 
-def _lock_manager(lockdir: str) -> int:
+def _lock_manager(lockdir: str, timeout: float = MANAGER_LOCK_TIMEOUT) -> int:
     """
     Lock the Manager.
 
+    The lock is taken non-blocking, with retries up to the limit specified by
+    ``timeout``, at intervals of ``_LOCK_POLL_INTERVAL``.
+
+    :param lockdir: The directory holding the lock file.
+    :type lockdir: ``str``
+    :param timeout: How long to wait for the lock, in seconds.
+    :type timeout: ``float``
     :returns: A file descriptor open on the lock file.
+    :rtype: ``int``
+    :raises SnapmBusyError: If the lock is still held after ``timeout``.
+    :raises SnapmSystemError: If the lock file cannot be opened or locked.
     """
 
     def cleanup():
@@ -496,7 +539,7 @@ def _lock_manager(lockdir: str) -> int:
             _log_debug("Exception closing lock fd %d: %s", fd, err)
 
     lockfile = join(lockdir, "manager.lock")
-    _log_debug("Locking Manager via %s", lockfile)
+    _log_debug_manager("Locking Manager via '%s'", lockfile)
 
     # Use a persistent lock file; coordinate via flock only.
     try:
@@ -509,16 +552,29 @@ def _lock_manager(lockdir: str) -> int:
             f"Failed to create manager lockfile {lockfile}: {err}"
         ) from err
 
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError as err:
-        cleanup()
-        raise SnapmBusyError(f"Manager already locked at '{lockfile}': {err}") from err
-    except OSError as err:  # pragma: no cover
-        cleanup()
-        raise SnapmSystemError(
-            f"Failed to take exclusive lock on Manager lockfile {lockfile}: {err}"
-        ) from err
+    deadline = monotonic() + timeout
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except BlockingIOError as err:
+            if monotonic() >= deadline:
+                holder = _lock_holder(fd)
+                cleanup()
+                raise SnapmBusyError(
+                    f"Timed out after {timeout:g}s waiting for the manager "
+                    f"lock at '{lockfile}'{holder}"
+                ) from err
+            try:
+                sleep(_LOCK_POLL_INTERVAL)
+            except (OSError, KeyboardInterrupt, SystemExit):
+                cleanup()
+                raise
+        except OSError as err:  # pragma: no cover
+            cleanup()
+            raise SnapmSystemError(
+                f"Failed to lock manager lockfile {lockfile}: {err}"
+            ) from err
 
     try:
         os.ftruncate(fd, 0)
@@ -543,8 +599,9 @@ def _unlock_manager(lockdir: str, fd: int):
     :param fd: The open locking file descriptor.
     """
     lockfile = join(lockdir, "manager.lock")
-    _log_debug("Unlocking Manager (%s)", lockfile)
+    _log_debug_manager("Unlocking Manager (%s)", lockfile)
     try:
+        os.ftruncate(fd, 0)
         fcntl.flock(fd, fcntl.LOCK_UN)
     except OSError as err:
         raise SnapmSystemError(
