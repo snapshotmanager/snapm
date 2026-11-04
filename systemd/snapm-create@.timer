@@ -4,6 +4,12 @@ Documentation=man:snapm(8) man:snapm-conf(5)
 
 [Timer]
 Unit=snapm-create@%i.service
+
+# Distribute concurrently scheduled jobs
+AccuracySec=1us
+RandomizedDelaySec=30
+FixedRandomDelay=true
+
 # All instances should override this via drop-in
 OnCalendar=daily
 
