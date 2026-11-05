@@ -1275,33 +1275,43 @@ class ManagerTestsThin(unittest.TestCase):
 class TestTimelineCategorization(unittest.TestCase):
     """Tests for snapshot set timeline categorization logic."""
 
+    def setUp(self):
+        """Set  up timeline categorization tests"""
+        # Next autoindex value for each mock snapshot set basename.
+        self._indexes = {}
+
+    def make_set(self, ts_str, basename="test"):
+        """Helper to create a mock snapshot set."""
+        dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+        index = self._indexes.get(basename, 0)
+        self._indexes[basename] = index + 1
+        m = Mock()
+        m.datetime = dt
+        m.timestamp = dt.timestamp()
+        m.basename = basename
+        m.name = f"{basename}.{index}"
+        # id() relies on object identity, so distinct mocks work
+        return m
+
     def test__categorize_snapshot_sets(self):
         """Test classification of snapshots into timeline categories."""
-        # Helper to create a mock snapshot set
-        def make_set(ts_str):
-            dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-            m = Mock()
-            m.datetime = dt
-            m.timestamp = dt.timestamp()
-            # id() relies on object identity, so distinct mocks work
-            return m
-
-        # 1. Yearly/Quarterly/Monthly/Daily/Hourly (Jan 1 2023, Sunday)
-        # Note: Weekly requires Monday (weekday 0). Jan 1 2023 is Sunday (6).
-        s1 = make_set("2023-01-01 00:00:00")
+        # 1. Yearly/Quarterly/Monthly/Weekly/Daily/Hourly (Jan 1 2023, Sunday)
+        # Note: Jan 1 2023 is a Sunday: it is still the first set of the week
+        # beginning Monday Dec 26 2022.
+        s1 = self.make_set("2023-01-01 00:00:00")
 
         # 2. Hourly later same day
-        s2 = make_set("2023-01-01 01:00:00")
+        s2 = self.make_set("2023-01-01 01:00:00")
 
         # 3. Weekly (Monday Jan 2)
         # Also Daily/Hourly for Jan 2
-        s3 = make_set("2023-01-02 00:00:00")
+        s3 = self.make_set("2023-01-02 00:00:00")
 
         # 4. Monthly (Feb 1)
-        s4 = make_set("2023-02-01 00:00:00")
+        s4 = self.make_set("2023-02-01 00:00:00")
 
         # 5. Quarterly (Apr 1)
-        s5 = make_set("2023-04-01 00:00:00")
+        s5 = self.make_set("2023-04-01 00:00:00")
 
         sets = [s1, s2, s3, s4, s5]
 
@@ -1313,13 +1323,14 @@ class TestTimelineCategorization(unittest.TestCase):
         self.assertIn("monthly", categorized[id(s1)])
         self.assertIn("daily", categorized[id(s1)])
         self.assertIn("hourly", categorized[id(s1)])
-        self.assertNotIn("weekly", categorized[id(s1)]) # Sunday
+        # First set of the week beginning Mon Dec 26 2022
+        self.assertIn("weekly", categorized[id(s1)])
 
         # Check s2 (same day/month/year/quarter as s1, just later hour)
         self.assertIn("hourly", categorized[id(s2)])
         self.assertNotIn("daily", categorized[id(s2)])
 
-        # Check s3 (Monday)
+        # Check s3 (Monday: first set of the week beginning Jan 2)
         self.assertIn("weekly", categorized[id(s3)])
         self.assertIn("daily", categorized[id(s3)])
         self.assertIn("hourly", categorized[id(s3)])
@@ -1327,6 +1338,8 @@ class TestTimelineCategorization(unittest.TestCase):
         # Check s4 (Feb 1)
         self.assertIn("monthly", categorized[id(s4)])
         self.assertNotIn("quarterly", categorized[id(s4)]) # Feb is not start of quarter
+        # First set of the week beginning Mon Jan 30 (Wednesday).
+        self.assertIn("weekly", categorized[id(s4)])
 
         # Check s5 (Apr 1)
         self.assertIn("quarterly", categorized[id(s5)])
@@ -1335,6 +1348,78 @@ class TestTimelineCategorization(unittest.TestCase):
         self.assertIn("yearly", categorized[id(s1)])
         self.assertIn("hourly", categorized[id(s2)])
         self.assertIn("weekly", categorized[id(s3)])
+
+    def test__categorize_snapshot_sets_per_basename(self):
+        """Test that each basename is categorized independently."""
+        # Two schedules firing within the same hour: each snapshot set must
+        # be classified in its own right and not compete for the shared
+        # calendar boundaries.
+        system0 = self.make_set("2023-01-02 14:30:06", basename="system")
+        home0 = self.make_set("2023-01-02 14:30:29", basename="home")
+        system1 = self.make_set("2023-01-02 15:30:06", basename="system")
+        home1 = self.make_set("2023-01-02 15:30:29", basename="home")
+
+        sets = [system0, home0, system1, home1]
+
+        categorized = _manager._categorize_snapshot_sets(sets)
+
+        all_categories = ["yearly", "quarterly", "monthly", "weekly", "daily", "hourly"]
+        for first in (system0, home0):
+            self.assertEqual(sorted(categorized[id(first)]), sorted(all_categories))
+        for second in (system1, home1):
+            self.assertEqual(categorized[id(second)], ["hourly"])
+
+    def test__categorize_snapshot_sets_late_boundary(self):
+        """Test classification of sets taken after the interval boundary."""
+        # The first set of a week need not fall on a Monday and the first set
+        # of a quarter need not fall in the first month of the quarter: a
+        # machine may be powered off across the boundary.
+        # Wednesday, in the 2nd month of the quarter and of the year.
+        s1 = self.make_set("2023-02-08 14:30:00")
+        # Thursday of the same week.
+        s2 = self.make_set("2023-02-09 14:30:00")
+        # Monday of the following week.
+        s3 = self.make_set("2023-02-13 14:30:00")
+
+        categorized = _manager._categorize_snapshot_sets([s1, s2, s3])
+
+        self.assertIn("yearly", categorized[id(s1)])
+        self.assertIn("quarterly", categorized[id(s1)])
+        self.assertIn("monthly", categorized[id(s1)])
+        self.assertIn("weekly", categorized[id(s1)])
+        self.assertIn("daily", categorized[id(s1)])
+        self.assertIn("hourly", categorized[id(s1)])
+
+        self.assertEqual(sorted(categorized[id(s2)]), ["daily", "hourly"])
+        self.assertEqual(sorted(categorized[id(s3)]), ["daily", "hourly", "weekly"])
+
+    def test_timeline_gc_retains_half_hour_sets(self):
+        """Test timeline GC of a schedule that fires on the half-hour."""
+        from snapm.manager._schedule import GcPolicyParamsTimeline
+
+        # An hourly 'home' schedule firing at HH:30 interleaved with an
+        # hourly 'system' schedule firing a few seconds earlier.
+        sets = []
+        for hour in range(14, 20):
+            sets.append(self.make_set(f"2023-01-02 {hour}:30:06", basename="system"))
+            sets.append(self.make_set(f"2023-01-02 {hour}:30:29", basename="home"))
+
+        categorized = _manager._categorize_snapshot_sets(sets)
+        for snapset in sets:
+            snapset.categories = categorized[id(snapset)]
+
+        # No 'home' snapshot set may end up uncategorized because a 'system'
+        # snapshot set claimed the boundary first.
+        home_sets = [s for s in sets if s.basename == "home"]
+        for snapset in home_sets:
+            self.assertTrue(snapset.categories)
+
+        # Garbage collection runs per-basename: keeping three hourly sets
+        # must retain the three most recent 'home' sets.
+        policy = GcPolicyParamsTimeline(keep_hourly=3)
+        to_delete = policy.evaluate(home_sets)
+
+        self.assertEqual(to_delete, home_sets[0:3])
 
 
 class SchedulerTests(unittest.TestCase):

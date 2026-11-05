@@ -41,6 +41,12 @@ class MockSnapshotSet:
     def datetime(self):
         return datetime.fromtimestamp(self.timestamp)
 
+    @property
+    def basename(self):
+        """Return a basename for this MockSnapshotSet"""
+        base, _, index = self.name.rpartition(".")
+        return base if index.isdigit() else self.name
+
     def delete(self):
         self.deleted = True
 

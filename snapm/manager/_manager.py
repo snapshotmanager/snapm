@@ -671,17 +671,29 @@ def _categorize_snapshot_sets(
     Classify snapshot sets into categories based on creation time.
     Snapshots can belong to MULTIPLE categories:
 
-        * yearly (first snapshot set after midnight 1st Jan)
-        * quarterly (first snapshot set after midnight 1st Apr, Jul, Oct)
-        * monthly (first snapshot set after midnight 1st of month)
-        * weekly (first snapshot set after midnight Monday)
-        * daily (first snapshot set after midnight)
-        * hourly (first snapshot set after top of hour)
+        * yearly (first snapshot set at or after midnight 1st Jan)
+        * quarterly (first snapshot set at or after midnight 1st Jan, Apr,
+          Jul, Oct)
+        * monthly (first snapshot set at or after midnight 1st of month)
+        * weekly (first snapshot set at or after midnight Monday)
+        * daily (first snapshot set at or after midnight)
+        * hourly (first snapshot set at or after the top of the hour)
+
+    A snapshot set qualifies for a category if it is the first snapshot set
+    taken at or after the start of the corresponding calendar interval: it
+    does not have to coincide with the boundary itself. For example the first
+    snapshot set of a week is "weekly" even if it was taken on Wednesday
+    because the machine was powered off on Monday and Tuesday.
 
     Snapshot sets can be classified into multiple categories (e.g., a snapshot
     on Monday Jan 1 is yearly, quarterly, monthly, weekly, daily, and hourly).
     A snapshot is only deleted if ALL of its applicable categories vote for
     deletion. If ANY category wants to keep it, the snapshot is retained.
+
+    Categories are assigned independently for each snapshot set basename:
+    garbage collection policies are evaluated per-basename, so snapshot sets
+    belonging to different schedules (or created manually) must not compete
+    for the same calendar boundary.
 
     This function returns a dictionary that maps snapshot set objects (via the
     python ``id()`` identifier) to lists of categories to which they belong.
@@ -692,10 +704,11 @@ def _categorize_snapshot_sets(
               ``id(snapshot_set)``.
     :rtype: ``Dict[int, List[str]]``
     """
-    # Keep track of what boundaries we have already seen, so that only
-    # one snapshot set is put in the "yearly", "monthly" etc. for that
-    # calendar interval.
-    seen_boundaries = {category: set() for category in SNAPSET_TIMELINE_CATEGORIES}
+    # Keep track of what boundaries we have already seen for each snapshot
+    # set basename, so that only one snapshot set with a given basename is
+    # put in the "yearly", "monthly" etc. category for that calendar
+    # interval.
+    seen_boundaries: Dict[str, Dict[str, set]] = {}
 
     # Copy snapshot set list before sorting.
     sets = sets.copy()
@@ -728,18 +741,24 @@ def _categorize_snapshot_sets(
         dt = snapshot_set.datetime
         snapshot_set_categories = []
 
-        for category in SNAPSET_TIMELINE_CATEGORIES:
-            if category == "quarterly" and dt.month not in (1, 4, 7, 10):
-                continue
-            if category == "weekly" and dt.weekday() != 0:
-                continue
+        if snapshot_set.basename not in seen_boundaries:
+            seen_boundaries[snapshot_set.basename] = {
+                category: set() for category in SNAPSET_TIMELINE_CATEGORIES
+            }
+        seen = seen_boundaries[snapshot_set.basename]
 
+        for category in SNAPSET_TIMELINE_CATEGORIES:
             boundary = get_boundary(dt, category)
-            if dt >= boundary and boundary not in seen_boundaries[category]:
-                seen_boundaries[category].add(boundary)
+            if dt >= boundary and boundary not in seen[category]:
+                seen[category].add(boundary)
                 snapshot_set_categories.append(category)
                 # Continue checking other categories
 
+        _log_debug_manager(
+            "Classified snapshot set %s as: %s",
+            snapshot_set.name,
+            ", ".join(snapshot_set_categories) or "none",
+        )
         categorized[id(snapshot_set)] = snapshot_set_categories
 
     return categorized
