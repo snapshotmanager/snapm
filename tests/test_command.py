@@ -259,6 +259,18 @@ class CommandTestsSimple(CommandTestsBase):
             command.main(args)
         self.assertEqual(cm.exception.code, 2)
 
+    def test_main_schedule_create_requires_calendar_spec(self):
+        args = self.get_debug_main_args()
+        args += [
+            "schedule", "create",
+            "--keep-days", "7",
+            "--policy", "timeline",
+            "hourly", "/", "/var",
+        ]
+        with self.assertRaises(SystemExit) as cm:
+            command.main(args)
+        self.assertEqual(cm.exception.code, 2)
+
 
 @unittest.skipIf(not have_root(), "requires root privileges")
 class CommandTests(CommandTestsBase):

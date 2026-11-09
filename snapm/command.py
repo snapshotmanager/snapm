@@ -3279,6 +3279,7 @@ def _add_schedule_subparser(type_subparser):
         "--calendarspec",
         type=str,
         metavar="CALENDARSPEC",
+        required=True,
         help="Calendar trigger expression",
     )
     _add_create_args(schedule_create_parser)
