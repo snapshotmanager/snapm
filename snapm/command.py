@@ -1210,7 +1210,7 @@ def edit_schedule(
         sources = old_schedule.sources
     if not default_size_policy:
         default_size_policy = old_schedule.default_size_policy
-    if not calendarspec:
+    if calendarspec is None:
         calendarspec = old_schedule.calendarspec
     if not policy or not policy.has_params:
         policy = old_schedule.gc_policy
