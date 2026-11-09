@@ -1429,6 +1429,12 @@ class SchedulerTests(unittest.TestCase):
         self.tmp_dir = tempfile.TemporaryDirectory()
         self.sched_path = self.tmp_dir.name
         self.manager = Mock()
+        # Scheduler._load_schedules() reads the module global _SCHEDULE_D_PATH:
+        # point it at the test temporary directory so that schedule lookups
+        # cannot collide with schedules configured on the test host.
+        _orig_sched_d_path = _manager._SCHEDULE_D_PATH
+        _manager._SCHEDULE_D_PATH = self.sched_path
+        self.addCleanup(setattr, _manager, "_SCHEDULE_D_PATH", _orig_sched_d_path)
         # We assume empty config dir initially
         self.scheduler = _manager.Scheduler(self.manager, self.sched_path)
 
@@ -1462,6 +1468,16 @@ class SchedulerTests(unittest.TestCase):
 
         with self.assertRaises(snapm.SnapmExistsError):
             self.scheduler.create("sched1", ["/mnt"], None, False, "daily", None)
+
+    @patch("snapm.manager._manager.Schedule")
+    def test_create_no_calendar_raises(self, MockSchedule):
+        with self.assertRaises(snapm.SnapmArgumentError):
+            self.scheduler.create("nocal1", ["/mnt"], None, False, None, None)
+
+        with self.assertRaises(snapm.SnapmArgumentError):
+            self.scheduler.create("nocal2", ["/mnt"], None, False, "", None)
+
+        MockSchedule.assert_not_called()
 
     @patch("snapm.manager._manager.Schedule")
     def test_edit_schedule(self, MockSchedule):

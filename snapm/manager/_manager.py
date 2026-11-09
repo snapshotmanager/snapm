@@ -909,6 +909,11 @@ class Scheduler:
         if name in self._schedules_by_name:
             raise SnapmExistsError(f"Schedule named '{name}' already exists")
 
+        if not calendarspec:
+            raise SnapmArgumentError(
+                "Creating schedule requires a valid calendar expression"
+            )
+
         _, _ = _parse_source_specs(sources, default_size_policy)
 
         schedule = Schedule(
@@ -961,6 +966,11 @@ class Scheduler:
         """
         if name not in self._schedules_by_name:
             raise SnapmNotFoundError(f"Schedule named '{name}' does not exist")
+
+        if not calendarspec:
+            raise SnapmArgumentError(
+                "Editing schedule requires a valid calendar expression"
+            )
 
         old_schedule = self._get_schedule_by_name(name)
 
