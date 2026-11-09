@@ -1480,6 +1480,30 @@ class SchedulerTests(unittest.TestCase):
         MockSchedule.assert_not_called()
 
     @patch("snapm.manager._manager.Schedule")
+    def test_edit_no_calendar_raises(self, MockSchedule):
+        # The existence check in Scheduler.edit() precedes the calendar
+        # expression check: set up an initial schedule to edit so that the
+        # calendar expression is reached.
+        old_sched = Mock()
+        old_sched.name = "sched1"
+        self.scheduler._schedules.append(old_sched)
+        self.scheduler._schedules_by_name["sched1"] = old_sched
+
+        with self.assertRaises(snapm.SnapmArgumentError):
+            self.scheduler.edit("sched1", ["/mnt"], None, False, None, None)
+
+        with self.assertRaises(snapm.SnapmArgumentError):
+            self.scheduler.edit("sched1", ["/mnt"], None, False, "", None)
+
+        MockSchedule.assert_not_called()
+
+        # The existing schedule must be left untouched.
+        old_sched.stop.assert_not_called()
+        old_sched.disable.assert_not_called()
+        self.assertIn(old_sched, self.scheduler._schedules)
+        self.assertEqual(self.scheduler._get_schedule_by_name("sched1"), old_sched)
+
+    @patch("snapm.manager._manager.Schedule")
     def test_edit_schedule(self, MockSchedule):
         # Setup initial schedule
         old_sched = Mock()
