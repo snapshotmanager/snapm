@@ -272,6 +272,106 @@ class CommandTestsSimple(CommandTestsBase):
             command.main(args)
         self.assertEqual(cm.exception.code, 2)
 
+    def _run_schedule_edit(self, edit_args, debug=True, side_effect=None):
+        """
+        Run a 'schedule edit' command with the Manager patched out and
+        return the status along with the keyword arguments that reached
+        ``Scheduler.edit()``.
+
+        The schedule to be edited is a mock named 'hourly' with an
+        'hourly' calendar expression.
+
+        :param edit_args: Arguments to follow 'schedule edit'.
+        :param debug: Run with debug enabled, so that errors propagate.
+        :param side_effect: An optional side effect for Scheduler.edit().
+        :returns: A tuple of the command status and the captured kwargs.
+        """
+        captured = {}
+
+        old_schedule = MagicMock()
+        old_schedule.name = "hourly"
+        old_schedule.sources = ["/"]
+        old_schedule.default_size_policy = None
+        old_schedule.calendarspec = "hourly"
+        old_schedule.boot = False
+        old_schedule.revert = False
+
+        # Mirrors the Scheduler.edit() signature.
+        def fake_edit(
+            name,
+            sources,
+            default_size_policy,
+            autoindex,
+            calendarspec,
+            policy,
+            **kwargs,
+        ):
+            captured.update(
+                {
+                    "name": name,
+                    "sources": sources,
+                    "default_size_policy": default_size_policy,
+                    "autoindex": autoindex,
+                    "calendarspec": calendarspec,
+                    "policy": policy,
+                }
+            )
+            captured.update(kwargs)
+            if side_effect is not None:
+                raise side_effect
+            schedule = MagicMock()
+            schedule.name = name
+            schedule.calendarspec = calendarspec
+            return schedule
+
+        manager = MagicMock()
+        manager.scheduler.find_schedules.return_value = [old_schedule]
+        manager.scheduler.edit.side_effect = fake_edit
+
+        args = self.get_debug_main_args() if debug else self.get_main_args()
+        args += ["schedule", "edit"] + edit_args
+
+        with patch.object(command, "Manager", return_value=manager):
+            with patch.object(command.os, "geteuid", return_value=0):
+                status = command.main(args)
+
+        return (status, captured)
+
+    def test_main_schedule_edit_no_calendar_spec_reuses_existing(self):
+        """
+        Test that omitting -C/--calendarspec from 'schedule edit' retains
+        the calendar expression of the existing schedule.
+        """
+        (status, kwargs) = self._run_schedule_edit(["hourly"])
+        self.assertEqual(status, 0)
+        self.assertEqual(kwargs["calendarspec"], "hourly")
+
+    def test_main_schedule_edit_empty_calendar_spec_fails(self):
+        """
+        Test that an empty -C/--calendarspec argument is passed through to
+        Scheduler.edit() for validation, and that the resulting
+        SnapmArgumentError fails the command rather than raising to the
+        caller.
+        """
+        (status, kwargs) = self._run_schedule_edit(
+            ["-C", "", "hourly"],
+            debug=False,
+            side_effect=snapm.SnapmArgumentError(
+                "Editing schedule requires a valid calendar expression"
+            ),
+        )
+        self.assertEqual(status, 1)
+        self.assertEqual(kwargs["calendarspec"], "")
+
+    def test_main_schedule_edit_calendar_spec_overrides_existing(self):
+        """
+        Test that a valid -C/--calendarspec argument overrides the calendar
+        expression of the existing schedule.
+        """
+        (status, kwargs) = self._run_schedule_edit(["-C", "weekly", "hourly"])
+        self.assertEqual(status, 0)
+        self.assertEqual(kwargs["calendarspec"], "weekly")
+
     def _run_create(self, create_args, debug=True, side_effect=None):
         """
         Run a 'snapset create' command with the Manager patched out and
