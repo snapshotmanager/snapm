@@ -1,7 +1,7 @@
 %global summary A set of tools for managing snapshots
 
 Name:		snapm
-Version:	0.7.0
+Version:	0.8.0
 Release:	1%{?dist}
 Summary:	%{summary}
 
@@ -150,6 +150,159 @@ mkdir -p ${RPM_BUILD_ROOT}/%{_tmpfilesdir}
 %doc doc
 
 %changelog
+* Wed Nov 11 2026 Bryn M. Reeves <bmr@redhat.com> - 0.8.0-1
+- doc: note that Image Mode / ostree deployments are unsupported
+- tests: add coverage for Image Mode / ostree detection
+- manager: reject Image Mode / ostree deployments in Manager init
+- manager: add Image Mode / ostree deployment detection
+- tests: add calendarspec coverage for 'schedule edit'
+- command: only pass calendarspec if non-None in edit_schedule()
+- command: require -C/--calendarspec for 'schedule create'
+- tests: add calendarspec coverage for Scheduler.edit()
+- schedule: require a calendarspec in Scheduler.create/edit()
+- manager: categorize timeline snapshot sets per basename
+- dist: add random delay to timer units
+- manager: add retry mechanism for manager.lock
+- tests: run semgrep and pip-audit from snapm.yaml
+- tests: work around virt-tests AppArmor errors for BIOS guests
+- mounts: roll back the mount when a post-mount check fails
+- mounts: require the mount mark before treating a mount as snapm's
+- snapm: add a reader for the userspace mount table
+- mounts: act only on the mounts the records account for
+- mounts: separate forgetting a stale mount from clearing up after it
+- mounts: serialise changes to the mount state with a lock of its own
+- mounts: make mount state discovery non-mutating
+- mounts: verify a mount state record against the mount it describes
+- mounts: mark snapshot set mounts with x-snapm.managed
+- mounts: record snapshot set mount provenance in /run/snapm/mount-state
+- mounts: split the bind mounts and the rollback out of _do_mount()
+- snapm: match mounted devices by device number
+- snapm: add a mount table reader keyed by device number
+- mounts: stat the resolved mounts directory rather than lstat() it
+- mounts: drop the commented out parameter from _check_submounts()
+- tests: restrict container-tests workflow to read permissions
+- tests: drop full SHA requirement for pinned actions
+- tests: pin qemu-kvm to qemu-system-x86
+- tests: replace coverage ... entrypoint with python3 -m coverage
+- tests: flush image cache when setting boom paths
+- tests: bump actions/checkout to v6
+- tests: add container_tests/snapm.conf to container_tests/.gitignore
+- lvm2: avoid UPPER_CASE name warning for _dm_major
+- coderabbit: drop bogus "no-sensitive-data-in-logs" pre-merge check
+- doc: generalise description of mounted rename restrictions
+- doc: document that snapshot sets cannot be deleted while mounted
+- snapm: refuse deletion of mounted snapshot sets before teardown
+- snapm: refuse to rename or split mounted snapshot sets
+- mounts: resolve symbolic links in mount point paths
+- snapm: refuse invalid and path-like snapshot set names
+- tests: harden rmtree_one_file_system() against umount failure
+- mounts: reject an in-use explicit mount root before registering it
+- mounts: refuse a --mount-root inside the snapm mounts directory
+- mounts: check the mounts directory before creating a mount point in it
+- doc: describe --mount-root as the snapshot set mount point
+- mounts: mount a snapshot set at --mount-root, not beneath it
+- mounts: note the residual race in the mount point comment
+- mounts: do not re-use a mount point that is already a mount
+- mounts: test a leftover mount point with a single lstat()
+- mounts: reject a set name that does not name a mount point
+- mounts: name the mount base when an unmount is ambiguous
+- mounts: re-use a mount point left behind by an outside unmount
+- tests: abort the run when a mount base cannot be unmounted
+- tests: never remove a mount test directory that is still mounted
+- mounts: simplify _find_mount() and rename to _canonical_mount()
+- mounts: make mount() filtering consistent with umount()
+- mounts: add _mount_path() helper
+- mounts: unify stale mount handling
+- command: unmount the mount that exec made, by path
+- mounts: skip mounts that are no longer mounted when reporting
+- mounts: refresh the reported mount root when pruning stale mounts
+- mounts: select a live mount when an earlier entry is stale
+- mounts: clean up stale mount points and report path errors
+- mounts: honour an explicit mount base for a set already mounted
+- mounts: look up snapshot set mounts through a single index
+- mounts: create snapset mount path with exist_ok=False
+- _mounts: validate snapshot set mount roots against the root device
+- tests: update mount discovery tests for device based discovery
+- _mounts: skip inactive snapshots when locating mount roots
+- tests: add tests for the custom snapshot set mount root
+- man: document the --mount-root option
+- doc: document the custom snapshot set mount root
+- command: add --mount-root option to snapset mount and umount
+- _mounts: discover snapshot set mounts by member device
+- _mounts: add entry and device lookup to ProcMountsReader
+- _mounts: add support for a custom snapshot set mount base
+- virt_tests: dynamically determine machine for install URL
+- snapm: add command line support for per-operation service overrides
+- snapm: add per-operation service overrides to create_snapshot_set()
+- doc: add service hooks description to user_guide.rst
+- dist: add services.d and snapm-services.d.5 to RPM spec file
+- tests: add services.d to container_tests/Containerfile
+- dist: add skeleton etc/snapm/services.d to git
+- doc: add SERVICE HOOKS section to snapm.8 man page
+- doc: add snapm-services.d.5 man page
+- systemd: derive unit poll timeouts from unit job timeouts
+- snapm: re-start service units with pending stop jobs
+- manager: move service loading into create_snapshot_set()
+- systemd: treat enabled-runtime as enabled
+- manager: add service start/stop hooks to create_snapshot_set()
+- systemd: extend maximum D-Bus poll iteration count
+- snapm: load configured services on Manager start-up
+- manager: rename 'basename' argument of Manager._find_next_index()
+- systemd: raise SnapmNotFoundError for nonexistent service units
+- systemd: allow inner start_unit() DBusException errors to propagate
+- systemd: add unit dependency sorting interface
+- snapm: make new snapm.manager._systemd interfaces public
+- schedule: gate stop/disable actions on running/enabled status
+- snapm: separate generic SnapmSystemdError from SnapmTimerError
+- systemd: check UnitFileState == 'enabled' in _unit_status()
+- systemd: poll for unit status after calling StopUnit()
+- container_tests: reset unit before cleaning up drop-in
+- snapm: factor out general unit handling from timers module
+- _mounts: use the shared unescape_mounts() helper for /proc/mounts
+- _mounts: fix umount failure on systemd credential mounts with escape sequences
+- virt_tests: use explicit CDN URLs for more reliable network installs
+- coderabbit: add security-focused code review configuration
+- tests: replace hardcoded test pool names with unique checksummed names
+- tests: bump snapm.yml virt_tests matrix from F42 to F44
+- tests: update snapm.yml osinfo-db to add F44 and drop F42
+- tests: fix snapm.yml workflow syntax
+- stratis: handle DbusClientMissingPropertyError on .search() invocation
+- stratis: refactor filter_stratis_snapshot() to allow logging
+- tests: bump stratisd test dependency to stratisd-v3.8.6
+- stratis: handle DbusClientMissingPropertyError on D-Bus properties
+- lvm2: fix pool/origin limit accounting
+- command: enable Manager debugging whenever --debug=manager is given
+- manager: add new 'debug' bool kwarg to Manager.__init__()
+- stratis: fix pool limit accounting in {create,delete}_snapshot()
+- snapm: extract common resolve_device_spec helper function
+- snapm: extract common directory checking logic
+- plugins: consolidate _check_limit implementations
+- doc: add discussion of -s/--start-path to user_guide.rst
+- doc: clarify default diff start path behaviour in snapm.8
+- fsdiff: warn user when no -s/--start-path/Options.from_path given
+- doc: update CONTRIBUTING.md to describe commit message format
+- fsdiff: remove redundant dest_path in used_dests test
+- stratis: bow to black formatting change
+- fsdiff: prune used_dests from candidates before _best_sibling_proximity()
+- fsdiff: convert diff_map into a defaultdict(tuple)
+- fsdiff: move _effective_changes() to snapm.fsdiff.changes
+- fsdiff: rename changed_paths to modified_paths
+- tests: add Fedora 43 to virt_tests matrix
+- tests: drop Fedora 41 from virt_tests matrix
+- doc: fix snapm-plugind.d.5 man page typo ("boom" for "snapm")
+- tests: remove use of bandit
+- command: schedule docstring wording ( “snapshot set” for "schedule")
+- snapm: align progress/log coordination docs
+- doc strings: add missing public API docs
+- doc strings: correct/update existing doc strings
+- fsdiff: document filename_similarity() heuristic
+- fsdiff: use frozenset in filename_similarity()
+- fsdiff: early return for sibling identity match
+- fsdiff: compile sibling proximity regexes
+- snapm: add a generative AI policy
+- snapm: add a security policy
+- tests: skip a handful of tests in RH CI environments #915
+
 * Wed Jan 07 2026 Bryn M. Reeves <bmr@redhat.com> - 0.7.0-1
 - fsdiff: support multiple change nodes in tree rendering
 - fsdiff: extend file type guessing for path suffixes
