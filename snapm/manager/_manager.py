@@ -2169,15 +2169,18 @@ class Manager:
     def split_snapshot_set(self, name, new_name, source_specs):
         """
         Split the snapshot set named `name` into two snapshot sets, with
-        `new_name` containing the listed `sources` and `name` containing all
-        remaining snapshots.
+        `new_name` containing the listed `source_specs` and `name` containing
+        all remaining snapshots.
 
-        If `new_name` is `None` the listed snapshot are removed from `name`
-        and permanently deleted. This operation cannot be undone.
+        If `new_name` is `None` the listed snapshots are removed from `name`
+        and permanently deleted. This operation cannot be undone. If the
+        deletion fails, the error is logged but not raised, and the listed
+        snapshots may still exist.
 
         :param name: The name of the snapshot set to split
         :param new_name: The name of the newly split off snapshot set
-        :param sources: The list of sources to include in the new snapshot set
+        :param source_specs: The list of sources to include in the new
+                             snapshot set
         :raises: ``SnapmBusyError`` if the snapshot set is mounted.
         """
         if name not in self.by_name:

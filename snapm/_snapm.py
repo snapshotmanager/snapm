@@ -772,6 +772,7 @@ class Selection:
 
         :param snapshot_set: ``Selection`` may include SnapshotSet data
         :param snapshot: ``Selection`` may include Snapshot data
+        :param schedule: ``Selection`` may include Schedule data
         :returns: ``None`` on success
         :rtype: ``NoneType``
         :raises: ``ValueError`` if excluded criteria are present
