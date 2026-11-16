@@ -72,15 +72,21 @@ jobs:
         working-directory: /var/tmp/boom-boot
       - name: Create boom configuration
         run: |
+          set -euo pipefail
           sudo mkdir /boot/boom
           sudo mkdir /boot/boom/cache
           sudo mkdir /boot/boom/hosts
           sudo mkdir /boot/boom/profiles
           sudo mkdir -p /boot/loader/entries
           sudo cp /var/tmp/boom-boot/examples/boom.conf /boot/boom
-          # Create profiles for kernel variants seen in CI
-          sudo boom profile create --from-host --uname-pattern generic --initramfs-pattern "/initrd.img-%{version}" --kernel-pattern "/vmlinuz-%{version}"
-          sudo boom profile create --from-host --uname-pattern azure --initramfs-pattern "/initrd.img-%{version}" --kernel-pattern "/vmlinuz-%{version}"
+          # Boom cannot derive a uname pattern for Ubuntu hosts: the kernel
+          # version does not include the os-release version. An OsProfile is
+          # identified by os_short_name, os_version and os_version_id alone, so
+          # profiles for the kernel variants used by the runners (-generic,
+          # -azure, -aws...) all share one os_id and cannot coexist: create a
+          # single profile matching the flavour of the running kernel.
+          UNAME_FLAVOUR="$(uname -r | sed 's/.*-//')"
+          sudo boom profile create --from-host --uname-pattern "$UNAME_FLAVOUR" --initramfs-pattern "/initrd.img-%{version}" --kernel-pattern "/vmlinuz-%{version}"
       - name: Forcibly install file-magic
         run: sudo pip install --break-system-packages file-magic
       - name: Check PyCodestyle
