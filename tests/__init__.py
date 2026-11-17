@@ -88,12 +88,25 @@ class MockPlugin(plugins.Plugin):
         raise NotImplementedError
 
 
+def is_eln():
+    """
+    Return ``True`` if running on Fedora ELN, and ``False`` otherwise.
+    """
+    try:
+        with open("/etc/os-release", "r", encoding="utf8") as fp:
+            for line in fp.readlines():
+                if "Fedora ELN" in line:
+                    return True
+        return False
+    except OSError:
+        return False
+
+
 def is_redhat():
     """
-    Return True for Red Hat derivatives (excluding CentOS pending boom-boot #59).
+    Return ``True`` for Red Hat derivatives, and ``False`` otherwise.
     """
-    return (os.path.exists("/etc/redhat-release")
-            and not os.path.exists("/etc/centos-release"))
+    return os.path.exists("/etc/redhat-release")
 
 
 def have_root():

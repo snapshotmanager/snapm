@@ -24,7 +24,7 @@ import boom.bootloader
 import boom.cache
 import boom.osprofile
 
-from tests import have_root, is_redhat, BOOT_ROOT_TEST
+from tests import have_root, is_eln, is_redhat, BOOT_ROOT_TEST
 from ._util import LvmLoopBacked, _VG_NAME
 
 ETC_FSTAB = "/etc/fstab"
@@ -318,7 +318,7 @@ class BootTestsWithRoot(BootTestsBase):
         # Clean up boot entries
         self.manager.delete_snapshot_sets(snapm.Selection(name="bootset0"))
 
-    @unittest.skipIf(not is_redhat(), "profile auto-creation not supported")
+    @unittest.skipIf(not is_redhat() or is_eln(), "profile auto-creation not supported")
     def test_auto_profile_create_boot_entry(self):
         """Test automatic boom osprofile and boot entry creation."""
         boot_dir = self._populate_boom_root_path()
