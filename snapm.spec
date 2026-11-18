@@ -19,7 +19,6 @@ BuildRequires:	stratisd
 BuildRequires:	systemd-rpm-macros
 BuildRequires:	pyproject-rpm-macros
 BuildRequires:	python3-boom
-BuildRequires:	python3-dateutil
 BuildRequires:	python3-dbus-client-gen
 BuildRequires:	python3-dbus-python-client-gen
 BuildRequires:	python3-devel

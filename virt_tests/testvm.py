@@ -230,7 +230,6 @@ git
 python3
 python3-pip
 openssh-server
-python3-dateutil
 python3-dbus-client-gen
 python3-dbus-python-client-gen
 python3-justbytes

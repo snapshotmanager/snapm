@@ -8,5 +8,4 @@ justbytes>=0.14
 file-magic>=0.4.0
 packaging
 psutil
-python-dateutil
 wcwidth
